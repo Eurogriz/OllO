@@ -30,15 +30,24 @@ export function fromUtf8(b: Uint8Array): string {
   return new TextDecoder().decode(b);
 }
 
+type NodeBuf = {
+  from(data: Uint8Array | string, enc?: string): Uint8Array & { toString(enc: string): string };
+};
+function nodeBuffer(): NodeBuf | undefined {
+  return (globalThis as unknown as { Buffer?: NodeBuf }).Buffer;
+}
+
 export function toB64(bytes: Uint8Array): string {
-  if (typeof Buffer !== "undefined") return Buffer.from(bytes).toString("base64");
+  const Buf = nodeBuffer();
+  if (Buf) return Buf.from(bytes).toString("base64");
   let s = "";
   for (const b of bytes) s += String.fromCharCode(b);
   return btoa(s);
 }
 
 export function fromB64(b64: string): Uint8Array {
-  if (typeof Buffer !== "undefined") return new Uint8Array(Buffer.from(b64, "base64"));
+  const Buf = nodeBuffer();
+  if (Buf) return new Uint8Array(Buf.from(b64, "base64"));
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);

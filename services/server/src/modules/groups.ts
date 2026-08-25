@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Db } from "../db/index.js";
 import { ApiError, requireAuth } from "../http.js";
+import { pushToDevice } from "../realtime/hub.js";
 import { randomToken, randomUuid, sha256Hex } from "../security/crypto-utils.js";
 
 async function requireMember(db: Db, groupId: string, userId: string) {
@@ -109,6 +110,77 @@ export async function registerGroups(app: FastifyInstance, db: Db): Promise<void
       [sha256Hex(token), id, auth.userId, exp.toISOString()],
     );
     return { token, expires_at: exp.toISOString() };
+  });
+
+  app.post("/v1/groups/:id/fanout", async (req) => {
+    const auth = requireAuth(req);
+    const id = (req.params as { id: string }).id;
+    await requireMember(db, id, auth.userId);
+    const body = z
+      .object({
+        kind: z.enum(["message", "receipt", "typing", "call", "control"]),
+        ciphertext: z.string().min(1),
+        padding_bucket: z.number().int().positive(),
+        ttl_seconds: z.number().int().nonnegative().optional(),
+      })
+      .parse(req.body);
+    const payload = Buffer.from(body.ciphertext, "base64");
+    if (payload.length > 256 * 1024) {
+      throw new ApiError("payload_too_large", "Envelope too large", 413);
+    }
+    const members = await db.query<{ user_id: string }>(
+      "SELECT user_id FROM group_members WHERE group_id = $1 AND removed_at IS NULL",
+      [id],
+    );
+    const expires = body.ttl_seconds
+      ? new Date(Date.now() + body.ttl_seconds * 1000).toISOString()
+      : new Date(Date.now() + 30 * 86400_000).toISOString();
+    let n = 0;
+    for (const m of members.rows) {
+      const devices = await db.query<{ id: string }>(
+        "SELECT id FROM devices WHERE user_id = $1 AND revoked_at IS NULL",
+        [m.user_id],
+      );
+      for (const d of devices.rows) {
+        if (d.id === auth.deviceId) continue;
+        const eid = randomUuid();
+        await db.query(
+          `INSERT INTO envelopes (
+             id, sender_user_id, sender_device_id, recipient_user_id, recipient_device_id,
+             group_id, kind, payload, padding_bucket, expires_at
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+          [
+            eid,
+            auth.userId,
+            auth.deviceId,
+            m.user_id,
+            d.id,
+            id,
+            body.kind,
+            payload,
+            body.padding_bucket,
+            expires,
+          ],
+        );
+        pushToDevice(d.id, {
+          op: "envelope",
+          envelope: {
+            id: eid,
+            sender_user_id: auth.userId,
+            sender_device_id: auth.deviceId,
+            recipient_user_id: m.user_id,
+            recipient_device_id: d.id,
+            group_id: id,
+            kind: body.kind,
+            ciphertext: body.ciphertext,
+            padding_bucket: body.padding_bucket,
+            created_at: new Date().toISOString(),
+          },
+        });
+        n += 1;
+      }
+    }
+    return { accepted: n };
   });
 
   app.post("/v1/groups/join/:token", async (req) => {

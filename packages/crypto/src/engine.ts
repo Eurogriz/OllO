@@ -12,7 +12,7 @@ import {
   decryptAttachment,
   encryptAttachment,
 } from "./attachments.js";
-import { fromUtf8, utf8 } from "./bytes.js";
+import { fromB64 as fromB64Compat, fromUtf8, toB64 as toB64Compat, utf8 } from "./bytes.js";
 import {
   type IdentityKeyPair,
   type OneTimePrekeyPair,
@@ -204,16 +204,9 @@ function jsonReviver(_k: string, v: unknown): unknown {
 }
 
 function bytesToB64(bytes: Uint8Array): string {
-  if (typeof Buffer !== "undefined") return Buffer.from(bytes).toString("base64");
-  let s = "";
-  for (const b of bytes) s += String.fromCharCode(b);
-  return btoa(s);
+  return toB64Compat(bytes);
 }
 
 function b64ToBytes(b64: string): Uint8Array {
-  if (typeof Buffer !== "undefined") return new Uint8Array(Buffer.from(b64, "base64"));
-  const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
+  return fromB64Compat(b64);
 }

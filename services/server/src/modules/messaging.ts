@@ -157,4 +157,11 @@ export async function registerMessaging(app: FastifyInstance, db: Db): Promise<v
     );
     return { ok: true };
   });
+
+  app.post("/v1/maintenance/expire", async (req) => {
+    requireAuth(req);
+    await db.query("DELETE FROM envelopes WHERE expires_at IS NOT NULL AND expires_at < now()");
+    await db.query("DELETE FROM attachments WHERE expires_at < now() AND completed_at IS NOT NULL");
+    return { ok: true };
+  });
 }

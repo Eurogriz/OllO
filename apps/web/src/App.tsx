@@ -8,17 +8,22 @@ import {
   b64u,
   clearAccount,
   computeSafety,
+  distributeOwnSenderKey,
   downloadAndDecrypt,
   encryptFile,
   flushOutbox,
+  ingestSenderKey,
   loadAccount,
   newDeviceMaterial,
   openEnvelope,
   publicDevicePayload,
   replenishPrekeys,
+  resolveSenderEd25519,
   saveAccount,
   searchLocal,
+  sendToGroup,
   sendToUser,
+  syncToOwnDevices,
 } from "./client";
 
 type Screen = "auth" | "app";
@@ -54,6 +59,8 @@ export function App() {
   const persist = useCallback((next: Account) => {
     if (!next.outbox) next.outbox = [];
     if (!next.knownIdentities) next.knownIdentities = {};
+    if (!next.senderKeys) next.senderKeys = {};
+    if (!next.remoteSenderKeys) next.remoteSenderKeys = {};
     saveAccount(next);
     setAcc({ ...next, sessions: next.sessions, messages: { ...next.messages }, threads: [...next.threads] });
   }, []);
@@ -151,6 +158,8 @@ function Auth({
         firstSent: {},
         knownIdentities: {},
         outbox: [],
+        senderKeys: {},
+        remoteSenderKeys: {},
       };
       if (res.user.is_new || !res.user.username) {
         setStep(3);
@@ -264,10 +273,20 @@ function Shell({
   const [modal, setModal] = useState<Modal>(null);
   const [safety, setSafety] = useState("");
   const [typing, setTyping] = useState(false);
-  const [call, setCall] = useState<null | { media: "audio" | "video"; remote?: string; incoming?: boolean }>(null);
+  const [call, setCall] = useState<null | {
+    media: "audio" | "video";
+    remote?: string;
+    incoming?: boolean;
+    callId?: string;
+  }>(null);
   const [ctx, setCtx] = useState<null | { x: number; y: number; msg: ChatMessage }>(null);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [text, setText] = useState(acc.drafts[active ?? ""] ?? "");
+  const [presence, setPresence] = useState("");
+  const [searchHits, setSearchHits] = useState<ChatMessage[] | null>(null);
+  const [identityWarn, setIdentityWarn] = useState("");
+  const [lockPin, setLockPin] = useState("");
+  const [safetyQr, setSafetyQr] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -360,7 +379,13 @@ function Shell({
 
   async function handleIncoming(env: Record<string, string>) {
     try {
-      const inner = openEnvelope(acc, env.sender_user_id, env.sender_device_id, env.ciphertext);
+      const inner = openEnvelope(acc, env.sender_user_id, env.sender_device_id, env.ciphertext, env.group_id);
+      if (inner.type === "sender_key_distribute") {
+        const ed = await resolveSenderEd25519(acc, env.sender_user_id, env.sender_device_id);
+        ingestSenderKey(acc, inner, env.sender_user_id, env.sender_device_id, ed);
+        persist(acc);
+        return;
+      }
       if (inner.type === "typing") {
         if (threadPeer(env) === active || env.group_id === active) setTyping(true);
         setTimeout(() => setTyping(false), 2000);
@@ -379,15 +404,54 @@ function Shell({
         return;
       }
       if (inner.type === "call_signal") {
-        if (inner.call?.signalType === "offer") {
-          setCall({ media: inner.call.media, incoming: true, remote: env.sender_user_id });
-          (window as unknown as { __offer: string }).__offer = inner.call.sdp ?? "";
+        await onCallSignal(env.sender_user_id, inner);
+        persist(acc);
+        return;
+      }
+      if (inner.type === "reaction" && inner.reaction) {
+        const list = acc.messages[inner.threadId] ?? [];
+        const target = list.find((m) => m.clientId === inner.reaction!.targetClientId);
+        if (target) target.reaction = inner.reaction.remove ? undefined : inner.reaction.emoji;
+        persist(acc);
+        return;
+      }
+      if (inner.type === "edit" && inner.editOf) {
+        const list = acc.messages[inner.threadId] ?? [];
+        const target = list.find((m) => m.clientId === inner.editOf);
+        if (target) {
+          target.text = inner.text;
+          target.edited = true;
         }
         persist(acc);
         return;
       }
       const tid = inner.threadId || threadPeer(env);
       ensureThread(tid, env.sender_user_id, env.group_id);
+      const attachments: ChatMessage["attachments"] = [];
+      if (inner.attachments?.length) {
+        for (const a of inner.attachments) {
+          try {
+            const blob = await downloadAndDecrypt(acc, {
+              objectId: a.objectId,
+              key: a.key,
+              nonce: a.nonce,
+              digest: a.digest,
+              mime: a.mime,
+              filename: a.filename,
+              grant: a.grant,
+            });
+            attachments.push({
+              name: a.filename,
+              mime: a.mime,
+              url: URL.createObjectURL(blob),
+              objectId: a.objectId,
+              grant: a.grant,
+            });
+          } catch {
+            attachments.push({ name: a.filename, mime: a.mime, objectId: a.objectId, grant: a.grant });
+          }
+        }
+      }
       const msg: ChatMessage = {
         clientId: inner.clientId,
         threadId: tid,
@@ -398,29 +462,31 @@ function Shell({
         status: "delivered",
         replyTo: inner.replyToClientId,
         expiresAt: inner.expiresAt,
+        attachments: attachments.length ? attachments : undefined,
       };
       pushMsg(tid, msg);
-      if (inner.type === "delete") {
+      if (inner.type === "delete" && inner.editOf) {
         const list = acc.messages[tid] ?? [];
-        const tmsg = list.find((m) => m.clientId === inner.deleteFor && inner.editOf);
-        if (inner.editOf) {
-          const target = list.find((m) => m.clientId === inner.editOf);
-          if (target) {
-            target.deleted = true;
-            target.text = "";
-          }
+        const target = list.find((m) => m.clientId === inner.editOf);
+        if (target) {
+          target.deleted = true;
+          target.text = "";
         }
       }
       persist(acc);
       if (env.kind === "message" && env.sender_user_id !== acc.userId) {
-        void sendInner(env.sender_user_id, {
-          version: 1,
-          type: "receipt_delivery",
-          clientId: crypto.randomUUID(),
-          sentAt: new Date().toISOString(),
-          threadId: tid,
-          receipt: { targetClientId: inner.clientId, at: new Date().toISOString() },
-        }, "receipt");
+        void deliver(
+          env.sender_user_id,
+          {
+            version: 1,
+            type: "receipt_delivery",
+            clientId: crypto.randomUUID(),
+            sentAt: new Date().toISOString(),
+            threadId: tid,
+            receipt: { targetClientId: inner.clientId, at: new Date().toISOString() },
+          },
+          "receipt",
+        );
       }
     } catch (e) {
       console.error("decrypt failed", e);
@@ -464,7 +530,14 @@ function Shell({
     groupId?: string,
   ) {
     try {
-      await sendToUser(acc, peerUserId, inner, kind, groupId);
+      if (groupId) {
+        await sendToGroup(acc, groupId, inner, kind);
+      } else {
+        await sendToUser(acc, peerUserId, inner, kind);
+        if (peerUserId !== acc.userId) {
+          await syncToOwnDevices(acc, inner, kind);
+        }
+      }
       persist(acc);
     } catch (e) {
       if ((e as Error).message === "identity_changed") {
@@ -545,10 +618,7 @@ function Shell({
       if (thread.kind === "direct" && thread.peerUserId) {
         await deliver(thread.peerUserId, inner);
       } else if (thread.groupId) {
-        const g = await api(`/v1/groups/${thread.groupId}`, acc.access, {}, acc);
-        for (const m of g.group.members as { user_id: string }[]) {
-          await deliver(m.user_id, inner, "message", thread.groupId);
-        }
+        await deliver(acc.userId, inner, "message", thread.groupId);
       }
       local.status = "sent";
       persist(acc);
@@ -602,15 +672,20 @@ function Shell({
     await fetch(`/v1/attachments/${created.object_id}/data`, {
       method: "PUT",
       headers: { Authorization: `Bearer ${acc.access}`, "Content-Type": "application/octet-stream" },
-      body: enc.ciphertext,
+      body: new Blob([new Uint8Array(enc.ciphertext)]),
     });
-    const grant = thread.peerUserId
+    const grant = thread.groupId
       ? await api(`/v1/attachments/${created.object_id}/grants`, acc.access, {
           method: "POST",
-          body: JSON.stringify({ recipient_user_id: thread.peerUserId }),
-        })
-      : { grant: "" };
-    const url = URL.createObjectURL(new Blob([enc.ciphertext]));
+          body: JSON.stringify({ group_id: thread.groupId }),
+        }, acc)
+      : thread.peerUserId
+        ? await api(`/v1/attachments/${created.object_id}/grants`, acc.access, {
+            method: "POST",
+            body: JSON.stringify({ recipient_user_id: thread.peerUserId }),
+          }, acc)
+        : { grant: "" };
+    const url = URL.createObjectURL(new Blob([new Uint8Array(enc.ciphertext)]));
     const inner: InnerMessage = {
       version: 1,
       type: file.type.startsWith("audio") ? "voice" : "attachment",
@@ -642,12 +717,7 @@ function Shell({
     pushMsg(thread.id, local);
     persist(acc);
     if (thread.peerUserId) await deliver(thread.peerUserId, inner);
-    else if (thread.groupId) {
-      const g = await api(`/v1/groups/${thread.groupId}`, acc.access, {}, acc);
-      for (const m of g.group.members as { user_id: string }[]) {
-        await deliver(m.user_id, inner, "message", thread.groupId);
-      }
-    }
+    else if (thread.groupId) await deliver(acc.userId, inner, "message", thread.groupId);
   }
 
   async function recordVoice() {
@@ -681,7 +751,7 @@ function Shell({
     };
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    await sendInner(
+    await deliver(
       thread.peerUserId,
       {
         version: 1,
@@ -701,7 +771,8 @@ function Shell({
       method: "POST",
       body: JSON.stringify({ member_ids: ids }),
     });
-    const id = res.group.id;
+    const id = res.group.id as string;
+    const epoch = Number(res.group.epoch ?? 1);
     acc.threads.unshift({
       id,
       kind: "group",
@@ -711,6 +782,7 @@ function Shell({
       unread: 0,
       disappearingSeconds: 0,
     });
+    await distributeOwnSenderKey(acc, id, epoch, [acc.userId, ...ids]);
     persist(acc);
     setActive(id);
     setModal(null);
@@ -974,9 +1046,17 @@ function Shell({
                 ctx.msg.reaction = e;
                 persist(acc);
                 setCtx(null);
-                const peer = thread?.peerUserId;
-                if (peer) {
-                  void deliver(peer, {
+                if (thread?.groupId) {
+                  void deliver(acc.userId, {
+                    version: 1,
+                    type: "reaction",
+                    clientId: crypto.randomUUID(),
+                    sentAt: new Date().toISOString(),
+                    threadId: ctx.msg.threadId,
+                    reaction: { targetClientId: ctx.msg.clientId, emoji: e },
+                  }, "control", thread.groupId);
+                } else if (thread?.peerUserId) {
+                  void deliver(thread.peerUserId, {
                     version: 1,
                     type: "reaction",
                     clientId: crypto.randomUUID(),
@@ -996,9 +1076,18 @@ function Shell({
               ctx.msg.text = "";
               persist(acc);
               setCtx(null);
-              const peer = thread?.peerUserId;
-              if (peer) {
-                void deliver(peer, {
+              if (thread?.groupId) {
+                void deliver(acc.userId, {
+                  version: 1,
+                  type: "delete",
+                  clientId: crypto.randomUUID(),
+                  sentAt: new Date().toISOString(),
+                  threadId: ctx.msg.threadId,
+                  editOf: ctx.msg.clientId,
+                  deleteFor: "everyone",
+                }, "control", thread.groupId);
+              } else if (thread?.peerUserId) {
+                void deliver(thread.peerUserId, {
                   version: 1,
                   type: "delete",
                   clientId: crypto.randomUUID(),
@@ -1111,7 +1200,7 @@ function Shell({
 
       {call && (
         <div className="call-overlay">
-          <div className="title">{call.incoming ? t(lang, "incoming") : t(lang, call.media)}</div>
+          <div className="title">{call.incoming ? t(lang, "incoming") : t(lang, call.media === "video" ? "video" : "call")}</div>
           <video ref={localVideo} autoPlay muted playsInline />
           <video ref={remoteVideo} autoPlay playsInline />
           <div className="call-actions">

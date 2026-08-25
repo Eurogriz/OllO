@@ -145,8 +145,24 @@ Envelope (server-visible schema):
 - `POST /v1/groups/{id}/members`
 - `DELETE /v1/groups/{id}/members/{user_id}`
 - `POST /v1/groups/{id}/epoch` — bump after membership crypto rotation
+- `POST /v1/groups/{id}/fanout` — copy one opaque ciphertext to every other member device
 - `POST /v1/groups/{id}/invites`
 - `POST /v1/groups/join/{token}`
+
+Fan-out body (server never parses the inner payload):
+
+```json
+{
+  "kind": "message",
+  "ciphertext": "b64",
+  "padding_bucket": 1024,
+  "ttl_seconds": 0
+}
+```
+
+The same ciphertext is stored once per recipient device (except the sender device).
+Membership is required. A membership change increments `epoch`; clients must
+redistribute Sender Keys over 1:1 sessions before the next group send.
 
 ## Attachments
 

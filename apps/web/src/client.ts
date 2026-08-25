@@ -2,21 +2,32 @@ import type { InnerMessage, PrekeyBundle, SealedPayload } from "@ollo/protocol";
 import { decodeSealed, encodeSealed, paddingBucket } from "@ollo/protocol";
 import {
   type LocalDevice,
+  type RemoteSenderKey,
+  type SenderKeyState,
   type SessionState,
+  acceptSenderKey,
   acceptSession,
   beginSession,
   createLocalDevice,
+  createSenderKey,
   decryptAttachment,
+  decryptGroupMessage,
   decryptMessage,
   deserializeIdentity,
+  deserializeRemoteSenderKey,
+  deserializeSenderKey,
   deserializeSession,
+  distributeSenderKey,
   encryptAttachment,
   encryptFirstMessage,
+  encryptGroupMessage,
   encryptMessage,
   generateOneTimePrekeys,
   generateSignedPrekey,
   safetyNumber,
   serializeIdentity,
+  serializeRemoteSenderKey,
+  serializeSenderKey,
   serializeSession,
 } from "@ollo/crypto";
 
@@ -81,6 +92,8 @@ export interface Account {
   firstSent: Record<string, boolean>;
   knownIdentities: Record<string, string>;
   outbox: OutboxItem[];
+  senderKeys: Record<string, SenderKeyState>;
+  remoteSenderKeys: Record<string, RemoteSenderKey>;
 }
 
 export function sessionKey(userId: string, deviceId: string): string {
@@ -129,6 +142,12 @@ export function loadAccount(): Account | null {
       firstSent: j.firstSent ?? {},
       knownIdentities: j.knownIdentities ?? {},
       outbox: j.outbox ?? [],
+      senderKeys: Object.fromEntries(
+        Object.entries(j.senderKeys ?? {}).map(([k, v]) => [k, deserializeSenderKey(v)]),
+      ),
+      remoteSenderKeys: Object.fromEntries(
+        Object.entries(j.remoteSenderKeys ?? {}).map(([k, v]) => [k, deserializeRemoteSenderKey(v)]),
+      ),
     };
   } catch {
     return null;
@@ -166,6 +185,12 @@ export function saveAccount(acc: Account): void {
     firstSent: acc.firstSent,
     knownIdentities: acc.knownIdentities,
     outbox: acc.outbox,
+    senderKeys: Object.fromEntries(
+      Object.entries(acc.senderKeys ?? {}).map(([k, v]) => [k, serializeSenderKey(v)]),
+    ),
+    remoteSenderKeys: Object.fromEntries(
+      Object.entries(acc.remoteSenderKeys ?? {}).map(([k, v]) => [k, serializeRemoteSenderKey(v)]),
+    ),
   };
   localStorage.setItem(STORE_KEY, JSON.stringify(stored));
 }
@@ -346,12 +371,12 @@ export async function flushOutbox(acc: Account): Promise<void> {
   for (const item of pending) {
     try {
       if (item.groupId) {
-        const g = await api(`/v1/groups/${item.groupId}`, acc.access, {}, acc);
-        for (const m of g.group.members as { user_id: string }[]) {
-          await sendToUser(acc, m.user_id, item.inner, item.kind, item.groupId);
-        }
+        await sendToGroup(acc, item.groupId, item.inner, item.kind);
       } else {
         await sendToUser(acc, item.peerUserId, item.inner, item.kind);
+        if (item.peerUserId !== acc.userId) {
+          await sendToUser(acc, acc.userId, item.inner, item.kind);
+        }
       }
       acc.outbox = acc.outbox.filter((x) => x.id !== item.id);
     } catch {
@@ -367,13 +392,163 @@ export function openEnvelope(
   senderUserId: string,
   senderDeviceId: string,
   ciphertextB64: string,
+  groupId?: string,
 ): InnerMessage {
   const sealed = decodeSealed(b64u(ciphertextB64));
+  if (sealed.alg.startsWith("senderkey") && groupId) {
+    const epoch = sealed.header.previousChainLength;
+    const key = `${groupId}:${senderUserId}:${senderDeviceId}:${epoch}`;
+    const rk = acc.remoteSenderKeys?.[key];
+    if (!rk) throw new Error("missing sender key");
+    return decryptGroupMessage(rk, sealed);
+  }
   const sk = sessionKey(senderUserId, senderDeviceId);
   if (!acc.sessions[sk]) {
     acc.sessions[sk] = acceptSession(acc.device, sealed, senderUserId, senderDeviceId);
   }
   return decryptMessage(acc.sessions[sk]!, sealed);
+}
+
+function bytesZero(b: Uint8Array): boolean {
+  return b.every((x) => x === 0);
+}
+
+function bytesEq(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= a[i]! ^ b[i]!;
+  return d === 0;
+}
+
+export async function resolveSenderEd25519(
+  acc: Account,
+  senderUserId: string,
+  senderDeviceId: string,
+): Promise<Uint8Array> {
+  const sk = sessionKey(senderUserId, senderDeviceId);
+  const session = acc.sessions[sk];
+  if (session && !bytesZero(session.remoteIdentityEd25519)) {
+    return session.remoteIdentityEd25519;
+  }
+  const listed = await api(`/v1/keys/${senderUserId}/devices`, acc.access, {}, acc);
+  const devices = (listed.devices ?? []) as Array<{
+    device_id: string;
+    identity_key_x25519: string;
+    identity_key_ed25519: string;
+  }>;
+  const row = devices.find((d) => d.device_id === senderDeviceId);
+  if (!row) throw new Error("unknown sender device");
+  const ed = b64u(row.identity_key_ed25519);
+  const x = b64u(row.identity_key_x25519);
+  if (session) {
+    if (!bytesEq(session.remoteIdentityX25519, x)) {
+      throw new Error("identity_changed");
+    }
+    session.remoteIdentityEd25519 = ed;
+  }
+  return ed;
+}
+
+export function ingestSenderKey(
+  acc: Account,
+  inner: InnerMessage,
+  senderUserId: string,
+  senderDeviceId: string,
+  senderIdentityEd25519: Uint8Array,
+): void {
+  if (!inner.senderKey) return;
+  const sig = inner.senderKey.identitySignature;
+  if (!sig || sig.length === 0) throw new Error("sender key missing identity signature");
+  const remote = acceptSenderKey({
+    dist: inner.senderKey,
+    identitySignature: sig,
+    senderIdentityEd25519,
+    userId: senderUserId,
+    deviceId: senderDeviceId,
+  });
+  if (!acc.remoteSenderKeys) acc.remoteSenderKeys = {};
+  acc.remoteSenderKeys[`${remote.groupId}:${remote.userId}:${remote.deviceId}:${remote.epoch}`] = remote;
+}
+
+export function ensureOwnSenderKey(acc: Account, groupId: string, epoch: number): SenderKeyState {
+  if (!acc.senderKeys) acc.senderKeys = {};
+  const k = `${groupId}:${epoch}`;
+  const existing = acc.senderKeys[k];
+  if (existing) return existing;
+  const created = createSenderKey(groupId, epoch);
+  acc.senderKeys[k] = created;
+  return created;
+}
+
+export async function distributeOwnSenderKey(
+  acc: Account,
+  groupId: string,
+  epoch: number,
+  memberIds: string[],
+): Promise<void> {
+  const state = ensureOwnSenderKey(acc, groupId, epoch);
+  const dist = distributeSenderKey(state, acc.device.identity);
+  const inner: InnerMessage = {
+    version: 1,
+    type: "sender_key_distribute",
+    clientId: crypto.randomUUID(),
+    sentAt: new Date().toISOString(),
+    threadId: groupId,
+    senderKey: {
+      groupId: dist.groupId,
+      epoch: dist.epoch,
+      chainId: dist.chainId,
+      chainKey: dist.chainKey,
+      iteration: dist.iteration,
+      signingKey: dist.signingKey,
+      identitySignature: dist.identitySignature,
+    },
+  };
+  for (const uid of memberIds) {
+    if (uid === acc.userId) continue;
+    await sendToUser(acc, uid, inner, "control", groupId);
+  }
+}
+
+export async function sendToGroup(
+  acc: Account,
+  groupId: string,
+  inner: InnerMessage,
+  kind: OutboxItem["kind"] = "message",
+): Promise<void> {
+  const g = await api(`/v1/groups/${groupId}`, acc.access, {}, acc);
+  const epoch = Number(g.group.epoch ?? 1);
+  const members = (g.group.members as { user_id: string }[]).map((m) => m.user_id);
+  const keyId = `${groupId}:${epoch}`;
+  const existed = Boolean(acc.senderKeys?.[keyId]);
+  if (!existed) {
+    await distributeOwnSenderKey(acc, groupId, epoch, members);
+  }
+  const state = ensureOwnSenderKey(acc, groupId, epoch);
+  const sealed = encryptGroupMessage(state, inner);
+  const bytes = encodeSealed(sealed);
+  await api(
+    `/v1/groups/${groupId}/fanout`,
+    acc.access,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        kind,
+        ciphertext: b64(bytes),
+        padding_bucket: paddingBucket(bytes.length),
+        ttl_seconds: inner.ttlSeconds,
+      }),
+    },
+    acc,
+  );
+}
+
+export async function syncToOwnDevices(
+  acc: Account,
+  inner: InnerMessage,
+  kind: OutboxItem["kind"] = "message",
+): Promise<void> {
+  await sendToUser(acc, acc.userId, inner, kind);
 }
 
 export function computeSafety(acc: Account, theirX: Uint8Array) {
@@ -419,7 +594,7 @@ export async function downloadAndDecrypt(
     },
     buf,
   );
-  return new Blob([pt], { type: pointer.mime });
+  return new Blob([new Uint8Array(pt)], { type: pointer.mime });
 }
 
 export async function replenishPrekeys(acc: Account): Promise<void> {
@@ -492,4 +667,6 @@ interface Stored {
   firstSent: Record<string, boolean>;
   knownIdentities: Record<string, string>;
   outbox: OutboxItem[];
+  senderKeys?: Record<string, string>;
+  remoteSenderKeys?: Record<string, string>;
 }

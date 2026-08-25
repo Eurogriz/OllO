@@ -165,6 +165,7 @@ export interface SenderKeyDistribution {
   chainKey: Uint8Array;
   iteration: number;
   signingKey: Uint8Array;
+  identitySignature: Uint8Array;
 }
 
 export interface GroupStateUpdate {

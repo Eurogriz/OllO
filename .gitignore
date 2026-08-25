@@ -43,8 +43,11 @@ GoogleService-Info.plist
 secrets/
 *.secret
 
-# Local data (repo-root only — do not ignore source packages named data)
+# Local data (never commit databases / object stores)
 /data/
+**/data/pglite/
+**/data/objects/
+services/server/data/
 .pglite/
 *.sqlite
 *.sqlite3

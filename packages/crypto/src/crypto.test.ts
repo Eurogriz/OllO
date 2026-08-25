@@ -120,6 +120,12 @@ describe("Sender Keys", () => {
     const sealed = senderEncrypt(sk, new TextEncoder().encode("group hi"));
     const pt = senderDecrypt(remote, sealed);
     assert.equal(new TextDecoder().decode(pt), "group hi");
+
+    const next = senderEncrypt(sk, new TextEncoder().encode("again"));
+    const forgedCt = new Uint8Array(next.ciphertext);
+    forgedCt[0] = (forgedCt[0] ?? 0) ^ 0xff;
+    const forged = { ...next, ciphertext: forgedCt };
+    assert.throws(() => senderDecrypt(remote, forged));
   });
 
   it("new epoch after member removal uses a fresh chain", () => {
@@ -137,7 +143,7 @@ describe("Attachments", () => {
     const pt = decryptAttachment(enc, enc.ciphertext);
     assert.equal(new TextDecoder().decode(pt), "PDF-BYTES-SECRET");
     const tampered = new Uint8Array(enc.ciphertext);
-    tampered[3] ^= 1;
+    tampered[3] = (tampered[3] ?? 0) ^ 1;
     assert.throws(() => decryptAttachment(enc, tampered));
   });
 });

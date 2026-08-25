@@ -13,6 +13,11 @@ export interface DhKeyPair {
   publicKey: Uint8Array;
 }
 
+export interface SignKeyPair {
+  privateKey: Uint8Array;
+  publicKey: Uint8Array;
+}
+
 export interface SignedPrekeyPair {
   id: number;
   privateKey: Uint8Array;
@@ -40,6 +45,11 @@ export function generateIdentity(): IdentityKeyPair {
 export function generateDh(): DhKeyPair {
   const privateKey = x25519.utils.randomPrivateKey();
   return { privateKey, publicKey: x25519.getPublicKey(privateKey) };
+}
+
+export function generateEd25519(): SignKeyPair {
+  const privateKey = ed25519.utils.randomPrivateKey();
+  return { privateKey, publicKey: ed25519.getPublicKey(privateKey) };
 }
 
 export function dh(privateKey: Uint8Array, publicKey: Uint8Array): Uint8Array {

@@ -114,13 +114,18 @@ We do **not** invent a group ratchet.
 
 Each member, per group, per device, holds a Sender Key:
 
-- A chain key and an index
-- Distributed to each other member device via the existing 1:1 sessions
-- Message: `AES/XChaCha` under `HKDF(chain_key, i)`
+- A chain key, an index, and an Ed25519 signing key for that sender chain
+- Distributed to each other member device via the existing 1:1 sessions,
+  signed by the sender’s long-term identity Ed25519 key
+- Message: XChaCha20-Poly1305 under `HKDF(chain_key, i)`, plus an Ed25519
+  signature over `nonce || ciphertext || aad` so other members who know the
+  chain key still cannot forge as that sender
 - On member **remove** or device revoke: increment group epoch, all members
   generate fresh sender keys and redistribute
 - On member **add**: current members send them the current sender keys over
   1:1 (they cannot read history before the add unless someone forwards it)
+- Server copies the **same** opaque ciphertext to every other member device
+  (`POST /v1/groups/:id/fanout`). It cannot derive sender keys.
 
 Server role: membership + epoch + fan-out of opaque ciphertext.
 Server cannot derive sender keys.

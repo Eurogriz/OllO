@@ -6,6 +6,24 @@ import { ApiError, requireAuth } from "../http.js";
 import { getObject, newObjectKey, objectExists, putObject } from "../objects.js";
 import { randomToken, randomUuid, sha256Hex } from "../security/crypto-utils.js";
 
+async function grantAllows(db: Db, attachmentId: string, token: string, userId: string): Promise<boolean> {
+  const g = await db.query<{ recipient_user_id: string | null; group_id: string | null; expires_at: string }>(
+    "SELECT recipient_user_id, group_id, expires_at FROM attachment_grants WHERE token_hash = $1 AND attachment_id = $2",
+    [sha256Hex(token), attachmentId],
+  );
+  const row = g.rows[0];
+  if (!row || new Date(row.expires_at).getTime() <= Date.now()) return false;
+  if (row.recipient_user_id && row.recipient_user_id === userId) return true;
+  if (row.group_id) {
+    const mem = await db.query(
+      "SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2 AND removed_at IS NULL",
+      [row.group_id, userId],
+    );
+    return Boolean(mem.rows[0]);
+  }
+  return false;
+}
+
 export async function registerAttachments(app: FastifyInstance, db: Db): Promise<void> {
   app.post("/v1/attachments", async (req) => {
     const auth = requireAuth(req);
@@ -76,18 +94,31 @@ export async function registerAttachments(app: FastifyInstance, db: Db): Promise
   app.post("/v1/attachments/:id/grants", async (req) => {
     const auth = requireAuth(req);
     const id = (req.params as { id: string }).id;
-    const body = z.object({ recipient_user_id: z.string().uuid() }).parse(req.body);
+    const body = z
+      .object({
+        recipient_user_id: z.string().uuid().optional(),
+        group_id: z.string().uuid().optional(),
+      })
+      .refine((v) => Boolean(v.recipient_user_id || v.group_id), { message: "recipient or group required" })
+      .parse(req.body);
     const row = await db.query<{ uploader_device_id: string }>(
       "SELECT uploader_device_id FROM attachments WHERE id = $1",
       [id],
     );
     if (!row.rows[0]) throw new ApiError("not_found", "Attachment not found", 404);
+    if (body.group_id) {
+      const mem = await db.query(
+        "SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2 AND removed_at IS NULL",
+        [body.group_id, auth.userId],
+      );
+      if (!mem.rows[0]) throw new ApiError("forbidden", "Not a group member", 403);
+    }
     const token = randomToken(24);
     const exp = new Date(Date.now() + 7 * 86400_000);
     await db.query(
-      `INSERT INTO attachment_grants (token_hash, attachment_id, recipient_user_id, expires_at)
-       VALUES ($1,$2,$3,$4)`,
-      [sha256Hex(token), id, body.recipient_user_id, exp.toISOString()],
+      `INSERT INTO attachment_grants (token_hash, attachment_id, recipient_user_id, group_id, expires_at)
+       VALUES ($1,$2,$3,$4,$5)`,
+      [sha256Hex(token), id, body.recipient_user_id ?? null, body.group_id ?? null, exp.toISOString()],
     );
     return { grant: token, expires_at: exp.toISOString() };
   });
@@ -104,15 +135,7 @@ export async function registerAttachments(app: FastifyInstance, db: Db): Promise
     if (!a || !a.completed_at) throw new ApiError("not_found", "Attachment not found", 404);
     let allowed = a.uploader_device_id === auth.deviceId;
     if (!allowed && q.grant) {
-      const g = await db.query<{ recipient_user_id: string; expires_at: string }>(
-        "SELECT recipient_user_id, expires_at FROM attachment_grants WHERE token_hash = $1 AND attachment_id = $2",
-        [sha256Hex(q.grant), id],
-      );
-      allowed = Boolean(
-        g.rows[0] &&
-          g.rows[0].recipient_user_id === auth.userId &&
-          new Date(g.rows[0].expires_at).getTime() > Date.now(),
-      );
+      allowed = await grantAllows(db, id, q.grant, auth.userId);
     }
     if (!allowed) throw new ApiError("forbidden", "No download grant", 403);
     return { download_path: `/v1/attachments/${id}/data`, grant: q.grant ?? null };
@@ -130,11 +153,7 @@ export async function registerAttachments(app: FastifyInstance, db: Db): Promise
     if (!a || !objectExists(a.object_key)) throw new ApiError("not_found", "Attachment not found", 404);
     let allowed = a.uploader_device_id === auth.deviceId;
     if (!allowed && q.grant) {
-      const g = await db.query<{ recipient_user_id: string }>(
-        "SELECT recipient_user_id FROM attachment_grants WHERE token_hash = $1 AND attachment_id = $2",
-        [sha256Hex(q.grant), id],
-      );
-      allowed = g.rows[0]?.recipient_user_id === auth.userId;
+      allowed = await grantAllows(db, id, q.grant, auth.userId);
     }
     if (!allowed) throw new ApiError("forbidden", "No download grant", 403);
     const buf = await getObject(a.object_key);

@@ -193,4 +193,110 @@ describe("API integration", () => {
     assert.equal(presence.status, 200);
     assert.ok(presence.body.state === "online" || presence.body.state === "offline");
   });
+
+  it("fans out one group ciphertext the server cannot read", async () => {
+    const { createSenderKey, distributeSenderKey, encryptGroupMessage, decryptGroupMessage, acceptSenderKey } =
+      await import("@ollo/crypto");
+    const { encodeSealed, decodeSealed, paddingBucket } = await import("@ollo/protocol");
+
+    const aDev = devicePayload("alice-g");
+    const bDev = devicePayload("bob-g");
+    const cDev = devicePayload("carol-g");
+
+    async function signup(phone: string, username: string, dev: ReturnType<typeof devicePayload>) {
+      const otp = await json("POST", "/v1/auth/request-otp", { phone_e164: phone });
+      const verified = await json("POST", "/v1/auth/verify-otp", {
+        challenge_id: otp.body.challenge_id,
+        otp: otp.body.dev_otp,
+        device: dev.json,
+      });
+      assert.equal(verified.status, 200, JSON.stringify(verified.body));
+      const tok = verified.body.access_token as string;
+      await json("PUT", "/v1/me", { username, display_name: username }, tok);
+      return {
+        tok,
+        userId: (verified.body.user as { id: string }).id,
+        deviceId: verified.body.device_id as string,
+      };
+    }
+
+    const alice = await signup("+79990000011", "aliceg", aDev);
+    const bob = await signup("+79990000012", "bobg", bDev);
+    const carol = await signup("+79990000013", "carolg", cDev);
+
+    const created = await json("POST", "/v1/groups", { member_ids: [bob.userId, carol.userId] }, alice.tok);
+    assert.equal(created.status, 200, JSON.stringify(created.body));
+    const groupId = (created.body.group as { id: string; epoch: number }).id;
+    const epoch = (created.body.group as { epoch: number }).epoch;
+
+    const sk = createSenderKey(groupId, epoch);
+    const dist = distributeSenderKey(sk, aDev.mat.identity);
+    const bobRemote = acceptSenderKey({
+      dist,
+      identitySignature: dist.identitySignature,
+      senderIdentityEd25519: aDev.mat.identity.ed25519Public,
+      userId: alice.userId,
+      deviceId: alice.deviceId,
+    });
+    const sealed = encryptGroupMessage(sk, {
+      version: 1,
+      type: "text",
+      clientId: crypto.randomUUID(),
+      sentAt: new Date().toISOString(),
+      threadId: groupId,
+      text: "группа секрет",
+    });
+    const payload = encodeSealed(sealed);
+    const fan = await json(
+      "POST",
+      `/v1/groups/${groupId}/fanout`,
+      {
+        kind: "message",
+        ciphertext: Buffer.from(payload).toString("base64"),
+        padding_bucket: paddingBucket(payload.length),
+      },
+      alice.tok,
+    );
+    assert.equal(fan.status, 200, JSON.stringify(fan.body));
+    assert.equal((fan.body.accepted as number) >= 2, true);
+
+    const outsider = await json(
+      "POST",
+      `/v1/groups/${groupId}/fanout`,
+      {
+        kind: "message",
+        ciphertext: Buffer.from(payload).toString("base64"),
+        padding_bucket: paddingBucket(payload.length),
+      },
+      carol.tok,
+    );
+    assert.equal(outsider.status, 200);
+
+    const box = await json("GET", "/v1/envelopes?limit=20", undefined, bob.tok);
+    const envs = box.body.envelopes as Array<{ ciphertext: string; group_id: string }>;
+    const groupEnv = envs.find((e) => e.group_id === groupId);
+    assert.ok(groupEnv);
+    const raw = Buffer.from(groupEnv!.ciphertext, "base64");
+    assert.equal(raw.toString("utf8").includes("группа секрет"), false);
+    const opened = decryptGroupMessage(bobRemote, decodeSealed(raw));
+    assert.equal(opened.text, "группа секрет");
+
+    const eveOtp = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000014" });
+    const eve = await json("POST", "/v1/auth/verify-otp", {
+      challenge_id: eveOtp.body.challenge_id,
+      otp: eveOtp.body.dev_otp,
+      device: devicePayload("eve-g").json,
+    });
+    const forbidden = await json(
+      "POST",
+      `/v1/groups/${groupId}/fanout`,
+      {
+        kind: "message",
+        ciphertext: Buffer.from(payload).toString("base64"),
+        padding_bucket: paddingBucket(payload.length),
+      },
+      eve.body.access_token as string,
+    );
+    assert.equal(forbidden.status, 403);
+  });
 });

@@ -9,9 +9,9 @@
 
 import type { SealedPayload, SenderKeyDistribution } from "@ollo/protocol";
 import { aeadDecrypt, aeadEncrypt } from "./aead.js";
-import { fromB64, randomBytes, toB64, utf8 } from "./bytes.js";
+import { concat, equal, fromB64, randomBytes, toB64, utf8 } from "./bytes.js";
 import { kdf } from "./kdf.js";
-import { type IdentityKeyPair, generateDh, sign, verify } from "./keys.js";
+import { type IdentityKeyPair, generateEd25519, sign, verify } from "./keys.js";
 
 export interface SenderKeyState {
   groupId: string;
@@ -35,7 +35,7 @@ export interface RemoteSenderKey {
 }
 
 export function createSenderKey(groupId: string, epoch: number): SenderKeyState {
-  const signing = generateDh();
+  const signing = generateEd25519();
   return {
     groupId,
     epoch,
@@ -153,6 +153,33 @@ export function deserializeSenderKey(raw: string): SenderKeyState {
     chainKey: fromB64(String(j.chainKey)),
     iteration: Number(j.iteration),
     signingPrivate: fromB64(String(j.signingPrivate)),
+    signingPublic: fromB64(String(j.signingPublic)),
+  };
+}
+
+export function serializeRemoteSenderKey(s: RemoteSenderKey): string {
+  return JSON.stringify({
+    groupId: s.groupId,
+    epoch: s.epoch,
+    userId: s.userId,
+    deviceId: s.deviceId,
+    chainId: s.chainId,
+    chainKey: toB64(s.chainKey),
+    iteration: s.iteration,
+    signingPublic: toB64(s.signingPublic),
+  });
+}
+
+export function deserializeRemoteSenderKey(raw: string): RemoteSenderKey {
+  const j = JSON.parse(raw) as Record<string, string | number>;
+  return {
+    groupId: String(j.groupId),
+    epoch: Number(j.epoch),
+    userId: String(j.userId),
+    deviceId: String(j.deviceId),
+    chainId: String(j.chainId),
+    chainKey: fromB64(String(j.chainKey)),
+    iteration: Number(j.iteration),
     signingPublic: fromB64(String(j.signingPublic)),
   };
 }
