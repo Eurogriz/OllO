@@ -148,6 +148,23 @@ describe("Attachments", () => {
   });
 });
 
+describe("Encrypted backup", () => {
+  it("round-trips and rejects a wrong passphrase or a tampered blob", async () => {
+    const { sealBackup, openBackup, encodeBackup, decodeBackup } = await import("./backup.js");
+    const secret = new TextEncoder().encode("identity-and-sessions");
+    const blob = sealBackup("correct-horse-battery", secret);
+    const wire = encodeBackup(blob);
+    const again = openBackup("correct-horse-battery", decodeBackup(wire));
+    assert.equal(new TextDecoder().decode(again), "identity-and-sessions");
+    assert.throws(() => openBackup("wrong-passphrase-xx", blob));
+    const tampered = {
+      ...blob,
+      ciphertext: `${blob.ciphertext.slice(0, -2)}${blob.ciphertext.endsWith("AA") ? "BB" : "AA"}`,
+    };
+    assert.throws(() => openBackup("correct-horse-battery", tampered));
+  });
+});
+
 describe("Safety number", () => {
   it("is stable regardless of argument order", () => {
     const a = generateIdentity();

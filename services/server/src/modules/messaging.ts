@@ -4,6 +4,7 @@ import { MAX_ENVELOPE_BYTES } from "@ollo/shared";
 import { config } from "../config.js";
 import type { Db } from "../db/index.js";
 import { ApiError, requireAuth } from "../http.js";
+import { maybeWake } from "./notifications.js";
 import { pushToDevice } from "../realtime/hub.js";
 import { randomUuid } from "../security/crypto-utils.js";
 
@@ -80,6 +81,7 @@ export async function registerMessaging(app: FastifyInstance, db: Db): Promise<v
         created_at: new Date().toISOString(),
       };
       pushToDevice(env.recipient_device_id, { op: "envelope", envelope: wire });
+      await maybeWake(db, env.recipient_user_id, env.recipient_device_id, env.kind === "call" ? "call" : "msg");
       stored.push({ id });
     }
     return { accepted: stored };

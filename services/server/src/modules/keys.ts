@@ -57,9 +57,10 @@ export async function registerKeys(app: FastifyInstance, db: Db): Promise<void> 
     const body = z.object({ token: z.string().min(8).max(4096), platform: z.enum(["android", "ios", "web"]) }).parse(
       req.body,
     );
+    const { wrapPushToken } = await import("./notifications.js");
     await db.query("UPDATE devices SET push_token_enc = $2, last_seen_at = now() WHERE id = $1", [
       auth.deviceId,
-      Buffer.from(body.token, "utf8"),
+      wrapPushToken(body.token),
     ]);
     return { ok: true };
   });

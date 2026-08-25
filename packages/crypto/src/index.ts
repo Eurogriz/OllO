@@ -1,5 +1,6 @@
 export * from "./aead.js";
 export * from "./attachments.js";
+export * from "./backup.js";
 export * from "./bytes.js";
 export * from "./engine.js";
 export * from "./kdf.js";

@@ -10,6 +10,7 @@ import type { Db } from "./db/index.js";
 import { ApiError, requestId, sendError, requireAuth } from "./http.js";
 import { registerAttachments } from "./modules/attachments.js";
 import { registerAuth } from "./modules/auth.js";
+import { registerBackups } from "./modules/backups.js";
 import { registerCalls } from "./modules/calls.js";
 import { registerGroups } from "./modules/groups.js";
 import { registerKeys } from "./modules/keys.js";
@@ -107,6 +108,7 @@ export async function buildApp(db: Db): Promise<FastifyInstance> {
   await registerAttachments(app, db);
   await registerCalls(app, db);
   await registerNotifications(app, db);
+  await registerBackups(app, db);
 
   app.get("/v1/presence/:userId", async (req) => {
     requireAuth(req);

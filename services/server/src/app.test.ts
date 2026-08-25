@@ -299,4 +299,143 @@ describe("API integration", () => {
     );
     assert.equal(forbidden.status, 403);
   });
+
+  it("issues call rooms without SDP and rejects blocked callees", async () => {
+    async function signup(phone: string, username: string) {
+      const otp = await json("POST", "/v1/auth/request-otp", { phone_e164: phone });
+      const verified = await json("POST", "/v1/auth/verify-otp", {
+        challenge_id: otp.body.challenge_id,
+        otp: otp.body.dev_otp,
+        device: devicePayload(username).json,
+      });
+      await json("PUT", "/v1/me", { username, display_name: username }, verified.body.access_token as string);
+      return {
+        tok: verified.body.access_token as string,
+        userId: (verified.body.user as { id: string }).id,
+      };
+    }
+    const alice = await signup("+79990000021", "alicecall");
+    const bob = await signup("+79990000022", "bobcall");
+    const eve = await signup("+79990000023", "evecall");
+
+    const created = await json(
+      "POST",
+      "/v1/calls",
+      { media: "audio", participant_user_ids: [bob.userId] },
+      alice.tok,
+    );
+    assert.equal(created.status, 200, JSON.stringify(created.body));
+    const callId = created.body.call_id as string;
+    assert.ok(Array.isArray(created.body.ice_servers));
+    assert.equal(JSON.stringify(created.body).includes("sdp"), false);
+
+    const joined = await json("POST", `/v1/calls/${callId}/join`, {}, bob.tok);
+    assert.equal(joined.status, 200, JSON.stringify(joined.body));
+
+    const peek = await json("GET", `/v1/calls/${callId}`, undefined, eve.tok);
+    assert.equal(peek.status, 403);
+
+    await json("POST", "/v1/blocks", { user_id: bob.userId }, alice.tok);
+    const blocked = await json(
+      "POST",
+      "/v1/calls",
+      { media: "video", participant_user_ids: [bob.userId] },
+      alice.tok,
+    );
+    assert.equal(blocked.status, 403);
+  });
+
+  it("stores an opaque backup and wakes with a sealed payload only", async () => {
+    const { sealBackup, encodeBackup } = await import("@ollo/crypto");
+    const { recentWakes, resetWakes } = await import("./modules/notifications.js");
+    resetWakes();
+
+    const aDev = devicePayload("alice-b");
+    const bDev = devicePayload("bob-b");
+    const otpA = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000031" });
+    const alice = await json("POST", "/v1/auth/verify-otp", {
+      challenge_id: otpA.body.challenge_id,
+      otp: otpA.body.dev_otp,
+      device: aDev.json,
+    });
+    const otpB = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000032" });
+    const bob = await json("POST", "/v1/auth/verify-otp", {
+      challenge_id: otpB.body.challenge_id,
+      otp: otpB.body.dev_otp,
+      device: bDev.json,
+    });
+    const aliceTok = alice.body.access_token as string;
+    const bobTok = bob.body.access_token as string;
+    const bobUser = (bob.body.user as { id: string }).id;
+    const bobDevice = bob.body.device_id as string;
+
+    const blob = encodeBackup(sealBackup("backup-pass-ok", new TextEncoder().encode("SECRET-IDENTITY-MATERIAL")));
+    const put = await json("PUT", "/v1/backups", { blob: Buffer.from(blob).toString("base64") }, aliceTok);
+    assert.equal(put.status, 200, JSON.stringify(put.body));
+    const got = await json("GET", "/v1/backups/latest", undefined, aliceTok);
+    assert.equal(got.status, 200);
+    const stored = Buffer.from(got.body.blob as string, "base64").toString("utf8");
+    assert.equal(stored.includes("SECRET-IDENTITY-MATERIAL"), false);
+
+    await json("PUT", "/v1/devices/push-token", { token: "fcm-token-not-a-secret-enough", platform: "web" }, bobTok);
+    const local = { ...aDev.mat, userId: (alice.body.user as { id: string }).id, deviceId: alice.body.device_id as string };
+    const keys = await json("GET", `/v1/keys/${bobUser}/${bobDevice}`, undefined, aliceTok);
+    const bundle = keys.body.bundle as {
+      user_id: string;
+      device_id: string;
+      registration_id: number;
+      identity_key_x25519: string;
+      identity_key_ed25519: string;
+      signed_prekey: { id: number; public: string; signature: string };
+      one_time_prekey: { id: number; public: string } | null;
+    };
+    const init = beginSession(local, {
+      userId: bundle.user_id,
+      deviceId: bundle.device_id,
+      registrationId: bundle.registration_id,
+      identityKeyX25519: Buffer.from(bundle.identity_key_x25519, "base64"),
+      identityKeyEd25519: Buffer.from(bundle.identity_key_ed25519, "base64"),
+      signedPrekey: {
+        id: bundle.signed_prekey.id,
+        publicKey: Buffer.from(bundle.signed_prekey.public, "base64"),
+        signature: Buffer.from(bundle.signed_prekey.signature, "base64"),
+      },
+      oneTimePrekey: bundle.one_time_prekey
+        ? { id: bundle.one_time_prekey.id, publicKey: Buffer.from(bundle.one_time_prekey.public, "base64") }
+        : undefined,
+    });
+    const sealed = encryptFirstMessage(local, init, {
+      version: 1,
+      type: "text",
+      clientId: crypto.randomUUID(),
+      sentAt: new Date().toISOString(),
+      threadId: bobUser,
+      text: "не в пуше",
+    });
+    const payload = encodeSealed(sealed);
+    const sent = await json(
+      "POST",
+      "/v1/envelopes",
+      {
+        envelopes: [
+          {
+            recipient_user_id: bobUser,
+            recipient_device_id: bobDevice,
+            kind: "message",
+            ciphertext: Buffer.from(payload).toString("base64"),
+            padding_bucket: paddingBucket(payload.length),
+          },
+        ],
+      },
+      aliceTok,
+    );
+    assert.equal(sent.status, 200, JSON.stringify(sent.body));
+    const wakes = recentWakes();
+    assert.ok(wakes.length >= 1);
+    const last = wakes[wakes.length - 1]!;
+    assert.deepEqual(Object.keys(last.payload).sort(), ["t", "v"]);
+    assert.equal(last.payload.v, 1);
+    assert.equal(last.payload.t, "msg");
+    assert.equal(JSON.stringify(last.payload).includes("не в пуше"), false);
+  });
 });

@@ -56,6 +56,9 @@ const dict = {
     lock: "PIN-блокировка регистрации",
     about: "О себе",
     noPlaintext: "На сервере нет plaintext.",
+    backup: "Резервная копия",
+    restore: "Восстановить",
+    screenshare: "Экран",
   },
   en: {
     tagline: "Private messages. The server cannot read them.",
@@ -112,6 +115,9 @@ const dict = {
     lock: "Registration lock PIN",
     about: "About",
     noPlaintext: "No plaintext on the server.",
+    backup: "Backup",
+    restore: "Restore",
+    screenshare: "Share screen",
   },
 } as const;
 

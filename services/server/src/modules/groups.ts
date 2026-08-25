@@ -4,6 +4,7 @@ import type { Db } from "../db/index.js";
 import { ApiError, requireAuth } from "../http.js";
 import { pushToDevice } from "../realtime/hub.js";
 import { randomToken, randomUuid, sha256Hex } from "../security/crypto-utils.js";
+import { maybeWake } from "./notifications.js";
 
 async function requireMember(db: Db, groupId: string, userId: string) {
   const r = await db.query<{ role: string }>(
@@ -177,6 +178,7 @@ export async function registerGroups(app: FastifyInstance, db: Db): Promise<void
             created_at: new Date().toISOString(),
           },
         });
+        await maybeWake(db, m.user_id, d.id, body.kind === "call" ? "call" : "msg");
         n += 1;
       }
     }

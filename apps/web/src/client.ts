@@ -22,13 +22,19 @@ import {
   encryptFirstMessage,
   encryptGroupMessage,
   encryptMessage,
+  decodeBackup,
+  encodeBackup,
+  fromUtf8,
   generateOneTimePrekeys,
   generateSignedPrekey,
+  openBackup,
   safetyNumber,
+  sealBackup,
   serializeIdentity,
   serializeRemoteSenderKey,
   serializeSenderKey,
   serializeSession,
+  utf8,
 } from "@ollo/crypto";
 
 const STORE_KEY = "ollo.account.v1";
@@ -619,6 +625,81 @@ export async function replenishPrekeys(acc: Account): Promise<void> {
 
 export function rotateLocalPrekey(acc: Account) {
   acc.device.signedPrekey = generateSignedPrekey(acc.device.identity, acc.device.signedPrekey.id + 1);
+}
+
+export function backupPlaintext(acc: Account): Uint8Array {
+  const stored: Stored = {
+    userId: acc.userId,
+    deviceId: acc.deviceId,
+    username: acc.username,
+    displayName: acc.displayName,
+    about: acc.about,
+    access: "",
+    refresh: "",
+    registrationId: acc.device.registrationId,
+    identity: serializeIdentity(acc.device.identity),
+    signedPrekey: {
+      id: acc.device.signedPrekey.id,
+      privateKey: b64(acc.device.signedPrekey.privateKey),
+      publicKey: b64(acc.device.signedPrekey.publicKey),
+      signature: b64(acc.device.signedPrekey.signature),
+    },
+    oneTimePrekeys: acc.device.oneTimePrekeys.map((k) => ({
+      id: k.id,
+      privateKey: b64(k.privateKey),
+      publicKey: b64(k.publicKey),
+    })),
+    sessions: Object.fromEntries(Object.entries(acc.sessions).map(([k, v]) => [k, serializeSession(v)])),
+    messages: acc.messages,
+    threads: acc.threads,
+    contacts: acc.contacts,
+    pinned: acc.pinned,
+    drafts: acc.drafts,
+    firstSent: acc.firstSent,
+    knownIdentities: acc.knownIdentities,
+    outbox: [],
+    senderKeys: Object.fromEntries(
+      Object.entries(acc.senderKeys ?? {}).map(([k, v]) => [k, serializeSenderKey(v)]),
+    ),
+    remoteSenderKeys: Object.fromEntries(
+      Object.entries(acc.remoteSenderKeys ?? {}).map(([k, v]) => [k, serializeRemoteSenderKey(v)]),
+    ),
+  };
+  return utf8(JSON.stringify(stored));
+}
+
+export function createBackupFile(acc: Account, passphrase: string): string {
+  return encodeBackup(sealBackup(passphrase, backupPlaintext(acc)));
+}
+
+export function materialFromBackup(raw: string, passphrase: string): ReturnType<typeof createLocalDevice> & {
+  identity: Account["device"]["identity"];
+} {
+  const stored = JSON.parse(fromUtf8(openBackup(passphrase, decodeBackup(raw)))) as Stored;
+  return {
+    registrationId: stored.registrationId,
+    identity: deserializeIdentity(stored.identity),
+    signedPrekey: {
+      id: stored.signedPrekey.id,
+      privateKey: b64u(stored.signedPrekey.privateKey),
+      publicKey: b64u(stored.signedPrekey.publicKey),
+      signature: b64u(stored.signedPrekey.signature),
+    },
+    oneTimePrekeys: stored.oneTimePrekeys.map((k) => ({
+      id: k.id,
+      privateKey: b64u(k.privateKey),
+      publicKey: b64u(k.publicKey),
+    })),
+  };
+}
+
+export function mergeBackupHistory(acc: Account, raw: string, passphrase: string): void {
+  const stored = JSON.parse(fromUtf8(openBackup(passphrase, decodeBackup(raw)))) as Stored;
+  acc.messages = { ...stored.messages, ...acc.messages };
+  acc.threads = stored.threads.length ? stored.threads : acc.threads;
+  acc.contacts = stored.contacts.length ? stored.contacts : acc.contacts;
+  acc.knownIdentities = { ...stored.knownIdentities, ...acc.knownIdentities };
+  acc.pinned = { ...stored.pinned, ...acc.pinned };
 }
 
 export function searchLocal(acc: Account, q: string): ChatMessage[] {

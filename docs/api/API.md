@@ -177,9 +177,22 @@ are not guessable and are single-object.
 
 ## Calls
 
-- `POST /v1/calls` — create `call_id`, issue TURN credentials
-- `POST /v1/calls/{id}/end`
-- Signaling payloads go through envelopes (`kind=call`)
+- `POST /v1/calls` — `{ media, participant_user_ids?, group_id? }` → `call_id` + time-limited ICE/TURN
+- `POST /v1/calls/{id}/join` — callee registers their own device (never the caller's)
+- `GET /v1/calls/{id}` — metadata only, no SDP
+- `GET /v1/me/calls` — recent rooms this device participated in
+- `POST /v1/calls/{id}/end` — any participant
+- Signaling (offer / answer / ICE / hangup / SFrame key) goes through E2EE envelopes (`kind=call`)
+
+TURN credentials are coturn REST (`expiry:userId` + HMAC-SHA1). Static shared
+passwords are not issued in production.
+
+## Backups
+
+- `PUT /v1/backups` — `{ blob }` opaque ciphertext (Argon2id + XChaCha20-Poly1305 on the client)
+- `GET /v1/backups/latest` — last sealed blob for this user
+
+The server never receives the passphrase. Keep at most 3 blobs per user.
 
 ## WebSocket `/v1/realtime`
 

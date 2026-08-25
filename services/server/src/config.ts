@@ -65,6 +65,7 @@ export const config = {
   turnUrls: (process.env.TURN_URLS ?? "").split(",").filter(Boolean),
   turnUsername: process.env.TURN_USERNAME ?? "",
   turnPassword: process.env.TURN_PASSWORD ?? "",
+  turnSecret: process.env.TURN_SECRET ?? "",
   corsOrigins: (process.env.CORS_ORIGINS ?? "http://localhost:5173,http://127.0.0.1:5173")
     .split(",")
     .map((s) => s.trim())

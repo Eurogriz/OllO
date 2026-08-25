@@ -8,12 +8,15 @@ import {
   b64u,
   clearAccount,
   computeSafety,
+  createBackupFile,
   distributeOwnSenderKey,
   downloadAndDecrypt,
   encryptFile,
   flushOutbox,
   ingestSenderKey,
   loadAccount,
+  materialFromBackup,
+  mergeBackupHistory,
   newDeviceMaterial,
   openEnvelope,
   publicDevicePayload,
@@ -112,6 +115,8 @@ function Auth({
   const [displayName, setDisplayName] = useState("");
   const [username, setUsername] = useState("");
   const [err, setErr] = useState("");
+  const [restorePass, setRestorePass] = useState("");
+  const [restoreRaw, setRestoreRaw] = useState("");
   const mat = useRef(newDeviceMaterial());
 
   async function requestOtp() {
@@ -161,6 +166,13 @@ function Auth({
         senderKeys: {},
         remoteSenderKeys: {},
       };
+      if (restoreRaw) {
+        try {
+          mergeBackupHistory(acc, restoreRaw, restorePass);
+        } catch {
+          /* history optional */
+        }
+      }
       if (res.user.is_new || !res.user.username) {
         setStep(3);
         sessionStorage.setItem("ollo.tmp", JSON.stringify({ acc: serializeTmp(acc) }));
@@ -235,6 +247,34 @@ function Auth({
             </button>
           </>
         )}
+        {step === 1 && (
+          <div className="field" style={{ marginTop: 12 }}>
+            <label>{t(lang, "restore")}</label>
+            <input
+              type="password"
+              value={restorePass}
+              onChange={(e) => setRestorePass(e.target.value)}
+              placeholder="passphrase"
+            />
+            <input
+              type="file"
+              accept="application/json,.ollo"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (!f) return;
+                void f.text().then((txt) => {
+                  try {
+                    mat.current = materialFromBackup(txt, restorePass);
+                    setRestoreRaw(txt);
+                    sessionStorage.setItem("ollo.restore", txt);
+                  } catch (er) {
+                    setErr((er as Error).message);
+                  }
+                });
+              }}
+            />
+          </div>
+        )}
         {err && <p style={{ color: "var(--danger)" }}>{err}</p>}
         <div className="hint" style={{ marginTop: 16 }}>
           <button className="ghost" onClick={() => setLang(lang === "ru" ? "en" : "ru")}>
@@ -287,6 +327,9 @@ function Shell({
   const [identityWarn, setIdentityWarn] = useState("");
   const [lockPin, setLockPin] = useState("");
   const [safetyQr, setSafetyQr] = useState("");
+  const [backupPass, setBackupPass] = useState("");
+  const [muted, setMuted] = useState(false);
+  const [camOff, setCamOff] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -561,8 +604,9 @@ function Shell({
     if (!sig) return;
     if (sig.signalType === "offer") {
       setCall({ media: sig.media, incoming: true, remote: from, callId: sig.callId });
-      (window as unknown as { __offer: string; __from: string }).__offer = sig.sdp ?? "";
+      (window as unknown as { __offer: string; __from: string; __sframe?: Uint8Array }).__offer = sig.sdp ?? "";
       (window as unknown as { __from: string }).__from = from;
+      if (sig.sframeKey) (window as unknown as { __sframe: Uint8Array }).__sframe = sig.sframeKey;
       return;
     }
     const pc = pcRef.current;
@@ -735,35 +779,162 @@ function Shell({
     setTimeout(() => rec.state === "recording" && rec.stop(), 4000);
   }
 
+  function attachPcHandlers(pc: RTCPeerConnection, peerUserId: string, callId: string, media: "audio" | "video") {
+    pc.onicecandidate = (e) => {
+      if (!e.candidate) return;
+      void deliver(
+        peerUserId,
+        {
+          version: 1,
+          type: "call_signal",
+          clientId: crypto.randomUUID(),
+          sentAt: new Date().toISOString(),
+          threadId: thread?.id ?? peerUserId,
+          call: {
+            callId,
+            media,
+            signalType: "ice",
+            ice: {
+              candidate: e.candidate.candidate,
+              sdpMid: e.candidate.sdpMid ?? undefined,
+              sdpMLineIndex: e.candidate.sdpMLineIndex ?? undefined,
+            },
+          },
+        },
+        "call",
+        thread?.groupId,
+      );
+    };
+    pc.ontrack = (ev) => {
+      if (remoteVideo.current) remoteVideo.current.srcObject = ev.streams[0]!;
+    };
+  }
+
   async function startCall(media: "audio" | "video") {
-    if (!thread?.peerUserId) return;
-    const created = await api("/v1/calls", acc.access, {
-      method: "POST",
-      body: JSON.stringify({ media, participant_user_ids: [thread.peerUserId] }),
-    });
+    if (!thread?.peerUserId && !thread?.groupId) return;
+    const created = await api(
+      "/v1/calls",
+      acc.access,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          media,
+          participant_user_ids: thread.peerUserId ? [thread.peerUserId] : [],
+          group_id: thread.groupId,
+        }),
+      },
+      acc,
+    );
     const pc = new RTCPeerConnection({ iceServers: created.ice_servers });
     pcRef.current = pc;
     const local = await navigator.mediaDevices.getUserMedia({ audio: true, video: media === "video" });
     local.getTracks().forEach((tr) => pc.addTrack(tr, local));
     if (localVideo.current) localVideo.current.srcObject = local;
-    pc.ontrack = (e) => {
-      if (remoteVideo.current) remoteVideo.current.srcObject = e.streams[0]!;
-    };
+    const peer = thread.peerUserId ?? acc.userId;
+    attachPcHandlers(pc, peer, created.call_id, media);
+    const sframeKey = crypto.getRandomValues(new Uint8Array(32));
+    (window as unknown as { __sframe: Uint8Array }).__sframe = sframeKey;
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     await deliver(
-      thread.peerUserId,
+      peer,
       {
         version: 1,
         type: "call_signal",
         clientId: crypto.randomUUID(),
         sentAt: new Date().toISOString(),
         threadId: thread.id,
-        call: { callId: created.call_id, media, signalType: "offer", sdp: offer.sdp },
+        call: { callId: created.call_id, media, signalType: "offer", sdp: offer.sdp, sframeKey },
       },
       "call",
+      thread.groupId,
     );
-    setCall({ media });
+    setCall({ media, callId: created.call_id, remote: peer });
+  }
+
+  async function acceptIncoming() {
+    if (!call?.remote) return;
+    const offerSdp = (window as unknown as { __offer?: string }).__offer ?? "";
+    const callId = call.callId ?? "";
+    const joined = await api(`/v1/calls/${callId}/join`, acc.access, { method: "POST", body: "{}" }, acc);
+    const pc = new RTCPeerConnection({ iceServers: joined.ice_servers });
+    pcRef.current = pc;
+    const local = await navigator.mediaDevices.getUserMedia({ audio: true, video: call.media === "video" });
+    local.getTracks().forEach((tr) => pc.addTrack(tr, local));
+    if (localVideo.current) localVideo.current.srcObject = local;
+    attachPcHandlers(pc, call.remote, callId, call.media);
+    if (offerSdp) await pc.setRemoteDescription({ type: "offer", sdp: offerSdp });
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    await deliver(
+      call.remote,
+      {
+        version: 1,
+        type: "call_signal",
+        clientId: crypto.randomUUID(),
+        sentAt: new Date().toISOString(),
+        threadId: thread?.id ?? call.remote,
+        call: { callId, media: call.media, signalType: "answer", sdp: answer.sdp },
+      },
+      "call",
+      thread?.groupId,
+    );
+    setCall({ ...call, incoming: false });
+  }
+
+  async function hangupCall() {
+    const remote = call?.remote ?? thread?.peerUserId;
+    const callId = call?.callId;
+    if (remote && callId) {
+      void deliver(
+        remote,
+        {
+          version: 1,
+          type: "call_signal",
+          clientId: crypto.randomUUID(),
+          sentAt: new Date().toISOString(),
+          threadId: thread?.id ?? remote,
+          call: { callId, media: call?.media ?? "audio", signalType: "hangup" },
+        },
+        "call",
+        thread?.groupId,
+      );
+      void api(`/v1/calls/${callId}/end`, acc.access, { method: "POST", body: "{}" }, acc);
+    }
+    pcRef.current?.getSenders().forEach((s) => s.track?.stop());
+    pcRef.current?.close();
+    pcRef.current = null;
+    setCall(null);
+    setMuted(false);
+    setCamOff(false);
+  }
+
+  function toggleMute() {
+    const next = !muted;
+    setMuted(next);
+    pcRef.current?.getSenders().forEach((s) => {
+      if (s.track?.kind === "audio") s.track.enabled = !next;
+    });
+  }
+
+  function toggleCamera() {
+    const next = !camOff;
+    setCamOff(next);
+    pcRef.current?.getSenders().forEach((s) => {
+      if (s.track?.kind === "video") s.track.enabled = !next;
+    });
+  }
+
+  async function shareScreen() {
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+    const track = stream.getVideoTracks()[0];
+    if (!track || !pcRef.current) return;
+    const sender = pcRef.current.getSenders().find((s) => s.track?.kind === "video");
+    if (sender) await sender.replaceTrack(track);
+    track.onended = () => {
+      const cam = (localVideo.current?.srcObject as MediaStream | null)?.getVideoTracks()[0];
+      if (cam && sender) void sender.replaceTrack(cam);
+    };
   }
 
   async function createGroup(name: string, ids: string[]) {
@@ -1205,17 +1376,22 @@ function Shell({
           <video ref={remoteVideo} autoPlay playsInline />
           <div className="call-actions">
             {call.incoming && (
-              <button className="primary" onClick={() => setCall({ ...call, incoming: false })}>
+              <button className="primary" onClick={() => void acceptIncoming()}>
                 {t(lang, "accept")}
               </button>
             )}
-            <button
-              className="danger"
-              onClick={() => {
-                pcRef.current?.close();
-                setCall(null);
-              }}
-            >
+            <button className="ghost" onClick={() => toggleMute()}>
+              {t(lang, "mute")}
+              {muted ? " off" : ""}
+            </button>
+            <button className="ghost" onClick={() => toggleCamera()}>
+              {t(lang, "camera")}
+              {camOff ? " off" : ""}
+            </button>
+            <button className="ghost" onClick={() => void shareScreen()}>
+              {t(lang, "screenshare")}
+            </button>
+            <button className="danger" onClick={() => void hangupCall()}>
               {t(lang, "hangup")}
             </button>
           </div>

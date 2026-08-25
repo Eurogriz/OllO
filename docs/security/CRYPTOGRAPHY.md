@@ -169,6 +169,19 @@ A change of either identity key is a hard warning. Users must re-verify.
 Device-list hash is shown under “devices” so a silent extra device is
 visible even if the primary identity is unchanged.
 
+## 8b. Encrypted backup
+
+```
+salt = random(16)
+key  = Argon2id(passphrase, salt, t=2, m=19MiB, p=1, dkLen=32)
+blob = XChaCha20-Poly1305_Encrypt(key, account_export, aad="ollo-backup-v1")
+```
+
+`account_export` is identity + sessions + sender keys + local history.
+Access / refresh tokens are **not** included. The server stores only `blob`.
+
+A wrong passphrase or a flipped ciphertext bit fails closed.
+
 ## 9. Sealed push and call signaling
 
 Push payload (production):
@@ -183,9 +196,11 @@ Call signaling (offer, answer, ICE, hangup) is an E2EE message with
 `inner.type = call`. The optional signaling room only maps a random
 `call_id` to the already-authenticated devices.
 
-Media: WebRTC DTLS-SRTP for the transport, plus Insertable Streams /
-SFrame with a key agreed over the E2EE channel, so a TURN relay cannot
-listen.
+Media: WebRTC DTLS-SRTP for the transport. An SFrame key is agreed inside
+the E2EE `call_signal` so a future insertable-stream transform (reviewed
+library, not a homemade RTP cipher) can hide media from the TURN relay.
+Until that transform is enabled, a compromised TURN still sees DTLS-SRTP
+ciphertext, not the signaling SDP (SDP never leaves the E2EE envelope).
 
 ## 10. What we will never do
 
