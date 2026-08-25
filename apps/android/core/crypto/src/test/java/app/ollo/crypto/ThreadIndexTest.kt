@@ -17,4 +17,16 @@ class ThreadIndexTest {
         index.wipe()
         assertTrue(index.visible().isEmpty())
     }
+
+    @Test
+    fun roundTripsIncludingArchived() {
+        val index = ThreadIndex()
+        index.upsert(ChatThread(id = "t1", title = "bob", preview = "hi", peerUserId = "u-bob", muted = true))
+        index.upsert(ChatThread(id = "t2", title = "team", groupId = "g1", archived = true))
+        val back = ThreadIndex.decode(index.encode())
+        assertEquals("bob", back.visible().single().title)
+        assertEquals(true, back.visible().single().muted)
+        assertEquals(2, back.snapshot().size)
+        assertEquals("g1", back.snapshot().first { it.id == "t2" }.groupId)
+    }
 }

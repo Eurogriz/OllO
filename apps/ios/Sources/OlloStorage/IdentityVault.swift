@@ -58,6 +58,9 @@ public final class IdentityVault: @unchecked Sendable {
         case outbox = "outbox.v1"
         case senderKeys = "senderkeys.v1"
         case knownIdentities = "known.v1"
+        case preKeys = "prekeys.v1"
+        case signedPreKeys = "signedprekeys.v1"
+        case threads = "threads.v1"
     }
 
     private func persist() throws {

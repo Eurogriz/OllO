@@ -1,6 +1,6 @@
 import type { InnerMessage, PrekeyBundle, SealedPayload } from "@ollo/protocol";
 import { decodeSealed, encodeSealed, paddingBucket } from "@ollo/protocol";
-import { noteRemoteIdentity, onSendFailure, planKeyFetch } from "@ollo/shared";
+import { noteRemoteIdentity, onSendFailure, planKeyFetch, retainUnexpired } from "@ollo/shared";
 import {
   type LocalDevice,
   type RemoteSenderKey,
@@ -186,11 +186,8 @@ export function loadAccount(): Account | null {
 }
 
 function gcExpired(acc: Account): Account {
-  const now = Date.now();
   for (const tid of Object.keys(acc.messages)) {
-    acc.messages[tid] = (acc.messages[tid] ?? []).filter(
-      (m) => !m.expiresAt || new Date(m.expiresAt).getTime() > now,
-    );
+    acc.messages[tid] = retainUnexpired(acc.messages[tid] ?? []);
   }
   return acc;
 }

@@ -215,11 +215,18 @@ prekey, identity) in an AES-256-GCM map (`OLM1`) under the existing wrap
   (`planKeyFetch`);
 - treats a changed remote identity fingerprint as a hard stop until the
   user re-verifies the safety number;
-- is wiped with identity / outbox / sender-key slots on logout, revoke,
-  and remote wipe.
+- is wiped with identity / outbox / sender-key / prekey / history slots on
+  logout, revoke, and remote wipe;
+- can survive process restart via one wrapped file per slot (and per local
+  message). A flipped bit or a wrong wrap key fails closed.
+
+Local history (`OLM2`) is already-decrypted plaintext sealed with the same
+wrap. Disappearing rows are dropped by `expiresAt`. Production Android should
+also keep the SQLCipher `messages` table; the codec is the contract.
 
 Encrypt / decrypt stay inside official libsignal. An unbound engine fails
-closed. The TypeScript engine is not used on native release builds.
+closed. The TypeScript engine is not used on native release builds. Java
+package names are not imported until the 0.58 client API is confirmed.
 
 ## 9. Sealed push and call signaling
 

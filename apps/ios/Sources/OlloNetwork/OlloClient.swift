@@ -25,6 +25,10 @@ public actor OlloClient {
         try await get(path: "/v1/keys/\(userId)/\(deviceId)", auth: true)
     }
 
+    public func searchUsername(_ username: String) async throws -> Data {
+        try await post(path: "/v1/users/search", body: ["username": username], auth: true)
+    }
+
     public func presence(of userId: String) async throws -> Data {
         try await get(path: "/v1/presence/\(userId)", auth: true)
     }

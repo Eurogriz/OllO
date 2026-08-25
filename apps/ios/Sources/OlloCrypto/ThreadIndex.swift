@@ -28,6 +28,35 @@ public struct ChatThread: Sendable, Equatable {
         self.archived = archived
         self.muted = muted
     }
+
+    public func encode() throws -> Data {
+        var flags: UInt8 = 0
+        if archived { flags |= 1 }
+        if muted { flags |= 2 }
+        return try BlobMap.encode([
+            "title": Data(title.utf8),
+            "preview": Data(preview.utf8),
+            "peer": Data((peerUserId ?? "").utf8),
+            "group": Data((groupId ?? "").utf8),
+            "flags": Data([flags]),
+        ])
+    }
+
+    public static func decode(id: String, raw: Data) throws -> ChatThread {
+        let m = try BlobMap.decode(raw)
+        let flags = Int(m["flags"]?.first ?? 0)
+        let peer = String(data: m["peer"] ?? Data(), encoding: .utf8) ?? ""
+        let group = String(data: m["group"] ?? Data(), encoding: .utf8) ?? ""
+        return ChatThread(
+            id: id,
+            title: String(data: m["title"] ?? Data(), encoding: .utf8) ?? id,
+            preview: String(data: m["preview"] ?? Data(), encoding: .utf8) ?? "",
+            peerUserId: peer.isEmpty ? nil : peer,
+            groupId: group.isEmpty ? nil : group,
+            archived: flags & 1 != 0,
+            muted: flags & 2 != 0
+        )
+    }
 }
 
 public final class ThreadIndex: @unchecked Sendable {
@@ -41,6 +70,10 @@ public final class ThreadIndex: @unchecked Sendable {
             guard let t = threads[id], !t.archived else { return nil }
             return t
         }
+    }
+
+    public func snapshot() -> [ChatThread] {
+        order.compactMap { threads[$0] }
     }
 
     public func upsert(_ thread: ChatThread) {
@@ -62,4 +95,20 @@ public final class ThreadIndex: @unchecked Sendable {
     }
 
     public var isEmpty: Bool { visible().isEmpty }
+
+    public func encode() throws -> Data {
+        var map: [String: Data] = [:]
+        for (id, thread) in threads {
+            map[id] = try thread.encode()
+        }
+        return try BlobMap.encode(map)
+    }
+
+    public static func decode(_ bytes: Data) throws -> ThreadIndex {
+        let index = ThreadIndex()
+        for (id, raw) in try BlobMap.decode(bytes) {
+            index.upsert(try ChatThread.decode(id: id, raw: raw))
+        }
+        return index
+    }
 }

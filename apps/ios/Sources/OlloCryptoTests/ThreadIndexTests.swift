@@ -13,4 +13,15 @@ final class ThreadIndexTests: XCTestCase {
         index.wipe()
         XCTAssertTrue(index.visible().isEmpty)
     }
+
+    func testRoundTripsIncludingArchived() throws {
+        let index = ThreadIndex()
+        index.upsert(ChatThread(id: "t1", title: "bob", preview: "hi", peerUserId: "u-bob", muted: true))
+        index.upsert(ChatThread(id: "t2", title: "team", groupId: "g1", archived: true))
+        let back = try ThreadIndex.decode(try index.encode())
+        XCTAssertEqual(back.visible().first?.title, "bob")
+        XCTAssertEqual(back.visible().first?.muted, true)
+        XCTAssertEqual(back.snapshot().count, 2)
+        XCTAssertEqual(back.snapshot().first(where: { $0.id == "t2" })?.groupId, "g1")
+    }
 }

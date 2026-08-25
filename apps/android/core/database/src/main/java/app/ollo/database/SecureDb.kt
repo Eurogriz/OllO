@@ -89,7 +89,8 @@ class SecureDb(context: Context, passphrase: ByteArray) {
 
     fun expireMessages(now: Long): Int {
         db.execSQL("DELETE FROM messages WHERE expires_at IS NOT NULL AND expires_at <= ?", arrayOf(now))
-        return 0
+        val c = db.rawQuery("SELECT changes()", emptyArray())
+        return c.use { if (it.moveToFirst()) it.getInt(0) else 0 }
     }
 
     fun enqueueOutbound(id: String, payload: ByteArray, nextAttemptAt: Long = System.currentTimeMillis()) {
