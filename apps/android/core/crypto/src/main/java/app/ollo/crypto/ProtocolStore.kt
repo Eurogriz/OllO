@@ -62,6 +62,21 @@ class ProtocolStore(
 
     fun loadSignedPreKey(id: Int): ByteArray? = loadMap(IdentityStore.Slot.SignedPreKeys)[id.toString()]
 
+    /** Drop retired signed prekeys beyond the keep-last-2 window. */
+    fun pruneSignedPreKeys(currentId: Int) {
+        val map = loadMap(IdentityStore.Slot.SignedPreKeys)
+        val keep = EnvelopePlanner.keepSignedPrekeyIds(
+            currentId,
+            map.keys.mapNotNull { it.toIntOrNull() },
+        ).toSet()
+        val next = linkedMapOf<String, ByteArray>()
+        for ((k, v) in map) {
+            val id = k.toIntOrNull() ?: continue
+            if (id in keep) next[k] = v
+        }
+        persist(IdentityStore.Slot.SignedPreKeys, next)
+    }
+
     fun saveThreads(index: ThreadIndex) {
         store.put(wrapKey, IdentityStore.Slot.Threads, index.encode())
     }

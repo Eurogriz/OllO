@@ -75,6 +75,21 @@ final class ProtocolStoreTests: XCTestCase {
         XCTAssertEqual(back.body, Data([0xAA]))
     }
 
+    func testPruneSignedPreKeysKeepsCurrentAndTwoRetired() throws {
+        let proto = ProtocolStore(store: IdentityStore(), wrapKey: wrap)
+        try proto.storeSignedPreKey(id: 1, record: Data([1]))
+        try proto.storeSignedPreKey(id: 2, record: Data([2]))
+        try proto.storeSignedPreKey(id: 3, record: Data([3]))
+        try proto.storeSignedPreKey(id: 4, record: Data([4]))
+        try proto.storeSignedPreKey(id: 5, record: Data([5]))
+        try proto.pruneSignedPreKeys(currentId: 5)
+        XCTAssertNil(try proto.loadSignedPreKey(id: 1))
+        XCTAssertNil(try proto.loadSignedPreKey(id: 2))
+        XCTAssertEqual(try proto.loadSignedPreKey(id: 3), Data([3]))
+        XCTAssertEqual(try proto.loadSignedPreKey(id: 4), Data([4]))
+        XCTAssertEqual(try proto.loadSignedPreKey(id: 5), Data([5]))
+    }
+
     func testRejectsPathTraversalKeys() {
         let store = IdentityStore()
         XCTAssertThrowsError(try store.put(wrapKey: wrap, key: "../etc", plaintext: Data([1])))

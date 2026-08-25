@@ -61,6 +61,9 @@ final class EnvelopePlannerTests: XCTestCase {
             )?.nextId,
             2
         )
+        XCTAssertEqual(EnvelopePlanner.keepSignedPrekeyIds(currentId: 5, storedIds: [1, 2, 3, 4, 5]), [5, 4, 3])
+        XCTAssertEqual(EnvelopePlanner.afterUnauthorized(refreshSucceeded: true), .retry)
+        XCTAssertEqual(EnvelopePlanner.afterUnauthorized(refreshSucceeded: false), .wipe)
     }
 
     func testUnboundEngineDoesNotInventIdentity() {

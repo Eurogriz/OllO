@@ -83,6 +83,22 @@ class ProtocolStoreTest {
     }
 
     @Test
+    fun pruneSignedPreKeysKeepsCurrentAndTwoRetired() {
+        val proto = ProtocolStore(IdentityStore(), wrap)
+        proto.storeSignedPreKey(1, byteArrayOf(1))
+        proto.storeSignedPreKey(2, byteArrayOf(2))
+        proto.storeSignedPreKey(3, byteArrayOf(3))
+        proto.storeSignedPreKey(4, byteArrayOf(4))
+        proto.storeSignedPreKey(5, byteArrayOf(5))
+        proto.pruneSignedPreKeys(5)
+        assertNull(proto.loadSignedPreKey(1))
+        assertNull(proto.loadSignedPreKey(2))
+        assertArrayEquals(byteArrayOf(3), proto.loadSignedPreKey(3))
+        assertArrayEquals(byteArrayOf(4), proto.loadSignedPreKey(4))
+        assertArrayEquals(byteArrayOf(5), proto.loadSignedPreKey(5))
+    }
+
+    @Test
     fun rejectsPathTraversalKeys() {
         val store = IdentityStore()
         try {

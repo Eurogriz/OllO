@@ -4,6 +4,8 @@ import {
   OUTBOX_MAX_ATTEMPTS,
   SIGNED_PREKEY_MAX_AGE_MS,
   nextRetryDelayMs,
+  afterUnauthorized,
+  keepSignedPrekeyIds,
   onRefreshRejected,
   onSendFailure,
   planKeyFetch,
@@ -73,6 +75,8 @@ describe("prekey replenish planner", () => {
 describe("refresh rejection", () => {
   it("wipes local state instead of retrying a reused refresh", () => {
     assert.equal(onRefreshRejected(), "wipe");
+    assert.equal(afterUnauthorized(true), "retry");
+    assert.equal(afterUnauthorized(false), "wipe");
   });
 });
 
@@ -90,5 +94,7 @@ describe("signed prekey rotation planner", () => {
       }),
       { nextId: 2 },
     );
+    assert.deepEqual(keepSignedPrekeyIds(5, [1, 2, 3, 4, 5]), [5, 4, 3]);
+    assert.deepEqual(keepSignedPrekeyIds(2, [2]), [2]);
   });
 });

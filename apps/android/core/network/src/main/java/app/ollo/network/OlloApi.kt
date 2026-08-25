@@ -6,7 +6,12 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 
-class OlloApi(private val baseUrl: String, private val token: () -> String?) {
+class OlloApi(
+    private val baseUrl: String,
+    private val token: () -> String?,
+    private val refresh: (() -> Boolean)? = null,
+    private val onWipe: (() -> Unit)? = null,
+) {
     private val json = "application/json; charset=utf-8".toMediaType()
     private val http = OkHttpClient.Builder()
         .callTimeout(30, TimeUnit.SECONDS)
@@ -37,20 +42,25 @@ class OlloApi(private val baseUrl: String, private val token: () -> String?) {
     fun ack(idsJson: String): String = post("/v1/envelopes/ack", idsJson, auth = true)
 
     fun post(path: String, body: String, auth: Boolean): String {
-        val b = Request.Builder().url(baseUrl + path).post(body.toRequestBody(json))
-        if (auth) token()?.let { b.header("Authorization", "Bearer $it") }
-        http.newCall(b.build()).execute().use { res ->
-            val t = res.body?.string().orEmpty()
-            if (!res.isSuccessful) error("http ${res.code}")
-            return t
-        }
+        val builder = Request.Builder().url(baseUrl + path).post(body.toRequestBody(json))
+        return execute(builder, auth)
     }
 
     private fun get(path: String): String {
-        val b = Request.Builder().url(baseUrl + path)
-        token()?.let { b.header("Authorization", "Bearer $it") }
-        http.newCall(b.build()).execute().use { res ->
+        val builder = Request.Builder().url(baseUrl + path)
+        return execute(builder, auth = true)
+    }
+
+    private fun execute(builder: Request.Builder, auth: Boolean, retried: Boolean = false): String {
+        if (auth) token()?.let { builder.header("Authorization", "Bearer $it") }
+        http.newCall(builder.build()).execute().use { res ->
             val t = res.body?.string().orEmpty()
+            if (res.code == 401 && auth && !retried) {
+                if (refresh?.invoke() == true) {
+                    return execute(builder, auth, retried = true)
+                }
+                onWipe?.invoke()
+            }
             if (!res.isSuccessful) error("http ${res.code}")
             return t
         }

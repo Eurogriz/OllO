@@ -6,6 +6,7 @@ import {
   onSendFailure,
   planKeyFetch,
   planPrekeyReplenish,
+  afterUnauthorized,
   planSignedPrekeyRotation,
   retainUnexpired,
 } from "@ollo/shared";
@@ -40,6 +41,7 @@ import {
   generateOneTimePrekeys,
   generateSignedPrekey,
   newVaultKey,
+  retainSignedPrekeys,
   openBackup,
   openVault,
   safetyNumber,
@@ -209,12 +211,8 @@ function accountFromStored(j: Stored): Account {
     deviceId: j.deviceId,
     registrationId: j.registrationId,
     identity: deserializeIdentity(j.identity),
-    signedPrekey: {
-      id: j.signedPrekey.id,
-      privateKey: b64u(j.signedPrekey.privateKey),
-      publicKey: b64u(j.signedPrekey.publicKey),
-      signature: b64u(j.signedPrekey.signature),
-    },
+    signedPrekey: deserSpk(j.signedPrekey),
+    previousSignedPrekeys: (j.previousSignedPrekeys ?? []).map(deserSpk),
     oneTimePrekeys: j.oneTimePrekeys.map((k) => ({
       id: k.id,
       privateKey: b64u(k.privateKey),
@@ -263,12 +261,8 @@ export function saveAccount(acc: Account): void {
     refresh: acc.refresh,
     registrationId: acc.device.registrationId,
     identity: serializeIdentity(acc.device.identity),
-    signedPrekey: {
-      id: acc.device.signedPrekey.id,
-      privateKey: b64(acc.device.signedPrekey.privateKey),
-      publicKey: b64(acc.device.signedPrekey.publicKey),
-      signature: b64(acc.device.signedPrekey.signature),
-    },
+    signedPrekey: serSpk(acc.device.signedPrekey),
+    previousSignedPrekeys: (acc.device.previousSignedPrekeys ?? []).map(serSpk),
     oneTimePrekeys: acc.device.oneTimePrekeys.map((k) => ({
       id: k.id,
       privateKey: b64(k.privateKey),
@@ -340,7 +334,7 @@ export async function refreshSession(acc: Account): Promise<boolean> {
       body: JSON.stringify({ refresh_token: acc.refresh }),
     });
     if (!res.ok) {
-      if (onRefreshRejected() === "wipe") clearAccount();
+      if (afterUnauthorized(false) === "wipe" || onRefreshRejected() === "wipe") clearAccount();
       return false;
     }
     const data = (await res.json()) as { access_token: string; refresh_token: string };
@@ -750,7 +744,12 @@ export async function replenishPrekeys(acc: Account): Promise<void> {
 }
 
 export function rotateLocalPrekey(acc: Account) {
-  acc.device.signedPrekey = generateSignedPrekey(acc.device.identity, acc.device.signedPrekey.id + 1);
+  const next = generateSignedPrekey(acc.device.identity, acc.device.signedPrekey.id + 1);
+  acc.device.previousSignedPrekeys = retainSignedPrekeys(
+    acc.device.signedPrekey,
+    acc.device.previousSignedPrekeys ?? [],
+  );
+  acc.device.signedPrekey = next;
 }
 
 /** Upload a new signed prekey only after the weekly planner fires. */
@@ -781,6 +780,10 @@ export async function maybeRotateSignedPrekey(acc: Account, now = Date.now()): P
     },
     acc,
   );
+  acc.device.previousSignedPrekeys = retainSignedPrekeys(
+    acc.device.signedPrekey,
+    acc.device.previousSignedPrekeys ?? [],
+  );
   acc.device.signedPrekey = next;
   acc.signedPrekeyAt = now;
   saveAccount(acc);
@@ -798,12 +801,8 @@ export function backupPlaintext(acc: Account): Uint8Array {
     refresh: "",
     registrationId: acc.device.registrationId,
     identity: serializeIdentity(acc.device.identity),
-    signedPrekey: {
-      id: acc.device.signedPrekey.id,
-      privateKey: b64(acc.device.signedPrekey.privateKey),
-      publicKey: b64(acc.device.signedPrekey.publicKey),
-      signature: b64(acc.device.signedPrekey.signature),
-    },
+    signedPrekey: serSpk(acc.device.signedPrekey),
+    previousSignedPrekeys: (acc.device.previousSignedPrekeys ?? []).map(serSpk),
     oneTimePrekeys: acc.device.oneTimePrekeys.map((k) => ({
       id: k.id,
       privateKey: b64(k.privateKey),
@@ -839,12 +838,8 @@ export function materialFromBackup(raw: string, passphrase: string): ReturnType<
   return {
     registrationId: stored.registrationId,
     identity: deserializeIdentity(stored.identity),
-    signedPrekey: {
-      id: stored.signedPrekey.id,
-      privateKey: b64u(stored.signedPrekey.privateKey),
-      publicKey: b64u(stored.signedPrekey.publicKey),
-      signature: b64u(stored.signedPrekey.signature),
-    },
+    signedPrekey: deserSpk(stored.signedPrekey),
+    previousSignedPrekeys: (stored.previousSignedPrekeys ?? []).map(deserSpk),
     oneTimePrekeys: stored.oneTimePrekeys.map((k) => ({
       id: k.id,
       privateKey: b64u(k.privateKey),
@@ -887,6 +882,26 @@ export function b64u(s: string): Uint8Array {
   return out;
 }
 
+type StoredSpk = { id: number; privateKey: string; publicKey: string; signature: string };
+
+function serSpk(k: { id: number; privateKey: Uint8Array; publicKey: Uint8Array; signature: Uint8Array }): StoredSpk {
+  return {
+    id: k.id,
+    privateKey: b64(k.privateKey),
+    publicKey: b64(k.publicKey),
+    signature: b64(k.signature),
+  };
+}
+
+function deserSpk(k: StoredSpk) {
+  return {
+    id: k.id,
+    privateKey: b64u(k.privateKey),
+    publicKey: b64u(k.publicKey),
+    signature: b64u(k.signature),
+  };
+}
+
 interface Stored {
   userId: string;
   deviceId: string;
@@ -897,7 +912,8 @@ interface Stored {
   refresh: string;
   registrationId: number;
   identity: string;
-  signedPrekey: { id: number; privateKey: string; publicKey: string; signature: string };
+  signedPrekey: StoredSpk;
+  previousSignedPrekeys?: StoredSpk[];
   oneTimePrekeys: { id: number; privateKey: string; publicKey: string }[];
   sessions: Record<string, ReturnType<typeof serializeSession>>;
   messages: Record<string, ChatMessage[]>;

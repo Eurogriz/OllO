@@ -49,7 +49,25 @@ export interface LocalDevice {
   registrationId: number;
   identity: IdentityKeyPair;
   signedPrekey: SignedPrekeyPair;
+  /** Retired signed prekeys, newest first. Needed for in-flight X3DH. */
+  previousSignedPrekeys: SignedPrekeyPair[];
   oneTimePrekeys: OneTimePrekeyPair[];
+}
+
+export const SIGNED_PREKEY_KEEP = 2;
+
+export function retainSignedPrekeys(
+  retired: SignedPrekeyPair,
+  previous: SignedPrekeyPair[],
+): SignedPrekeyPair[] {
+  return [retired, ...previous.filter((k) => k.id !== retired.id)].slice(0, SIGNED_PREKEY_KEEP);
+}
+
+function lookupSignedPrekey(local: LocalDevice, id: number): SignedPrekeyPair {
+  if (local.signedPrekey.id === id) return local.signedPrekey;
+  const prev = (local.previousSignedPrekeys ?? []).find((k) => k.id === id);
+  if (!prev) throw new Error("unknown signed prekey");
+  return prev;
 }
 
 export function createLocalDevice(): Omit<LocalDevice, "userId" | "deviceId"> {
@@ -58,11 +76,16 @@ export function createLocalDevice(): Omit<LocalDevice, "userId" | "deviceId"> {
     registrationId: registrationId(),
     identity,
     signedPrekey: generateSignedPrekey(identity, 1),
+    previousSignedPrekeys: [],
     oneTimePrekeys: generateOneTimePrekeys(1, 100),
   };
 }
 
 export function rotateSignedPrekey(device: LocalDevice, nextId: number): void {
+  device.previousSignedPrekeys = retainSignedPrekeys(
+    device.signedPrekey,
+    device.previousSignedPrekeys ?? [],
+  );
   device.signedPrekey = generateSignedPrekey(device.identity, nextId);
 }
 
@@ -114,9 +137,10 @@ export function acceptSession(
   if (opk) {
     local.oneTimePrekeys = local.oneTimePrekeys.filter((k) => k.id !== opk.id);
   }
+  const signedPrekey = lookupSignedPrekey(local, sealed.prekey.signedPrekeyId);
   const rootKey = x3dhAccept({
     localIdentity: local.identity,
-    signedPrekey: local.signedPrekey,
+    signedPrekey,
     oneTimePrekey: opk,
     remoteIdentityX25519: sealed.prekey.identityKeyX25519,
     remoteEphemeralPublic: sealed.prekey.ephemeralPublic,
@@ -131,8 +155,8 @@ export function acceptSession(
     remoteIdentityEd25519: new Uint8Array(32),
     rootKey,
     localSignedPrekey: {
-      privateKey: local.signedPrekey.privateKey,
-      publicKey: local.signedPrekey.publicKey,
+      privateKey: signedPrekey.privateKey,
+      publicKey: signedPrekey.publicKey,
     },
   });
 }

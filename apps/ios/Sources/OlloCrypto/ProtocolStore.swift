@@ -74,6 +74,19 @@ public final class ProtocolStore: @unchecked Sendable {
         try loadMap(.signedPreKeys)[String(id)]
     }
 
+    /// Drop retired signed prekeys beyond the keep-last-2 window.
+    public func pruneSignedPreKeys(currentId: Int) throws {
+        let map = try loadMap(.signedPreKeys)
+        let storedIds = map.keys.compactMap { Int($0) }
+        let keep = Set(EnvelopePlanner.keepSignedPrekeyIds(currentId: currentId, storedIds: storedIds))
+        var next: [String: Data] = [:]
+        for (k, v) in map {
+            guard let id = Int(k), keep.contains(id) else { continue }
+            next[k] = v
+        }
+        try persist(.signedPreKeys, next)
+    }
+
     public func saveThreads(_ index: ThreadIndex) throws {
         try store.put(wrapKey: wrapKey, slot: .threads, plaintext: try index.encode())
     }

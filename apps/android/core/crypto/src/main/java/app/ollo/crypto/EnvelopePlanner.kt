@@ -77,9 +77,21 @@ object EnvelopePlanner {
 
     fun onRefreshRejected(): AuthFailure = AuthFailure.Wipe
 
-    enum class AuthFailure { Wipe }
+    fun afterUnauthorized(refreshSucceeded: Boolean): AuthFailure =
+        if (refreshSucceeded) AuthFailure.Retry else AuthFailure.Wipe
+
+    enum class AuthFailure { Wipe, Retry }
 
     const val SIGNED_PREKEY_MAX_AGE_MS = 7L * 24 * 60 * 60 * 1000
+    const val SIGNED_PREKEY_KEEP = 2
+
+    fun keepSignedPrekeyIds(currentId: Int, storedIds: List<Int>): List<Int> {
+        val retired = storedIds.filter { it != currentId && it > 0 }.sortedDescending()
+        val keep = linkedSetOf<Int>()
+        if (currentId > 0) keep.add(currentId)
+        keep.addAll(retired.take(SIGNED_PREKEY_KEEP))
+        return keep.toList()
+    }
 
     data class SignedPrekeyPlan(val nextId: Int)
 

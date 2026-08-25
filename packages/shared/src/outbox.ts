@@ -77,7 +77,19 @@ export function onRefreshRejected(): "wipe" {
   return "wipe";
 }
 
+export function afterUnauthorized(refreshSucceeded: boolean): "retry" | "wipe" {
+  return refreshSucceeded ? "retry" : "wipe";
+}
+
 export const SIGNED_PREKEY_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+export const SIGNED_PREKEY_KEEP = 2;
+
+/** Current id plus the newest previous ids, capped at KEEP retired. */
+export function keepSignedPrekeyIds(currentId: number, storedIds: number[]): number[] {
+  const retired = storedIds.filter((id) => id !== currentId && id > 0).sort((a, b) => b - a);
+  const keep = currentId > 0 ? [currentId, ...retired.slice(0, SIGNED_PREKEY_KEEP)] : retired.slice(0, SIGNED_PREKEY_KEEP);
+  return [...new Set(keep)];
+}
 
 /** Rotate the signed prekey about weekly. Unknown age is left alone. */
 export function planSignedPrekeyRotation(args: {

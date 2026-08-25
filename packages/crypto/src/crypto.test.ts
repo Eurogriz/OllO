@@ -103,6 +103,35 @@ describe("X3DH + Double Ratchet", () => {
     bundle.signedPrekey.signature = new Uint8Array(64);
     assert.throws(() => beginSession(alice, bundle));
   });
+
+  it("accepts a first message after signed-prekey rotation using the retired key", async () => {
+    const { rotateSignedPrekey, SIGNED_PREKEY_KEEP } = await import("./engine.js");
+    const alice = device("alice", "a1");
+    const bob = device("bob", "b1");
+    const stale = bundleOf(bob);
+    rotateSignedPrekey(bob, 2);
+    rotateSignedPrekey(bob, 3);
+    assert.equal(bob.signedPrekey.id, 3);
+    assert.equal(bob.previousSignedPrekeys.length, SIGNED_PREKEY_KEEP);
+    assert.deepEqual(
+      bob.previousSignedPrekeys.map((k) => k.id),
+      [2, 1],
+    );
+    const init = beginSession(alice, stale);
+    const sealed = encryptFirstMessage(alice, init, text("t", "ещё живо"));
+    const bobSession = acceptSession(bob, sealed, alice.userId, alice.deviceId);
+    assert.equal(decryptMessage(bobSession, sealed).text, "ещё живо");
+
+    rotateSignedPrekey(bob, 4);
+    assert.deepEqual(
+      bob.previousSignedPrekeys.map((k) => k.id),
+      [3, 2],
+    );
+    const carol = device("carol", "c1");
+    const late = beginSession(carol, stale);
+    const ghost = encryptFirstMessage(carol, late, text("t", "слишком старо"));
+    assert.throws(() => acceptSession(bob, ghost, carol.userId, carol.deviceId));
+  });
 });
 
 describe("Sender Keys", () => {

@@ -180,9 +180,10 @@ never written into backups.
 
 Signed prekeys rotate about every 7 days (`planSignedPrekeyRotation`).
 Unknown age is left alone until the client stamps `createdAt`. The server
-stores only the current public signed prekey; the device must keep the
-previous private keys until in-flight X3DH finishes (keep-last-2 is still
-a local-store obligation).
+stores only the current public signed prekey. The device keeps the current
+private key plus the previous two (`retainSignedPrekeys` /
+`pruneSignedPreKeys`) so a PreKey whisper that named a just-retired SPK
+still opens. An unknown SPK id fails closed.
 
 Push wakeup is **per recipient device**. Another online device of the same
 user must not suppress a wake. Typing, receipts, and control envelopes do

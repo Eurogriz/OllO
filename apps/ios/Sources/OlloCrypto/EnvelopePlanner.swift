@@ -80,11 +80,27 @@ public enum EnvelopePlanner {
 
     public enum AuthFailure: String, Sendable {
         case wipe
+        case retry
     }
 
     public static func onRefreshRejected() -> AuthFailure { .wipe }
 
+    public static func afterUnauthorized(refreshSucceeded: Bool) -> AuthFailure {
+        refreshSucceeded ? .retry : .wipe
+    }
+
     public static let signedPrekeyMaxAgeMs: Int64 = 7 * 24 * 60 * 60 * 1000
+    public static let signedPrekeyKeep = 2
+
+    public static func keepSignedPrekeyIds(currentId: Int, storedIds: [Int]) -> [Int] {
+        let retired = storedIds.filter { $0 != currentId && $0 > 0 }.sorted(by: >)
+        var keep: [Int] = []
+        if currentId > 0 { keep.append(currentId) }
+        for id in retired.prefix(signedPrekeyKeep) where !keep.contains(id) {
+            keep.append(id)
+        }
+        return keep
+    }
 
     public struct SignedPrekeyPlan: Sendable, Equatable {
         public var nextId: Int

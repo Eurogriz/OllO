@@ -44,6 +44,9 @@ class EnvelopePlannerTest {
             EnvelopePlanner.SignedPrekeyPlan(2),
             EnvelopePlanner.planSignedPrekeyRotation(1, now - EnvelopePlanner.SIGNED_PREKEY_MAX_AGE_MS, now),
         )
+        assertEquals(listOf(5, 4, 3), EnvelopePlanner.keepSignedPrekeyIds(5, listOf(1, 2, 3, 4, 5)))
+        assertEquals(EnvelopePlanner.AuthFailure.Retry, EnvelopePlanner.afterUnauthorized(true))
+        assertEquals(EnvelopePlanner.AuthFailure.Wipe, EnvelopePlanner.afterUnauthorized(false))
     }
 
     @Test
