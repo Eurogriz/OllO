@@ -20,6 +20,7 @@ A change that touches any of these is incomplete without tests:
 
 - Encryption / decryption
 - Key exchange and prekey consumption
+- Sealed session directory (`planKeyFetch`, identity-change, wipe)
 - Device registration and revoke
 - Group membership + epoch
 - Message ordering and de-dupe

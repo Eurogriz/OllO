@@ -5,6 +5,9 @@ import Security
 /// Identity / session blobs sealed with AES-GCM. The wrapping key lives in
 /// Keychain (`kSecAttrAccessibleWhenUnlockedThisDeviceOnly`) and is never
 /// written next to the ciphertext.
+///
+/// Session records themselves are opaque libsignal blobs managed by
+/// `OlloCrypto.SessionDirectory`. This vault is only the at-rest wrap.
 public final class IdentityVault: @unchecked Sendable {
     public static let wrapAccount = "ollo.vault.wrap.v1"
     private var kv: [String: Data]

@@ -1,6 +1,6 @@
 import type { InnerMessage, PrekeyBundle, SealedPayload } from "@ollo/protocol";
 import { decodeSealed, encodeSealed, paddingBucket } from "@ollo/protocol";
-import { onSendFailure, planKeyFetch } from "@ollo/shared";
+import { noteRemoteIdentity, onSendFailure, planKeyFetch } from "@ollo/shared";
 import {
   type LocalDevice,
   type RemoteSenderKey,
@@ -398,8 +398,7 @@ export async function sealForExisting(acc: Account, userId: string, deviceId: st
 export async function sealWithBundle(acc: Account, bundle: PrekeyBundle, inner: InnerMessage) {
   const sk = sessionKey(bundle.userId, bundle.deviceId);
   const fp = b64(bundle.identityKeyX25519);
-  const prev = acc.knownIdentities[sk];
-  if (prev && prev !== fp) {
+  if (noteRemoteIdentity(acc.knownIdentities[sk], fp) === "changed") {
     throw new Error("identity_changed");
   }
   acc.knownIdentities[sk] = fp;

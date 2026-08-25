@@ -204,6 +204,23 @@ A wrong key or a flipped ciphertext bit fails closed. Access / refresh tokens
 inside the vault are still session secrets — a stolen unlocked origin dump
 yields them. PIN wrap raises the bar for a seized disk, not for XSS.
 
+## 8d. Sealed libsignal session directory
+
+Native clients persist **opaque** libsignal records (session, prekey, signed
+prekey, identity) in an AES-256-GCM map (`OLM1`) under the existing wrap
+(`ollo-wrap-v1`). The directory:
+
+- does **not** implement a Double Ratchet;
+- never consumes a one-time prekey when a session record already exists
+  (`planKeyFetch`);
+- treats a changed remote identity fingerprint as a hard stop until the
+  user re-verifies the safety number;
+- is wiped with identity / outbox / sender-key slots on logout, revoke,
+  and remote wipe.
+
+Encrypt / decrypt stay inside official libsignal. An unbound engine fails
+closed. The TypeScript engine is not used on native release builds.
+
 ## 9. Sealed push and call signaling
 
 Push payload (production):

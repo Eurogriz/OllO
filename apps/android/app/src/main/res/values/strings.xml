@@ -1,4 +1,11 @@
 <resources>
     <string name="app_name">OllO</string>
     <string name="tagline">Private messages. The server cannot read them.</string>
+    <string name="continue_label">Continue</string>
+    <string name="empty_inbox">No chats yet. Search a username after you sign in. Nothing is seeded on this device.</string>
+    <string name="e2ee_hint">Messages are encrypted on this device.</string>
+    <string name="message_hint">Message</string>
+    <string name="settings">Settings</string>
+    <string name="settings_body">Devices, safety number, registration lock, disappearing messages.</string>
+    <string name="wipe_local">Wipe local secrets</string>
 </resources>

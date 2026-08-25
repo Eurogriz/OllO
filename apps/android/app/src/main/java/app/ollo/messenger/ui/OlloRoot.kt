@@ -33,6 +33,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.ollo.crypto.ChatThread
+import app.ollo.crypto.ThreadIndex
 import app.ollo.messenger.R
 
 private val Bg = Color(0xFF070A0E)
@@ -48,7 +50,9 @@ fun OlloRoot() {
     var dest by remember { mutableStateOf(Dest.Auth) }
     var phone by remember { mutableStateOf("+7") }
     var otp by remember { mutableStateOf("") }
-    var activeChat by remember { mutableStateOf("Алиса") }
+    val inbox = remember { ThreadIndex() }
+    var threads by remember { mutableStateOf(inbox.visible()) }
+    var active by remember { mutableStateOf<ChatThread?>(null) }
     Box(Modifier.fillMaxSize().background(Bg)) {
         when (dest) {
             Dest.Splash, Dest.Auth -> AuthScreen(
@@ -59,14 +63,26 @@ fun OlloRoot() {
                 onContinue = { dest = Dest.Chats },
             )
             Dest.Chats -> ChatList(
+                threads = threads,
                 onOpen = {
-                    activeChat = it
+                    active = it
                     dest = Dest.Chat
                 },
                 onSettings = { dest = Dest.Settings },
             )
-            Dest.Chat -> ChatScreen(title = activeChat, onBack = { dest = Dest.Chats })
-            Dest.Settings -> SettingsScreen(onBack = { dest = Dest.Chats })
+            Dest.Chat -> ChatScreen(
+                title = active?.title.orEmpty(),
+                onBack = { dest = Dest.Chats },
+            )
+            Dest.Settings -> SettingsScreen(
+                onBack = { dest = Dest.Chats },
+                onWipe = {
+                    inbox.wipe()
+                    threads = inbox.visible()
+                    active = null
+                    dest = Dest.Auth
+                },
+            )
         }
     }
 }
@@ -95,13 +111,16 @@ private fun AuthScreen(
             onClick = onContinue,
             colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Color(0xFF06241B)),
             modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-        ) { Text("Continue", fontWeight = FontWeight.Bold) }
+        ) { Text(stringResource(R.string.continue_label), fontWeight = FontWeight.Bold) }
     }
 }
 
 @Composable
-private fun ChatList(onOpen: (String) -> Unit, onSettings: () -> Unit) {
-    val chats = listOf("Алиса" to "секретное сообщение", "Команда" to "Стендап в 11")
+private fun ChatList(
+    threads: List<ChatThread>,
+    onOpen: (ChatThread) -> Unit,
+    onSettings: () -> Unit,
+) {
     Column(Modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxWidth().padding(16.dp),
@@ -111,19 +130,29 @@ private fun ChatList(onOpen: (String) -> Unit, onSettings: () -> Unit) {
             Text("OllO", color = TextC, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
             Text("⚙", color = Accent, modifier = Modifier.clickable(onClick = onSettings))
         }
-        LazyColumn {
-            items(chats) { (name, preview) ->
-                Row(
-                    Modifier.fillMaxWidth().clickable { onOpen(name) }.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box(
-                        Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF223044)),
-                        contentAlignment = Alignment.Center,
-                    ) { Text(name.take(1), color = TextC, fontWeight = FontWeight.Bold) }
-                    Column(Modifier.padding(start = 12.dp)) {
-                        Text(name, color = TextC, fontWeight = FontWeight.Bold)
-                        Text(preview, color = Mute, fontSize = 13.sp)
+        if (threads.isEmpty()) {
+            Text(
+                stringResource(R.string.empty_inbox),
+                color = Mute,
+                modifier = Modifier.padding(24.dp),
+            )
+        } else {
+            LazyColumn {
+                items(threads, key = { it.id }) { thread ->
+                    Row(
+                        Modifier.fillMaxWidth().clickable { onOpen(thread) }.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF223044)),
+                            contentAlignment = Alignment.Center,
+                        ) { Text(thread.title.take(1), color = TextC, fontWeight = FontWeight.Bold) }
+                        Column(Modifier.padding(start = 12.dp)) {
+                            Text(thread.title, color = TextC, fontWeight = FontWeight.Bold)
+                            if (thread.preview.isNotEmpty()) {
+                                Text(thread.preview, color = Mute, fontSize = 13.sp)
+                            }
+                        }
                     }
                 }
             }
@@ -144,17 +173,31 @@ private fun ChatScreen(title: String, onBack: () -> Unit) {
             Text("🔒", color = Accent)
         }
         Box(Modifier.weight(1f).fillMaxWidth().padding(16.dp), contentAlignment = Alignment.BottomEnd) {
-            Text("Сообщения шифруются на устройстве", color = Mute)
+            Text(stringResource(R.string.e2ee_hint), color = Mute)
         }
-        OlloField(draft, { draft = it }, "Message")
+        OlloField(draft, { draft = it }, stringResource(R.string.message_hint))
     }
 }
 
 @Composable
-private fun SettingsScreen(onBack: () -> Unit) {
+private fun SettingsScreen(onBack: () -> Unit, onWipe: () -> Unit) {
     Column(Modifier.fillMaxSize().padding(20.dp)) {
-        Text("← Settings", color = TextC, fontWeight = FontWeight.Bold, modifier = Modifier.clickable(onClick = onBack))
-        Text("Devices, safety number, registration lock, disappearing messages.", color = Mute, modifier = Modifier.padding(top = 16.dp))
+        Text(
+            "← ${stringResource(R.string.settings)}",
+            color = TextC,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.clickable(onClick = onBack),
+        )
+        Text(
+            stringResource(R.string.settings_body),
+            color = Mute,
+            modifier = Modifier.padding(top = 16.dp),
+        )
+        Button(
+            onClick = onWipe,
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3A1A1A), contentColor = Color(0xFFFFC9C9)),
+            modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
+        ) { Text(stringResource(R.string.wipe_local), fontWeight = FontWeight.Bold) }
     }
 }
 

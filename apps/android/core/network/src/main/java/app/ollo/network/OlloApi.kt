@@ -26,6 +26,11 @@ class OlloApi(private val baseUrl: String, private val token: () -> String?) {
 
     fun consumeBundle(userId: String, deviceId: String): String = get("/v1/keys/$userId/$deviceId")
 
+    fun searchUsername(username: String): String {
+        val body = """{"username":${JSONString(username)}}"""
+        return post("/v1/users/search", body, auth = true)
+    }
+
     fun ack(idsJson: String): String = post("/v1/envelopes/ack", idsJson, auth = true)
 
     fun post(path: String, body: String, auth: Boolean): String {

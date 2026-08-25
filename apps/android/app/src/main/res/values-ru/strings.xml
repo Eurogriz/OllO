@@ -1,4 +1,11 @@
 <resources>
     <string name="app_name">OllO</string>
     <string name="tagline">Защищённые сообщения. Сервер не читает переписку.</string>
+    <string name="continue_label">Продолжить</string>
+    <string name="empty_inbox">Чатов пока нет. Найдите пользователя по username после входа. На устройстве нет демо-переписок.</string>
+    <string name="e2ee_hint">Сообщения шифруются на устройстве</string>
+    <string name="message_hint">Сообщение</string>
+    <string name="settings">Настройки</string>
+    <string name="settings_body">Устройства, код безопасности, PIN, исчезающие сообщения.</string>
+    <string name="wipe_local">Стереть локальные секреты</string>
 </resources>
