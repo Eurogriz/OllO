@@ -9,7 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "migrate": "tsx src/db/migrate.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test src/app.test.ts src/security/redaction.test.ts",
+    "test": "node --import tsx --test src/app.test.ts src/jobs/expire.test.ts src/security/redaction.test.ts",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

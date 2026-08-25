@@ -165,6 +165,20 @@ describe("Encrypted backup", () => {
   });
 });
 
+describe("Local vault", () => {
+  it("seals identity material; a flipped bit or a wrong key fails", async () => {
+    const { newVaultKey, sealVault, openVault } = await import("./vault.js");
+    const key = newVaultKey();
+    const pt = new TextEncoder().encode("x25519-private-must-not-be-plaintext");
+    const blob = sealVault(key, pt);
+    assert.equal(new TextDecoder().decode(openVault(key, blob)), "x25519-private-must-not-be-plaintext");
+    const other = newVaultKey();
+    assert.throws(() => openVault(other, blob));
+    const bad = { ...blob, ciphertext: `${blob.ciphertext.slice(0, -2)}zz` };
+    assert.throws(() => openVault(key, bad));
+  });
+});
+
 describe("Safety number", () => {
   it("is stable regardless of argument order", () => {
     const a = generateIdentity();
@@ -174,5 +188,14 @@ describe("Safety number", () => {
     assert.equal(s1.digits, s2.digits);
     assert.equal(s1.digits.length, 60);
     assert.match(s1.qr, /^ollo:safety:v1:/);
+  });
+
+  it("matches the published known-answer vector", () => {
+    const a = new Uint8Array(32).fill(1);
+    const b = new Uint8Array(32).fill(2);
+    const s = safetyNumber(a, b);
+    assert.equal(s.digits, "153665515321528787008757103930069366995789004059450082545955");
+    assert.equal(s.hex, "f1d7e960a6cd69014103fcdd5ff23a894e93c8008057e107ab6e6795df5a9003");
+    assert.equal(safetyNumber(b, a).digits, s.digits);
   });
 });

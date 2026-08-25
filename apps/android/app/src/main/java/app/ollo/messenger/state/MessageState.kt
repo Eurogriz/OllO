@@ -1,9 +1,13 @@
 package app.ollo.messenger.state
 
+import app.ollo.crypto.EnvelopePlanner
+
 /**
  * Offline-first message state machine.
  * pending → encrypted → uploading? → sent → delivered → read
  *                                   ↘ failed → retrying → …
+ *
+ * Transitions come from [EnvelopePlanner] so Android matches web/iOS.
  */
 enum class MessageStatus {
     Draft,
@@ -24,9 +28,22 @@ data class OutboundMessage(
     val attempts: Int,
     val lastError: String?,
 ) {
-    fun nextOnError(): OutboundMessage = copy(
-        status = if (attempts + 1 >= 8) MessageStatus.Failed else MessageStatus.Retrying,
-        attempts = attempts + 1,
-        lastError = "send_failed",
-    )
+    fun nextOnError(): OutboundMessage {
+        val next = EnvelopePlanner.onSendFailure(
+            EnvelopePlanner.OutboxItem(
+                id = clientId,
+                status = EnvelopePlanner.Status.Pending,
+                attempts = attempts,
+            ),
+        )
+        return copy(
+            status = if (next.status == EnvelopePlanner.Status.Failed) {
+                MessageStatus.Failed
+            } else {
+                MessageStatus.Retrying
+            },
+            attempts = next.attempts,
+            lastError = "send_failed",
+        )
+    }
 }

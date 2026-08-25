@@ -2,6 +2,7 @@ export * from "./aead.js";
 export * from "./attachments.js";
 export * from "./backup.js";
 export * from "./bytes.js";
+export * from "./vault.js";
 export * from "./engine.js";
 export * from "./kdf.js";
 export * from "./keys.js";

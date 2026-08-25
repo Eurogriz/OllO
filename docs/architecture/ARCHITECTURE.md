@@ -153,6 +153,16 @@ All three clients implement the same state machine for messages:
 `draft → pending → encrypted → uploading? → sent → delivered → read`
 and `failed → retrying`.
 
+The planner (`packages/shared/src/outbox.ts`, ported to Kotlin/Swift) never
+consumes a one-time prekey when a session already exists and never addresses
+the sending device. Expired envelopes and completed attachment ciphertext are
+deleted by a server-side TTL loop (`services/server/src/jobs/expire.ts`), not
+by a public HTTP endpoint.
+
+Local identity and session material live in an AEAD vault (`ollo-vault-v1`).
+Native wraps the vault key in Keystore/Keychain; web may wrap it with a PIN
+via Argon2id. Without a PIN, web localStorage is not a seizure-resistant store.
+
 ## 7. Backend modules
 
 ### 7.1 Auth

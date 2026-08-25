@@ -182,6 +182,26 @@ Access / refresh tokens are **not** included. The server stores only `blob`.
 
 A wrong passphrase or a flipped ciphertext bit fails closed.
 
+## 8c. Local-at-rest vault
+
+```
+vault_key = random(32)                         # or unwrap(PIN) via Argon2id
+blob      = XChaCha20-Poly1305_Encrypt(vault_key, account_json, aad="ollo-vault-v1")
+```
+
+Web stores `blob` in `localStorage`. The vault key is either:
+
+- wrapped with the same Argon2id backup KDF under a user PIN, or
+- stored beside the blob (protects casual grepping, **not** device seizure).
+
+Native clients wrap `vault_key` in Android Keystore / iOS Keychain (StrongBox /
+Secure Enclave when present) and keep history in SQLCipher. Web is not a
+substitute for hardware-backed wrap.
+
+A wrong key or a flipped ciphertext bit fails closed. Access / refresh tokens
+inside the vault are still session secrets — a stolen unlocked origin dump
+yields them. PIN wrap raises the bar for a seized disk, not for XSS.
+
 ## 9. Sealed push and call signaling
 
 Push payload (production):

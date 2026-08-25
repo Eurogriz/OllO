@@ -1,5 +1,6 @@
 import type { InnerMessage, PrekeyBundle, SealedPayload } from "@ollo/protocol";
 import { decodeSealed, encodeSealed, paddingBucket } from "@ollo/protocol";
+import { onSendFailure, planKeyFetch } from "@ollo/shared";
 import {
   type LocalDevice,
   type RemoteSenderKey,
@@ -23,13 +24,18 @@ import {
   encryptGroupMessage,
   encryptMessage,
   decodeBackup,
+  decodeVault,
   encodeBackup,
+  encodeVault,
   fromUtf8,
   generateOneTimePrekeys,
   generateSignedPrekey,
+  newVaultKey,
   openBackup,
+  openVault,
   safetyNumber,
   sealBackup,
+  sealVault,
   serializeIdentity,
   serializeRemoteSenderKey,
   serializeSenderKey,
@@ -38,6 +44,11 @@ import {
 } from "@ollo/crypto";
 
 const STORE_KEY = "ollo.account.v1";
+const VAULT_STORE = "ollo.vault.v1";
+const VAULT_KEY_STORE = "ollo.vault.key.v1";
+const VAULT_WRAP_STORE = "ollo.vault.wrap.v1";
+
+let memoryVaultKey: Uint8Array | null = null;
 
 export interface ChatMessage {
   clientId: string;
@@ -106,58 +117,119 @@ export function sessionKey(userId: string, deviceId: string): string {
   return `${userId}:${deviceId}`;
 }
 
+export function vaultPinEnabled(): boolean {
+  return Boolean(localStorage.getItem(VAULT_WRAP_STORE));
+}
+
+export function vaultLocked(): boolean {
+  return Boolean(localStorage.getItem(VAULT_WRAP_STORE) && !memoryVaultKey);
+}
+
+export function unlockVault(pin: string): boolean {
+  const wrap = localStorage.getItem(VAULT_WRAP_STORE);
+  if (!wrap) return false;
+  try {
+    memoryVaultKey = openBackup(pin, decodeBackup(wrap));
+    return memoryVaultKey.length === 32;
+  } catch {
+    return false;
+  }
+}
+
+export function wrapVaultWithPin(pin: string): void {
+  const key = ensureVaultKey();
+  localStorage.setItem(VAULT_WRAP_STORE, encodeBackup(sealBackup(pin, key)));
+  localStorage.removeItem(VAULT_KEY_STORE);
+}
+
+export function unwrapVaultPin(): void {
+  const key = ensureVaultKey();
+  localStorage.setItem(VAULT_KEY_STORE, b64(key));
+  localStorage.removeItem(VAULT_WRAP_STORE);
+}
+
+function ensureVaultKey(): Uint8Array {
+  if (memoryVaultKey) return memoryVaultKey;
+  const raw = localStorage.getItem(VAULT_KEY_STORE);
+  if (raw) {
+    memoryVaultKey = b64u(raw);
+    return memoryVaultKey;
+  }
+  memoryVaultKey = newVaultKey();
+  if (!localStorage.getItem(VAULT_WRAP_STORE)) {
+    localStorage.setItem(VAULT_KEY_STORE, b64(memoryVaultKey));
+  }
+  return memoryVaultKey;
+}
+
 export function loadAccount(): Account | null {
+  if (vaultLocked()) return null;
+  const sealed = localStorage.getItem(VAULT_STORE);
+  if (sealed) {
+    try {
+      const pt = openVault(ensureVaultKey(), decodeVault(sealed));
+      return accountFromStored(JSON.parse(fromUtf8(pt)) as Stored);
+    } catch {
+      return null;
+    }
+  }
   const raw = localStorage.getItem(STORE_KEY);
   if (!raw) return null;
   try {
-    const j = JSON.parse(raw) as Stored;
-    const device: LocalDevice = {
-      userId: j.userId,
-      deviceId: j.deviceId,
-      registrationId: j.registrationId,
-      identity: deserializeIdentity(j.identity),
-      signedPrekey: {
-        id: j.signedPrekey.id,
-        privateKey: b64u(j.signedPrekey.privateKey),
-        publicKey: b64u(j.signedPrekey.publicKey),
-        signature: b64u(j.signedPrekey.signature),
-      },
-      oneTimePrekeys: j.oneTimePrekeys.map((k) => ({
-        id: k.id,
-        privateKey: b64u(k.privateKey),
-        publicKey: b64u(k.publicKey),
-      })),
-    };
-    const sessions: Record<string, SessionState> = {};
-    for (const [k, v] of Object.entries(j.sessions)) sessions[k] = deserializeSession(v);
-    return {
-      userId: j.userId,
-      deviceId: j.deviceId,
-      username: j.username,
-      displayName: j.displayName,
-      about: j.about,
-      access: j.access,
-      refresh: j.refresh,
-      device,
-      sessions,
-      messages: j.messages,
-      threads: j.threads,
-      contacts: j.contacts,
-      pinned: j.pinned,
-      drafts: j.drafts,
-      firstSent: j.firstSent ?? {},
-      knownIdentities: j.knownIdentities ?? {},
-      outbox: j.outbox ?? [],
-      senderKeys: Object.fromEntries(
-        Object.entries(j.senderKeys ?? {}).map(([k, v]) => [k, deserializeSenderKey(v)]),
-      ),
-      remoteSenderKeys: Object.fromEntries(
-        Object.entries(j.remoteSenderKeys ?? {}).map(([k, v]) => [k, deserializeRemoteSenderKey(v)]),
-      ),
-    };
+    const acc = accountFromStored(JSON.parse(raw) as Stored);
+    saveAccount(acc);
+    localStorage.removeItem(STORE_KEY);
+    return acc;
   } catch {
     return null;
   }
+}
+
+function accountFromStored(j: Stored): Account {
+  const device: LocalDevice = {
+    userId: j.userId,
+    deviceId: j.deviceId,
+    registrationId: j.registrationId,
+    identity: deserializeIdentity(j.identity),
+    signedPrekey: {
+      id: j.signedPrekey.id,
+      privateKey: b64u(j.signedPrekey.privateKey),
+      publicKey: b64u(j.signedPrekey.publicKey),
+      signature: b64u(j.signedPrekey.signature),
+    },
+    oneTimePrekeys: j.oneTimePrekeys.map((k) => ({
+      id: k.id,
+      privateKey: b64u(k.privateKey),
+      publicKey: b64u(k.publicKey),
+    })),
+  };
+  const sessions: Record<string, SessionState> = {};
+  for (const [k, v] of Object.entries(j.sessions)) sessions[k] = deserializeSession(v);
+  return {
+    userId: j.userId,
+    deviceId: j.deviceId,
+    username: j.username,
+    displayName: j.displayName,
+    about: j.about,
+    access: j.access,
+    refresh: j.refresh,
+    device,
+    sessions,
+    messages: j.messages,
+    threads: j.threads,
+    contacts: j.contacts,
+    pinned: j.pinned,
+    drafts: j.drafts,
+    firstSent: j.firstSent ?? {},
+    knownIdentities: j.knownIdentities ?? {},
+    outbox: j.outbox ?? [],
+    senderKeys: Object.fromEntries(
+      Object.entries(j.senderKeys ?? {}).map(([k, v]) => [k, deserializeSenderKey(v)]),
+    ),
+    remoteSenderKeys: Object.fromEntries(
+      Object.entries(j.remoteSenderKeys ?? {}).map(([k, v]) => [k, deserializeRemoteSenderKey(v)]),
+    ),
+  };
 }
 
 export function saveAccount(acc: Account): void {
@@ -198,11 +270,17 @@ export function saveAccount(acc: Account): void {
       Object.entries(acc.remoteSenderKeys ?? {}).map(([k, v]) => [k, serializeRemoteSenderKey(v)]),
     ),
   };
-  localStorage.setItem(STORE_KEY, JSON.stringify(stored));
+  const sealed = sealVault(ensureVaultKey(), utf8(JSON.stringify(stored)));
+  localStorage.setItem(VAULT_STORE, encodeVault(sealed));
+  localStorage.removeItem(STORE_KEY);
 }
 
 export function clearAccount(): void {
   localStorage.removeItem(STORE_KEY);
+  localStorage.removeItem(VAULT_STORE);
+  localStorage.removeItem(VAULT_KEY_STORE);
+  localStorage.removeItem(VAULT_WRAP_STORE);
+  memoryVaultKey = null;
 }
 
 export function newDeviceMaterial() {
@@ -339,9 +417,17 @@ export async function sendToUser(
   const devices = (listed.devices ?? []) as Array<{ device_id: string }>;
   const envelopes = [];
   for (const d of devices) {
-    if (d.device_id === acc.deviceId && peerUserId === acc.userId) continue;
-    const existing = await sealForExisting(acc, peerUserId, d.device_id, inner);
-    if (existing) {
+    const plan = planKeyFetch({
+      localUserId: acc.userId,
+      localDeviceId: acc.deviceId,
+      targetUserId: peerUserId,
+      targetDeviceId: d.device_id,
+      hasSession: Boolean(acc.sessions[sessionKey(peerUserId, d.device_id)]),
+    });
+    if (plan === "skip-self") continue;
+    if (plan === "use-session") {
+      const existing = await sealForExisting(acc, peerUserId, d.device_id, inner);
+      if (!existing) continue;
       envelopes.push({
         recipient_user_id: peerUserId,
         recipient_device_id: d.device_id,
@@ -386,8 +472,9 @@ export async function flushOutbox(acc: Account): Promise<void> {
       }
       acc.outbox = acc.outbox.filter((x) => x.id !== item.id);
     } catch {
-      item.attempts += 1;
-      if (item.attempts >= 8) acc.outbox = acc.outbox.filter((x) => x.id !== item.id);
+      const next = onSendFailure({ id: item.id, status: "pending", attempts: item.attempts });
+      item.attempts = next.attempts;
+      if (next.status === "failed") acc.outbox = acc.outbox.filter((x) => x.id !== item.id);
     }
   }
   saveAccount(acc);

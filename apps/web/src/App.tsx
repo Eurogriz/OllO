@@ -27,6 +27,10 @@ import {
   sendToGroup,
   sendToUser,
   syncToOwnDevices,
+  unlockVault,
+  unwrapVaultPin,
+  vaultLocked,
+  wrapVaultWithPin,
 } from "./client";
 
 type Screen = "auth" | "app";
@@ -41,6 +45,7 @@ export function App() {
   const [acc, setAcc] = useState<Account | null>(null);
   const [screen, setScreen] = useState<Screen>("auth");
   const [ready, setReady] = useState(false);
+  const [locked, setLocked] = useState(false);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -51,6 +56,11 @@ export function App() {
   }, [lang]);
 
   useEffect(() => {
+    if (vaultLocked()) {
+      setLocked(true);
+      setReady(true);
+      return;
+    }
     const existing = loadAccount();
     if (existing) {
       setAcc(existing);
@@ -69,6 +79,21 @@ export function App() {
   }, []);
 
   if (!ready) return null;
+  if (locked) {
+    return (
+      <Unlock
+        lang={lang}
+        onUnlock={() => {
+          const existing = loadAccount();
+          if (existing) {
+            setAcc(existing);
+            setScreen("app");
+            setLocked(false);
+          }
+        }}
+      />
+    );
+  }
   if (screen === "auth" || !acc) {
     return (
       <Auth
@@ -95,6 +120,39 @@ export function App() {
         setScreen("auth");
       }}
     />
+  );
+}
+
+function Unlock({ lang, onUnlock }: { lang: Lang; onUnlock: () => void }) {
+  const [pin, setPin] = useState("");
+  const [err, setErr] = useState("");
+  return (
+    <div className="auth">
+      <div className="card">
+        <div className="brand">
+          <div className="logo">O</div> OllO
+        </div>
+        <h1>OllO</h1>
+        <p>{t(lang, "vaultLocked")}</p>
+        <div className="field">
+          <label>{t(lang, "vaultPin")}</label>
+          <input type="password" value={pin} onChange={(e) => setPin(e.target.value)} minLength={8} />
+        </div>
+        {err && <p style={{ color: "var(--danger)" }}>{err}</p>}
+        <button
+          className="primary"
+          onClick={() => {
+            if (!unlockVault(pin)) {
+              setErr(t(lang, "failed"));
+              return;
+            }
+            onUnlock();
+          }}
+        >
+          {t(lang, "unlock")}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -326,6 +384,8 @@ function Shell({
   const [searchHits, setSearchHits] = useState<ChatMessage[] | null>(null);
   const [identityWarn, setIdentityWarn] = useState("");
   const [lockPin, setLockPin] = useState("");
+  const [vaultPin, setVaultPin] = useState("");
+  const [vaultPinErr, setVaultPinErr] = useState("");
   const [safetyQr, setSafetyQr] = useState("");
   const [backupPass, setBackupPass] = useState("");
   const [muted, setMuted] = useState(false);
@@ -1292,6 +1352,40 @@ function Shell({
               </button>
             </div>
             <Devices acc={acc} lang={lang} />
+            <div className="list-row">
+              <span>{t(lang, "vaultPin")}</span>
+              <input
+                type="password"
+                value={vaultPin}
+                onChange={(e) => setVaultPin(e.target.value)}
+                placeholder="min 8"
+                style={{ width: 90 }}
+              />
+              <button
+                className="ghost"
+                onClick={() => {
+                  setVaultPinErr("");
+                  try {
+                    wrapVaultWithPin(vaultPin);
+                    setVaultPin("");
+                  } catch (e) {
+                    setVaultPinErr((e as Error).message);
+                  }
+                }}
+              >
+                {t(lang, "setVaultPin")}
+              </button>
+              <button
+                className="ghost"
+                onClick={() => {
+                  unwrapVaultPin();
+                  setVaultPin("");
+                }}
+              >
+                {t(lang, "clearVaultPin")}
+              </button>
+            </div>
+            {vaultPinErr && <p style={{ color: "var(--danger)" }}>{vaultPinErr}</p>}
             <div className="list-row">
               <span>{t(lang, "lock")}</span>
               <input
