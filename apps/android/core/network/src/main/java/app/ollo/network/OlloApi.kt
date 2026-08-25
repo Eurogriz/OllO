@@ -26,6 +26,9 @@ class OlloApi(private val baseUrl: String, private val token: () -> String?) {
 
     fun consumeBundle(userId: String, deviceId: String): String = get("/v1/keys/$userId/$deviceId")
 
+    fun peekBundle(userId: String, deviceId: String): String =
+        get("/v1/keys/$userId/$deviceId?consume=0")
+
     fun searchUsername(username: String): String {
         val body = """{"username":${JSONString(username)}}"""
         return post("/v1/users/search", body, auth = true)

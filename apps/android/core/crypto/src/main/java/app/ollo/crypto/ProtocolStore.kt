@@ -16,6 +16,7 @@ class ProtocolStore(
 ) {
     val sessions = SessionDirectory(store, wrapKey, localUserId, localDeviceId)
     val messages = MessageLog(store, wrapKey)
+    val sessionVault = SessionVault(store, wrapKey)
 
     fun storeLocalIdentity(record: ByteArray, registrationId: Int) {
         require(registrationId in 1..0x3FFF) { "registration id out of range" }

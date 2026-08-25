@@ -479,6 +479,15 @@ describe("API integration", () => {
     const bob2Id = bob2.body.device_id as string;
     const listed = await json("GET", "/v1/devices", undefined, bob.tok);
     assert.ok(((listed.body.devices as unknown[]) ?? []).length >= 2);
+    assert.equal(typeof listed.body.roster_hash, "string");
+    assert.ok(String(listed.body.roster_hash).length === 64);
+
+    const depthBeforePeek = await json("GET", "/v1/me/prekey-depth", undefined, bob.tok);
+    const peek = await json("GET", `/v1/keys/${bob.userId}/${bob.deviceId}?consume=0`, undefined, alice.tok);
+    assert.equal(peek.status, 200);
+    assert.equal((peek.body.bundle as { one_time_prekey: unknown }).one_time_prekey, null);
+    const depthAfterPeek = await json("GET", "/v1/me/prekey-depth", undefined, bob.tok);
+    assert.equal(depthAfterPeek.body.remaining, depthBeforePeek.body.remaining);
 
     const revoked = await json("DELETE", `/v1/devices/${bob2Id}`, {}, bob.tok);
     assert.equal(revoked.status, 200, JSON.stringify(revoked.body));

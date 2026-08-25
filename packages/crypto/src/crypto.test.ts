@@ -201,6 +201,22 @@ describe("Safety number", () => {
     assert.match(s1.qr, /^ollo:safety:v1:/);
   });
 
+  it("roster hash includes device ids so a cloned identity is visible", async () => {
+    const { deviceRosterHash } = await import("./safety.js");
+    const ik = new Uint8Array(32).fill(1);
+    const one = deviceRosterHash([{ deviceId: "d1", identityX25519: ik }]);
+    const two = deviceRosterHash([
+      { deviceId: "d1", identityX25519: ik },
+      { deviceId: "d2", identityX25519: ik },
+    ]);
+    assert.notEqual(one, two);
+    const swapped = deviceRosterHash([
+      { deviceId: "d2", identityX25519: ik },
+      { deviceId: "d1", identityX25519: ik },
+    ]);
+    assert.equal(two, swapped);
+  });
+
   it("matches the published known-answer vector", () => {
     const a = new Uint8Array(32).fill(1);
     const b = new Uint8Array(32).fill(2);

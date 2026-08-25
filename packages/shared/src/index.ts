@@ -11,8 +11,6 @@ export const OTP_TTL_SECONDS = 5 * 60;
 export const OTP_MAX_ATTEMPTS = 5;
 export const MAX_ENVELOPE_BYTES = 256 * 1024;
 export const MAX_USERNAME_CHANGES_PER_DAY = 3;
-export const PREKEY_MIN_DEPTH = 20;
-export const PREKEY_BATCH = 100;
 
 export const SENSITIVE_FIELD_RE =
   /(otp|password|passwd|pin|secret|token|authorization|refresh|private[_-]?key|ciphertext|seed|cookie)/i;

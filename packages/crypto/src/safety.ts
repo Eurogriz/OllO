@@ -37,3 +37,18 @@ export function deviceListHash(identityKeys: Uint8Array[]): string {
   const digest = sha256(concat(new TextEncoder().encode("ollo-devices-v1"), ...sorted));
   return toHex(digest);
 }
+
+/**
+ * Roster hash includes device ids so a restored extra device with the same
+ * identity keys is still visible. Sort by device id, then
+ * `ollo-roster-v1 || id || 0x00 || IK_x25519 || 0x00` for each row.
+ */
+export function deviceRosterHash(devices: { deviceId: string; identityX25519: Uint8Array }[]): string {
+  const sorted = [...devices].sort((a, b) => (a.deviceId < b.deviceId ? -1 : a.deviceId > b.deviceId ? 1 : 0));
+  const parts: Uint8Array[] = [new TextEncoder().encode("ollo-roster-v1")];
+  const z = new Uint8Array([0]);
+  for (const d of sorted) {
+    parts.push(new TextEncoder().encode(d.deviceId), z, d.identityX25519, z);
+  }
+  return toHex(sha256(concat(...parts)));
+}

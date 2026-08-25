@@ -6,6 +6,7 @@ public final class ProtocolStore: @unchecked Sendable {
     public let store: IdentityStore
     public let sessions: SessionDirectory
     public let messages: MessageLog
+    public let sessionVault: SessionVault
     private let wrapKey: Data
 
     public init(
@@ -23,6 +24,7 @@ public final class ProtocolStore: @unchecked Sendable {
             localDeviceId: localDeviceId
         )
         self.messages = MessageLog(store: store, wrapKey: wrapKey)
+        self.sessionVault = SessionVault(store: store, wrapKey: wrapKey)
     }
 
     public func storeLocalIdentity(record: Data, registrationId: Int) throws {

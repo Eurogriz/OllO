@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { deviceRosterHash } from "@ollo/crypto";
 import { z } from "zod";
 import type { Db } from "../db/index.js";
 import { ApiError, requireAuth } from "../http.js";
@@ -19,12 +20,14 @@ export async function registerKeys(app: FastifyInstance, db: Db): Promise<void> 
       created_at: string;
       last_seen_at: string;
       identity_ed25519: Buffer;
+      identity_x25519: Buffer;
     }>(
-      `SELECT id, name, platform, created_at, last_seen_at, identity_ed25519
+      `SELECT id, name, platform, created_at, last_seen_at, identity_ed25519, identity_x25519
        FROM devices WHERE user_id = $1 AND revoked_at IS NULL`,
       [auth.userId],
     );
     return {
+      roster_hash: rosterHash(r.rows),
       devices: r.rows.map((d) => ({
         id: d.id,
         name: d.name,
@@ -86,6 +89,7 @@ export async function registerKeys(app: FastifyInstance, db: Db): Promise<void> 
     );
     return {
       user_id: userId,
+      roster_hash: rosterHash(r.rows),
       devices: r.rows.map((d) => ({
         device_id: d.id,
         identity_x25519: b64(d.identity_x25519),
@@ -117,7 +121,8 @@ export async function registerKeys(app: FastifyInstance, db: Db): Promise<void> 
   app.get("/v1/keys/:userId/:deviceId", async (req) => {
     requireAuth(req);
     const { userId, deviceId } = req.params as { userId: string; deviceId: string };
-    const bundle = await takeBundle(db, userId, deviceId, true);
+    const consume = String((req.query as { consume?: string }).consume ?? "1") !== "0";
+    const bundle = await takeBundle(db, userId, deviceId, consume);
     if (!bundle) throw new ApiError("not_found", "Device not found", 404);
     return { bundle };
   });
@@ -162,6 +167,15 @@ export async function registerKeys(app: FastifyInstance, db: Db): Promise<void> 
     }
     return { ok: true, count: body.keys.length };
   });
+}
+
+function rosterHash(rows: { id: string; identity_x25519: Buffer }[]): string {
+  return deviceRosterHash(
+    rows.map((d) => ({
+      deviceId: d.id,
+      identityX25519: new Uint8Array(d.identity_x25519),
+    })),
+  );
 }
 
 async function listDeviceRows(db: Db, userId: string) {

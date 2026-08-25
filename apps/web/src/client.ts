@@ -1,11 +1,19 @@
 import type { InnerMessage, PrekeyBundle, SealedPayload } from "@ollo/protocol";
 import { decodeSealed, encodeSealed, paddingBucket } from "@ollo/protocol";
-import { noteRemoteIdentity, onSendFailure, planKeyFetch, retainUnexpired } from "@ollo/shared";
+import {
+  noteRemoteIdentity,
+  onRefreshRejected,
+  onSendFailure,
+  planKeyFetch,
+  planPrekeyReplenish,
+  retainUnexpired,
+} from "@ollo/shared";
 import {
   type LocalDevice,
   type RemoteSenderKey,
   type SenderKeyState,
   type SessionState,
+  deviceRosterHash,
   acceptSenderKey,
   acceptSession,
   beginSession,
@@ -111,6 +119,7 @@ export interface Account {
   outbox: OutboxItem[];
   senderKeys: Record<string, SenderKeyState>;
   remoteSenderKeys: Record<string, RemoteSenderKey>;
+  ownRosterHash?: string;
 }
 
 export function sessionKey(userId: string, deviceId: string): string {
@@ -236,6 +245,7 @@ function accountFromStored(j: Stored): Account {
     remoteSenderKeys: Object.fromEntries(
       Object.entries(j.remoteSenderKeys ?? {}).map(([k, v]) => [k, deserializeRemoteSenderKey(v)]),
     ),
+    ownRosterHash: j.ownRosterHash,
   };
 }
 
@@ -276,6 +286,7 @@ export function saveAccount(acc: Account): void {
     remoteSenderKeys: Object.fromEntries(
       Object.entries(acc.remoteSenderKeys ?? {}).map(([k, v]) => [k, serializeRemoteSenderKey(v)]),
     ),
+    ownRosterHash: acc.ownRosterHash,
   };
   const sealed = sealVault(ensureVaultKey(), utf8(JSON.stringify(stored)));
   localStorage.setItem(VAULT_STORE, encodeVault(sealed));
@@ -324,7 +335,10 @@ export async function refreshSession(acc: Account): Promise<boolean> {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refresh_token: acc.refresh }),
     });
-    if (!res.ok) return false;
+    if (!res.ok) {
+      if (onRefreshRejected() === "wipe") clearAccount();
+      return false;
+    }
     const data = (await res.json()) as { access_token: string; refresh_token: string };
     acc.access = data.access_token;
     acc.refresh = data.refresh_token;
@@ -654,6 +668,20 @@ export function computeSafety(acc: Account, theirX: Uint8Array) {
   return safetyNumber(acc.device.identity.x25519Public, theirX);
 }
 
+export function noteOwnRoster(
+  acc: Account,
+  devices: { deviceId: string; identityX25519: Uint8Array }[],
+): "new" | "unchanged" | "changed" {
+  const next = deviceRosterHash(devices);
+  const prev = acc.ownRosterHash;
+  if (!prev) {
+    acc.ownRosterHash = next;
+    return "new";
+  }
+  if (prev === next) return "unchanged";
+  return "changed";
+}
+
 export async function encryptFile(file: File) {
   const buf = new Uint8Array(await file.arrayBuffer());
   return encryptAttachment(buf, { mime: file.type || "application/octet-stream", filename: file.name });
@@ -698,10 +726,11 @@ export async function downloadAndDecrypt(
 
 export async function replenishPrekeys(acc: Account): Promise<void> {
   const depth = await api("/v1/me/prekey-depth", acc.access, {}, acc);
-  if ((depth.remaining as number) >= 20) return;
   const start =
     acc.device.oneTimePrekeys.reduce((m, k) => Math.max(m, k.id), 0) + 1;
-  const extra = generateOneTimePrekeys(start, 80);
+  const plan = planPrekeyReplenish(Number(depth.remaining ?? 0), start);
+  if (!plan) return;
+  const extra = generateOneTimePrekeys(plan.startId, plan.count);
   acc.device.oneTimePrekeys.push(...extra);
   await api(
     "/v1/keys/one-time",
@@ -843,4 +872,5 @@ interface Stored {
   outbox: OutboxItem[];
   senderKeys?: Record<string, string>;
   remoteSenderKeys?: Record<string, string>;
+  ownRosterHash?: string;
 }

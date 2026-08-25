@@ -1569,12 +1569,30 @@ function Shell({
 
 function Devices({ acc, lang }: { acc: Account; lang: Lang }) {
   const [rows, setRows] = useState<Array<Record<string, string | boolean>>>([]);
+  const [rosterHash, setRosterHash] = useState("");
+  const [rosterWarn, setRosterWarn] = useState(false);
   useEffect(() => {
-    void api("/v1/devices", acc.access).then((r) => setRows(r.devices));
+    void api("/v1/devices", acc.access).then((r) => {
+      setRows(r.devices);
+      const next = String(r.roster_hash ?? "");
+      setRosterHash(next);
+      if (acc.ownRosterHash && next && next !== acc.ownRosterHash) {
+        setRosterWarn(true);
+      } else if (next) {
+        acc.ownRosterHash = next;
+        saveAccount(acc);
+      }
+    });
   }, [acc.access]);
   return (
     <div>
       <h4>{t(lang, "devices")}</h4>
+      {rosterHash && <div className="hint" style={{ wordBreak: "break-all" }}>{rosterHash}</div>}
+      {rosterWarn && (
+        <p style={{ color: "var(--danger)" }}>
+          {lang === "ru" ? "Список устройств изменился. Проверьте лишние сессии." : "Device list changed. Review extra sessions."}
+        </p>
+      )}
       {rows.map((d) => (
         <div className="list-row" key={String(d.id)}>
           <div>

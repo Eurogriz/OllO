@@ -63,4 +63,24 @@ public enum EnvelopePlanner {
         }
         return hasSession ? .useSession : .consumeBundle
     }
+
+    public static let prekeyMinDepth = 20
+    public static let prekeyBatch = 100
+
+    public struct Replenish: Sendable, Equatable {
+        public var count: Int
+        public var startId: Int
+    }
+
+    public static func planPrekeyReplenish(remaining: Int, nextId: Int) -> Replenish? {
+        if remaining >= prekeyMinDepth { return nil }
+        if nextId < 1 { return nil }
+        return Replenish(count: prekeyBatch, startId: nextId)
+    }
+
+    public enum AuthFailure: String, Sendable {
+        case wipe
+    }
+
+    public static func onRefreshRejected() -> AuthFailure { .wipe }
 }

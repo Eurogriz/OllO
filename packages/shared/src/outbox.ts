@@ -61,3 +61,18 @@ export function planKeyFetch(args: {
   }
   return args.hasSession ? "use-session" : "consume-bundle";
 }
+
+export const PREKEY_MIN_DEPTH = 20;
+export const PREKEY_BATCH = 100;
+
+/** Upload a fresh batch only when the server-side unused OPK count is low. */
+export function planPrekeyReplenish(remaining: number, nextId: number): { count: number; startId: number } | null {
+  if (remaining >= PREKEY_MIN_DEPTH) return null;
+  if (nextId < 1) return null;
+  return { count: PREKEY_BATCH, startId: nextId };
+}
+
+/** Refresh reuse / revoke: drop local tokens and sealed state. Do not retry. */
+export function onRefreshRejected(): "wipe" {
+  return "wipe";
+}

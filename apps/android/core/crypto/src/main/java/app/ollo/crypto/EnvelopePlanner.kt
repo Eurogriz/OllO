@@ -63,4 +63,19 @@ object EnvelopePlanner {
         }
         return if (hasSession) KeyPlan.UseSession else KeyPlan.ConsumeBundle
     }
+
+    const val PREKEY_MIN_DEPTH = 20
+    const val PREKEY_BATCH = 100
+
+    data class Replenish(val count: Int, val startId: Int)
+
+    fun planPrekeyReplenish(remaining: Int, nextId: Int): Replenish? {
+        if (remaining >= PREKEY_MIN_DEPTH) return null
+        if (nextId < 1) return null
+        return Replenish(count = PREKEY_BATCH, startId = nextId)
+    }
+
+    fun onRefreshRejected(): AuthFailure = AuthFailure.Wipe
+
+    enum class AuthFailure { Wipe }
 }

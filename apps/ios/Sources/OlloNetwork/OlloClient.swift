@@ -25,6 +25,10 @@ public actor OlloClient {
         try await get(path: "/v1/keys/\(userId)/\(deviceId)", auth: true)
     }
 
+    public func peekBundle(userId: String, deviceId: String) async throws -> Data {
+        try await get(path: "/v1/keys/\(userId)/\(deviceId)?consume=0", auth: true)
+    }
+
     public func searchUsername(_ username: String) async throws -> Data {
         try await post(path: "/v1/users/search", body: ["username": username], auth: true)
     }

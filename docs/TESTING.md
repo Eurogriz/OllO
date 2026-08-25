@@ -22,6 +22,7 @@ A change that touches any of these is incomplete without tests:
 - Key exchange and prekey consumption
 - Sealed session directory (`planKeyFetch`, identity-change, wipe)
 - Durable protocol store (prekeys, file restart, local TTL history)
+- Device roster hash, OPK peek without consume, refresh-reuse wipe
 - Device registration and revoke
 - Group membership + epoch
 - Message ordering and de-dupe

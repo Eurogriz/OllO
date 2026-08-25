@@ -3,8 +3,10 @@ import { describe, it } from "node:test";
 import {
   OUTBOX_MAX_ATTEMPTS,
   nextRetryDelayMs,
+  onRefreshRejected,
   onSendFailure,
   planKeyFetch,
+  planPrekeyReplenish,
   type OutboxItemView,
 } from "./outbox.js";
 
@@ -55,5 +57,19 @@ describe("prekey consume planner", () => {
       }),
       "consume-bundle",
     );
+  });
+});
+
+describe("prekey replenish planner", () => {
+  it("uploads a batch only below the depth floor", () => {
+    assert.equal(planPrekeyReplenish(20, 11), null);
+    assert.deepEqual(planPrekeyReplenish(19, 11), { count: 100, startId: 11 });
+    assert.equal(planPrekeyReplenish(5, 0), null);
+  });
+});
+
+describe("refresh rejection", () => {
+  it("wipes local state instead of retrying a reused refresh", () => {
+    assert.equal(onRefreshRejected(), "wipe");
   });
 });

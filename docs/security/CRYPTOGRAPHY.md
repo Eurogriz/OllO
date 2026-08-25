@@ -168,8 +168,15 @@ payload `ollo:safety:v1:<hex>`.
 
 A change of either identity key is a hard warning. Users must re-verify.
 
-Device-list hash is shown under “devices” so a silent extra device is
-visible even if the primary identity is unchanged.
+Device roster hash (`ollo-roster-v1` over sorted `device_id || IK_x25519`)
+is shown under “devices” so a silent extra device is visible even if it
+was restored with the same identity keys.
+
+`GET /v1/keys/:user/:device?consume=0` inspects a bundle without burning
+a one-time prekey. Clients must only consume when `planKeyFetch` says so.
+
+A rejected refresh token wipes local session secrets. Refresh tokens are
+never written into backups.
 
 ## 8b. Encrypted backup
 
