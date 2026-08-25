@@ -178,7 +178,9 @@ export async function registerGroups(app: FastifyInstance, db: Db): Promise<void
             created_at: new Date().toISOString(),
           },
         });
-        await maybeWake(db, m.user_id, d.id, body.kind === "call" ? "call" : "msg");
+        if (body.kind === "message" || body.kind === "call") {
+          await maybeWake(db, m.user_id, d.id, body.kind === "call" ? "call" : "msg");
+        }
         n += 1;
       }
     }

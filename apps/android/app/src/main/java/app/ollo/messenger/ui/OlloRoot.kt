@@ -34,7 +34,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.ollo.crypto.ChatThread
+import app.ollo.crypto.DevicePayload
 import app.ollo.crypto.ThreadIndex
+import app.ollo.crypto.UnboundCryptoEngine
 import app.ollo.messenger.R
 
 private val Bg = Color(0xFF070A0E)
@@ -50,6 +52,7 @@ fun OlloRoot() {
     var dest by remember { mutableStateOf(Dest.Auth) }
     var phone by remember { mutableStateOf("+7") }
     var otp by remember { mutableStateOf("") }
+    var authError by remember { mutableStateOf("") }
     val inbox = remember { ThreadIndex() }
     var threads by remember { mutableStateOf(inbox.visible()) }
     var active by remember { mutableStateOf<ChatThread?>(null) }
@@ -58,9 +61,17 @@ fun OlloRoot() {
             Dest.Splash, Dest.Auth -> AuthScreen(
                 phone = phone,
                 otp = otp,
+                error = authError,
                 onPhone = { phone = it },
                 onOtp = { otp = it },
-                onContinue = { dest = Dest.Chats },
+                onContinue = {
+                    try {
+                        DevicePayload.requireIdentity(UnboundCryptoEngine())
+                        dest = Dest.Chats
+                    } catch (_: IllegalStateException) {
+                        authError = "libsignal engine is not bound"
+                    }
+                },
             )
             Dest.Chats -> ChatList(
                 threads = threads,
@@ -91,6 +102,7 @@ fun OlloRoot() {
 private fun AuthScreen(
     phone: String,
     otp: String,
+    error: String,
     onPhone: (String) -> Unit,
     onOtp: (String) -> Unit,
     onContinue: () -> Unit,
@@ -107,11 +119,20 @@ private fun AuthScreen(
         Text(stringResource(R.string.tagline), color = Mute, modifier = Modifier.padding(top = 6.dp, bottom = 24.dp))
         OlloField(phone, onPhone, "E.164")
         OlloField(otp, onOtp, "OTP", KeyboardType.Number)
+        if (error.isNotEmpty()) {
+            Text(error, color = Color(0xFFFFC9C9), modifier = Modifier.padding(top = 8.dp))
+        }
         Button(
             onClick = onContinue,
             colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = Color(0xFF06241B)),
             modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
         ) { Text(stringResource(R.string.continue_label), fontWeight = FontWeight.Bold) }
+        Text(
+            stringResource(R.string.engine_unbound),
+            color = Mute,
+            fontSize = 13.sp,
+            modifier = Modifier.padding(top = 12.dp),
+        )
     }
 }
 

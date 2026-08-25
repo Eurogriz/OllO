@@ -50,13 +50,43 @@ describe("TTL expiry job", () => {
       [deadAtt, liveAtt, uid, `obj-${deadAtt}`, `obj-${liveAtt}`],
     );
 
+    const did = crypto.randomUUID();
+    const key = Buffer.from([1, 2, 3, 4]);
+    await db.query(`INSERT INTO users (id, phone_hmac, display_name) VALUES ($1,$2,'')`, [
+      uid,
+      `hmac-${uid}`,
+    ]);
+    await db.query(
+      `INSERT INTO devices (
+         id, user_id, name, platform, registration_id,
+         identity_x25519, identity_ed25519,
+         signed_prekey_id, signed_prekey_public, signed_prekey_sig
+       ) VALUES ($1,$2,'t','web',1,$3,$3,1,$3,$3)`,
+      [did, uid, key],
+    );
+    await db.query(
+      `INSERT INTO one_time_prekeys (device_id, key_id, public_key, consumed_at) VALUES
+         ($1, 1, $2, now() - interval '15 days'),
+         ($1, 2, $2, now()),
+         ($1, 3, $2, NULL)`,
+      [did, key],
+    );
+
     const result = await expireStale(db);
     assert.equal(result.envelopes, 1);
     assert.equal(result.attachments, 1);
+    assert.equal(result.prekeys, 1);
 
     const envs = await db.query<{ id: string }>("SELECT id FROM envelopes");
     assert.deepEqual(envs.rows.map((r) => r.id), [liveEnv]);
     const atts = await db.query<{ id: string }>("SELECT id FROM attachments");
     assert.deepEqual(atts.rows.map((r) => r.id), [liveAtt]);
+    const opks = await db.query<{ key_id: number }>(
+      "SELECT key_id FROM one_time_prekeys ORDER BY key_id",
+    );
+    assert.deepEqual(
+      opks.rows.map((r) => r.key_id),
+      [2, 3],
+    );
   });
 });

@@ -8,7 +8,7 @@ operator-facing privacy specification.
 | Data | Purpose | Retention |
 |---|---|---|
 | User id (random UUIDv7) | Primary key | Until account deletion + 30 days legal hold if a report is open |
-| Username | Discovery | Until change / deletion |
+| Username | Discovery | Until change / deletion. At most 3 changes / 24h. |
 | Phone HMAC | Registration, anti-abuse | Until deletion |
 | Profile display name, about, avatar id | Social | Until change / deletion |
 | Device public keys | E2EE | Until device revoke + 7 days |
@@ -38,6 +38,10 @@ advertising ids.
 
 Default: hide content on lock screen, hide in app switcher, no cloud backup
 of the message database. Users can relax this; we warn.
+
+Push is a sealed `{v,t}` wake for the **offline device** only. Another
+online device of the same account does not cancel that wake. Typing and
+receipts do not generate push.
 
 ## Legal
 

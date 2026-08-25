@@ -47,4 +47,25 @@ final class EnvelopePlannerTests: XCTestCase {
             .consumeBundle
         )
     }
+
+    func testRotatesSignedPrekeyOnlyAfterMaxAge() {
+        let now: Int64 = 1_700_000_000_000
+        XCTAssertNil(EnvelopePlanner.planSignedPrekeyRotation(currentId: 1, createdAtMs: now, now: now))
+        XCTAssertNil(EnvelopePlanner.planSignedPrekeyRotation(currentId: 1, createdAtMs: nil, now: now))
+        XCTAssertNil(EnvelopePlanner.planSignedPrekeyRotation(currentId: 0, createdAtMs: 1, now: now))
+        XCTAssertEqual(
+            EnvelopePlanner.planSignedPrekeyRotation(
+                currentId: 1,
+                createdAtMs: now - EnvelopePlanner.signedPrekeyMaxAgeMs,
+                now: now
+            )?.nextId,
+            2
+        )
+    }
+
+    func testUnboundEngineDoesNotInventIdentity() {
+        XCTAssertThrowsError(try UnboundCryptoEngine().generateIdentity()) { error in
+            XCTAssertEqual(error as? UnboundCryptoEngine.EngineError, .unbound)
+        }
+    }
 }

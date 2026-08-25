@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { isValidUsername, normalizeUsername } from "@ollo/protocol";
+import { MAX_USERNAME_CHANGES_PER_DAY } from "@ollo/shared";
 import { z } from "zod";
 import type { Db } from "../db/index.js";
 import { ApiError, requireAuth } from "../http.js";
@@ -52,12 +53,30 @@ export async function registerUsers(app: FastifyInstance, db: Db): Promise<void>
     if (body.username !== undefined) {
       const un = normalizeUsername(body.username);
       if (!isValidUsername(un)) throw new ApiError("validation", "Invalid username");
-      const clash = await db.query<{ id: string }>(
-        "SELECT id FROM users WHERE lower(username) = $1 AND id <> $2",
-        [un, auth.userId],
+      const current = await db.query<{ username: string | null }>(
+        "SELECT username FROM users WHERE id = $1",
+        [auth.userId],
       );
-      if (clash.rows[0]) throw new ApiError("conflict", "Username taken", 409);
-      await db.query("UPDATE users SET username = $2 WHERE id = $1", [auth.userId, un]);
+      if ((current.rows[0]?.username ?? null) !== un) {
+        const used = await db.query<{ n: string }>(
+          `SELECT count(*)::text AS n FROM username_changes
+           WHERE user_id = $1 AND changed_at > now() - interval '1 day'`,
+          [auth.userId],
+        );
+        if (Number(used.rows[0]?.n ?? 0) >= MAX_USERNAME_CHANGES_PER_DAY) {
+          throw new ApiError("rate_limited", "Too many username changes", 429);
+        }
+        const clash = await db.query<{ id: string }>(
+          "SELECT id FROM users WHERE lower(username) = $1 AND id <> $2",
+          [un, auth.userId],
+        );
+        if (clash.rows[0]) throw new ApiError("conflict", "Username taken", 409);
+        await db.query("UPDATE users SET username = $2 WHERE id = $1", [auth.userId, un]);
+        await db.query("INSERT INTO username_changes (id, user_id) VALUES ($1,$2)", [
+          randomUuid(),
+          auth.userId,
+        ]);
+      }
     }
     if (body.display_name !== undefined) {
       await db.query("UPDATE users SET display_name = $2 WHERE id = $1", [auth.userId, body.display_name]);

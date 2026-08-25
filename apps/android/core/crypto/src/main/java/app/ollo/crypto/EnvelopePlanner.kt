@@ -78,4 +78,15 @@ object EnvelopePlanner {
     fun onRefreshRejected(): AuthFailure = AuthFailure.Wipe
 
     enum class AuthFailure { Wipe }
+
+    const val SIGNED_PREKEY_MAX_AGE_MS = 7L * 24 * 60 * 60 * 1000
+
+    data class SignedPrekeyPlan(val nextId: Int)
+
+    fun planSignedPrekeyRotation(currentId: Int, createdAtMs: Long?, now: Long): SignedPrekeyPlan? {
+        if (currentId < 1) return null
+        if (createdAtMs == null) return null
+        if (now - createdAtMs < SIGNED_PREKEY_MAX_AGE_MS) return null
+        return SignedPrekeyPlan(nextId = currentId + 1)
+    }
 }

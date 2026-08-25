@@ -35,6 +35,16 @@ export function isOnline(userId: string): boolean {
   return (byUser.get(userId)?.size ?? 0) > 0;
 }
 
+/** Push skip must be per device: another online device must not mute this one. */
+export function isDeviceOnline(deviceId: string): boolean {
+  const set = byDevice.get(deviceId);
+  if (!set) return false;
+  for (const c of set) {
+    if (c.ws.readyState === 1) return true;
+  }
+  return false;
+}
+
 export function pushToUser(userId: string, frame: unknown): number {
   const devices = byUser.get(userId);
   if (!devices) return 0;
@@ -65,4 +75,9 @@ export function connectionCount(): number {
   let n = 0;
   for (const s of byDevice.values()) n += s.size;
   return n;
+}
+
+export function resetHub(): void {
+  byDevice.clear();
+  byUser.clear();
 }

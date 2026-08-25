@@ -16,6 +16,7 @@ import {
   ingestSenderKey,
   loadAccount,
   materialFromBackup,
+  maybeRotateSignedPrekey,
   mergeBackupHistory,
   newDeviceMaterial,
   openEnvelope,
@@ -223,6 +224,7 @@ function Auth({
         outbox: [],
         senderKeys: {},
         remoteSenderKeys: {},
+        signedPrekeyAt: Date.now(),
       };
       if (restoreRaw) {
         try {

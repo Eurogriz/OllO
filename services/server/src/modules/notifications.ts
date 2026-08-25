@@ -8,7 +8,7 @@ import { z } from "zod";
 import { config } from "../config.js";
 import type { Db } from "../db/index.js";
 import { requireAuth } from "../http.js";
-import { isOnline } from "../realtime/hub.js";
+import { isDeviceOnline } from "../realtime/hub.js";
 
 export type SealedWakeKind = "msg" | "call";
 
@@ -65,13 +65,18 @@ export function sealedPayload(kind: SealedWakeKind): SealedWake {
   return { v: 1, t: kind };
 }
 
+export function shouldWake(kind: string): boolean {
+  return kind === "message" || kind === "call" || kind === "msg";
+}
+
 export async function maybeWake(
   db: Db,
   recipientUserId: string,
   recipientDeviceId: string,
   kind: SealedWakeKind = "msg",
 ): Promise<void> {
-  if (isOnline(recipientUserId)) return;
+  if (!shouldWake(kind)) return;
+  if (isDeviceOnline(recipientDeviceId)) return;
   const tok = await db.query<{ push_token_enc: Buffer | null }>(
     "SELECT push_token_enc FROM devices WHERE id = $1 AND revoked_at IS NULL",
     [recipientDeviceId],

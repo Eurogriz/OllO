@@ -524,4 +524,90 @@ describe("API integration", () => {
     const search = await json("POST", "/v1/users/search", { username: "alicepriv" }, bob.tok);
     assert.equal((search.body.users as unknown[]).length, 0);
   });
+
+  it("caps username changes and does not wake for typing or an online device", async () => {
+    const { recentWakes, resetWakes } = await import("./modules/notifications.js");
+    const { attach, detach, resetHub } = await import("./realtime/hub.js");
+    resetWakes();
+    resetHub();
+
+    const aDev = devicePayload("alice-wake");
+    const bDev = devicePayload("bob-wake");
+    const otpA = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000051" });
+    const alice = await json("POST", "/v1/auth/verify-otp", {
+      challenge_id: otpA.body.challenge_id,
+      otp: otpA.body.dev_otp,
+      device: aDev.json,
+    });
+    const otpB = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000052" });
+    const bob = await json("POST", "/v1/auth/verify-otp", {
+      challenge_id: otpB.body.challenge_id,
+      otp: otpB.body.dev_otp,
+      device: bDev.json,
+    });
+    const aliceTok = alice.body.access_token as string;
+    const bobTok = bob.body.access_token as string;
+    const bobUser = (bob.body.user as { id: string }).id;
+    const bobDevice = bob.body.device_id as string;
+
+    const u1 = await json("PUT", "/v1/me", { username: "wakea1" }, aliceTok);
+    assert.equal(u1.status, 200, JSON.stringify(u1.body));
+    assert.equal((await json("PUT", "/v1/me", { username: "wakea1" }, aliceTok)).status, 200);
+    assert.equal((await json("PUT", "/v1/me", { username: "wakea2" }, aliceTok)).status, 200);
+    assert.equal((await json("PUT", "/v1/me", { username: "wakea3" }, aliceTok)).status, 200);
+    const limited = await json("PUT", "/v1/me", { username: "wakea4" }, aliceTok);
+    assert.equal(limited.status, 429);
+
+    await json("PUT", "/v1/devices/push-token", { token: "fcm-token-wake-device", platform: "web" }, bobTok);
+    const opaque = {
+      recipient_user_id: bobUser,
+      recipient_device_id: bobDevice,
+      kind: "typing",
+      ciphertext: Buffer.from("opaque-typing").toString("base64"),
+      padding_bucket: 256,
+    };
+    const typed = await json("POST", "/v1/envelopes", { envelopes: [opaque] }, aliceTok);
+    assert.equal(typed.status, 200, JSON.stringify(typed.body));
+    assert.equal(recentWakes().length, 0);
+
+    const onlineWs = { readyState: 1, send() {} } as unknown as import("ws").WebSocket;
+    const socket = { deviceId: bobDevice, userId: bobUser, ws: onlineWs, resume: "r" };
+    attach(socket);
+    const msgOnline = await json(
+      "POST",
+      "/v1/envelopes",
+      {
+        envelopes: [
+          {
+            ...opaque,
+            kind: "message",
+            ciphertext: Buffer.from("opaque-msg-online").toString("base64"),
+          },
+        ],
+      },
+      aliceTok,
+    );
+    assert.equal(msgOnline.status, 200, JSON.stringify(msgOnline.body));
+    assert.equal(recentWakes().length, 0);
+    detach(socket);
+    resetHub();
+
+    const msgOffline = await json(
+      "POST",
+      "/v1/envelopes",
+      {
+        envelopes: [
+          {
+            ...opaque,
+            kind: "message",
+            ciphertext: Buffer.from("opaque-msg-offline").toString("base64"),
+          },
+        ],
+      },
+      aliceTok,
+    );
+    assert.equal(msgOffline.status, 200, JSON.stringify(msgOffline.body));
+    assert.ok(recentWakes().length >= 1);
+    assert.equal(recentWakes()[recentWakes().length - 1]!.payload.t, "msg");
+  });
 });

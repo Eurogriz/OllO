@@ -8,4 +8,5 @@
     <string name="settings">Settings</string>
     <string name="settings_body">Devices, safety number, registration lock, disappearing messages.</string>
     <string name="wipe_local">Wipe local secrets</string>
+    <string name="engine_unbound">Sign-in needs a bound libsignal engine. This build will not fake a session.</string>
 </resources>

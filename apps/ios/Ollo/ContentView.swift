@@ -1,4 +1,5 @@
 import SwiftUI
+import OlloCrypto
 
 enum Dest { case auth, chats, chat, settings }
 
@@ -12,6 +13,7 @@ struct ContentView: View {
     @State private var dest: Dest = .auth
     @State private var phone = "+7"
     @State private var otp = ""
+    @State private var authError = ""
     @State private var threads: [ChatRow] = []
     @State private var active: ChatRow?
 
@@ -25,8 +27,19 @@ struct ContentView: View {
                     Text(tagline).foregroundStyle(.secondary)
                     TextField("E.164", text: $phone).textFieldStyle(.roundedBorder)
                     TextField("OTP", text: $otp).textFieldStyle(.roundedBorder)
-                    Button(continueLabel) { dest = .chats }
-                        .buttonStyle(.borderedProminent)
+                    if !authError.isEmpty {
+                        Text(authError).foregroundStyle(.red)
+                    }
+                    Button(continueLabel) {
+                        do {
+                            _ = try UnboundCryptoEngine().generateIdentity()
+                            dest = .chats
+                        } catch {
+                            authError = engineUnbound
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Text(engineUnbound).foregroundStyle(.secondary).font(.footnote)
                 }.padding(28)
             case .chats:
                 VStack(alignment: .leading) {

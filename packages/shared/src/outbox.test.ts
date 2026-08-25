@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   OUTBOX_MAX_ATTEMPTS,
+  SIGNED_PREKEY_MAX_AGE_MS,
   nextRetryDelayMs,
   onRefreshRejected,
   onSendFailure,
   planKeyFetch,
   planPrekeyReplenish,
+  planSignedPrekeyRotation,
   type OutboxItemView,
 } from "./outbox.js";
 
@@ -71,5 +73,22 @@ describe("prekey replenish planner", () => {
 describe("refresh rejection", () => {
   it("wipes local state instead of retrying a reused refresh", () => {
     assert.equal(onRefreshRejected(), "wipe");
+  });
+});
+
+describe("signed prekey rotation planner", () => {
+  it("rotates only after the max age and with a known createdAt", () => {
+    const now = 1_700_000_000_000;
+    assert.equal(planSignedPrekeyRotation({ currentId: 1, createdAtMs: now, now }), null);
+    assert.equal(planSignedPrekeyRotation({ currentId: 1, now }), null);
+    assert.equal(planSignedPrekeyRotation({ currentId: 0, createdAtMs: 1, now }), null);
+    assert.deepEqual(
+      planSignedPrekeyRotation({
+        currentId: 1,
+        createdAtMs: now - SIGNED_PREKEY_MAX_AGE_MS,
+        now,
+      }),
+      { nextId: 2 },
+    );
   });
 });

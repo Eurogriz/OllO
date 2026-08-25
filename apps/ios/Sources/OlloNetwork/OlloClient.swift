@@ -4,6 +4,8 @@ public actor OlloClient {
     public var baseURL: URL
     public var accessToken: String?
     public var refreshToken: String?
+    /// Caller must wipe SessionVault / identity when this fires.
+    public var onSessionInvalidated: (@Sendable () -> Void)?
 
     public init(baseURL: URL) {
         self.baseURL = baseURL
@@ -39,7 +41,7 @@ public actor OlloClient {
 
     public func refresh() async throws {
         guard let refreshToken else { throw URLError(.userAuthenticationRequired) }
-        let data = try await post(path: "/v1/auth/refresh", body: ["refresh_token": refreshToken], auth: false)
+        let data = try await post(path: "/v1/auth/refresh", body: ["refresh_token": refreshToken], auth: false, allowRefresh: false)
         let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         if let access = obj?["access_token"] as? String { accessToken = access }
         if let refresh = obj?["refresh_token"] as? String { self.refreshToken = refresh }
@@ -51,15 +53,15 @@ public actor OlloClient {
         if auth, let accessToken {
             req.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         }
-        return try await send(req)
+        return try await send(req, allowRefresh: true)
     }
 
-    private func post(path: String, body: [String: String], auth: Bool) async throws -> Data {
+    private func post(path: String, body: [String: String], auth: Bool, allowRefresh: Bool = true) async throws -> Data {
         let data = try JSONSerialization.data(withJSONObject: body)
-        return try await post(path: path, data: data, auth: auth)
+        return try await post(path: path, data: data, auth: auth, allowRefresh: allowRefresh)
     }
 
-    private func post(path: String, data: Data, auth: Bool) async throws -> Data {
+    private func post(path: String, data: Data, auth: Bool, allowRefresh: Bool = true) async throws -> Data {
         var req = URLRequest(url: url(path))
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -67,26 +69,42 @@ public actor OlloClient {
             req.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         }
         req.httpBody = data
-        return try await send(req)
+        return try await send(req, allowRefresh: allowRefresh)
     }
 
-    private func send(_ req: URLRequest) async throws -> Data {
+    private func send(_ req: URLRequest, allowRefresh: Bool) async throws -> Data {
         let (out, res) = try await URLSession.shared.data(for: req)
         guard let http = res as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         if http.statusCode == 401 {
-            try await refresh()
+            guard allowRefresh else {
+                invalidateSession()
+                throw URLError(.userAuthenticationRequired)
+            }
+            do {
+                try await refresh()
+            } catch {
+                invalidateSession()
+                throw URLError(.userAuthenticationRequired)
+            }
             var retry = req
             if let accessToken {
                 retry.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
             }
             let (out2, res2) = try await URLSession.shared.data(for: retry)
             guard let http2 = res2 as? HTTPURLResponse, (200..<300).contains(http2.statusCode) else {
+                invalidateSession()
                 throw URLError(.userAuthenticationRequired)
             }
             return out2
         }
         guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
         return out
+    }
+
+    private func invalidateSession() {
+        accessToken = nil
+        refreshToken = nil
+        onSessionInvalidated?()
     }
 
     private func url(_ path: String) -> URL {

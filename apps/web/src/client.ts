@@ -6,6 +6,7 @@ import {
   onSendFailure,
   planKeyFetch,
   planPrekeyReplenish,
+  planSignedPrekeyRotation,
   retainUnexpired,
 } from "@ollo/shared";
 import {
@@ -120,6 +121,7 @@ export interface Account {
   senderKeys: Record<string, SenderKeyState>;
   remoteSenderKeys: Record<string, RemoteSenderKey>;
   ownRosterHash?: string;
+  signedPrekeyAt?: number;
 }
 
 export function sessionKey(userId: string, deviceId: string): string {
@@ -246,6 +248,7 @@ function accountFromStored(j: Stored): Account {
       Object.entries(j.remoteSenderKeys ?? {}).map(([k, v]) => [k, deserializeRemoteSenderKey(v)]),
     ),
     ownRosterHash: j.ownRosterHash,
+    signedPrekeyAt: j.signedPrekeyAt,
   };
 }
 
@@ -287,6 +290,7 @@ export function saveAccount(acc: Account): void {
       Object.entries(acc.remoteSenderKeys ?? {}).map(([k, v]) => [k, serializeRemoteSenderKey(v)]),
     ),
     ownRosterHash: acc.ownRosterHash,
+    signedPrekeyAt: acc.signedPrekeyAt,
   };
   const sealed = sealVault(ensureVaultKey(), utf8(JSON.stringify(stored)));
   localStorage.setItem(VAULT_STORE, encodeVault(sealed));
@@ -749,6 +753,40 @@ export function rotateLocalPrekey(acc: Account) {
   acc.device.signedPrekey = generateSignedPrekey(acc.device.identity, acc.device.signedPrekey.id + 1);
 }
 
+/** Upload a new signed prekey only after the weekly planner fires. */
+export async function maybeRotateSignedPrekey(acc: Account, now = Date.now()): Promise<boolean> {
+  const plan = planSignedPrekeyRotation({
+    currentId: acc.device.signedPrekey.id,
+    createdAtMs: acc.signedPrekeyAt,
+    now,
+  });
+  if (!plan) {
+    if (acc.signedPrekeyAt == null) {
+      acc.signedPrekeyAt = now;
+      saveAccount(acc);
+    }
+    return false;
+  }
+  const next = generateSignedPrekey(acc.device.identity, plan.nextId);
+  await api(
+    "/v1/keys/signed-prekey",
+    acc.access,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        id: next.id,
+        public: b64(next.publicKey),
+        signature: b64(next.signature),
+      }),
+    },
+    acc,
+  );
+  acc.device.signedPrekey = next;
+  acc.signedPrekeyAt = now;
+  saveAccount(acc);
+  return true;
+}
+
 export function backupPlaintext(acc: Account): Uint8Array {
   const stored: Stored = {
     userId: acc.userId,
@@ -873,4 +911,5 @@ interface Stored {
   senderKeys?: Record<string, string>;
   remoteSenderKeys?: Record<string, string>;
   ownRosterHash?: string;
+  signedPrekeyAt?: number;
 }

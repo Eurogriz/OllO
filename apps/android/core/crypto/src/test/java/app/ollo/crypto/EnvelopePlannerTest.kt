@@ -33,4 +33,26 @@ class EnvelopePlannerTest {
             EnvelopePlanner.planKeyFetch("u1", "d1", "u2", "d9", hasSession = false),
         )
     }
+
+    @Test
+    fun rotatesSignedPrekeyOnlyAfterMaxAge() {
+        val now = 1_700_000_000_000L
+        assertEquals(null, EnvelopePlanner.planSignedPrekeyRotation(1, now, now))
+        assertEquals(null, EnvelopePlanner.planSignedPrekeyRotation(1, null, now))
+        assertEquals(null, EnvelopePlanner.planSignedPrekeyRotation(0, 1L, now))
+        assertEquals(
+            EnvelopePlanner.SignedPrekeyPlan(2),
+            EnvelopePlanner.planSignedPrekeyRotation(1, now - EnvelopePlanner.SIGNED_PREKEY_MAX_AGE_MS, now),
+        )
+    }
+
+    @Test
+    fun unboundEngineDoesNotInventIdentity() {
+        try {
+            DevicePayload.requireIdentity(UnboundCryptoEngine())
+            throw AssertionError("expected unbound engine to fail closed")
+        } catch (e: IllegalStateException) {
+            assertEquals("libsignal engine is not bound", e.message)
+        }
+    }
 }

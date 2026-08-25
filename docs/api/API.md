@@ -93,7 +93,7 @@ Set / change / remove Argon2id lock.
 
 ## Users
 
-- `PUT /v1/me` — username, display name, about, avatar
+- `PUT /v1/me` — username, display name, about, avatar. Username may change at most 3 times per rolling 24 hours (`429 rate_limited`). Repeating the current username is not counted.
 - `GET /v1/me`
 - `GET /v1/users/{id}`
 - `GET /v1/users/by-username/{name}`
@@ -138,6 +138,10 @@ Envelope (server-visible schema):
 ```
 
 `ciphertext` is opaque. The server does not parse the inner payload.
+
+Sealed push is sent only for `message` and `call`, and only if that
+recipient **device** has no live WebSocket. Typing / receipt / control
+never wake the OS.
 
 ## Groups
 

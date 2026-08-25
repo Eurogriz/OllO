@@ -178,6 +178,16 @@ a one-time prekey. Clients must only consume when `planKeyFetch` says so.
 A rejected refresh token wipes local session secrets. Refresh tokens are
 never written into backups.
 
+Signed prekeys rotate about every 7 days (`planSignedPrekeyRotation`).
+Unknown age is left alone until the client stamps `createdAt`. The server
+stores only the current public signed prekey; the device must keep the
+previous private keys until in-flight X3DH finishes (keep-last-2 is still
+a local-store obligation).
+
+Push wakeup is **per recipient device**. Another online device of the same
+user must not suppress a wake. Typing, receipts, and control envelopes do
+not wake. Sealed payload remains `{v:1,t:msg|call}` with no preview.
+
 ## 8b. Encrypted backup
 
 ```

@@ -83,4 +83,17 @@ public enum EnvelopePlanner {
     }
 
     public static func onRefreshRejected() -> AuthFailure { .wipe }
+
+    public static let signedPrekeyMaxAgeMs: Int64 = 7 * 24 * 60 * 60 * 1000
+
+    public struct SignedPrekeyPlan: Sendable, Equatable {
+        public var nextId: Int
+    }
+
+    public static func planSignedPrekeyRotation(currentId: Int, createdAtMs: Int64?, now: Int64) -> SignedPrekeyPlan? {
+        if currentId < 1 { return nil }
+        guard let createdAtMs else { return nil }
+        if now - createdAtMs < signedPrekeyMaxAgeMs { return nil }
+        return SignedPrekeyPlan(nextId: currentId + 1)
+    }
 }

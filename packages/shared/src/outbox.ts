@@ -76,3 +76,18 @@ export function planPrekeyReplenish(remaining: number, nextId: number): { count:
 export function onRefreshRejected(): "wipe" {
   return "wipe";
 }
+
+export const SIGNED_PREKEY_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Rotate the signed prekey about weekly. Unknown age is left alone. */
+export function planSignedPrekeyRotation(args: {
+  currentId: number;
+  createdAtMs?: number;
+  now?: number;
+}): { nextId: number } | null {
+  if (args.currentId < 1) return null;
+  if (args.createdAtMs == null) return null;
+  const now = args.now ?? Date.now();
+  if (now - args.createdAtMs < SIGNED_PREKEY_MAX_AGE_MS) return null;
+  return { nextId: args.currentId + 1 };
+}
