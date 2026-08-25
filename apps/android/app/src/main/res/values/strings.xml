@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">OllO</string>
+    <string name="tagline">Private messages. The server cannot read them.</string>
+</resources>

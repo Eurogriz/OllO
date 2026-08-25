@@ -1,0 +1,36 @@
+{
+  "name": "ollo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OllO — production-oriented end-to-end encrypted messenger",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "packageManager": "npm@10.9.0",
+  "workspaces": [
+    "packages/*",
+    "services/*",
+    "apps/web"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "dev": "npm run dev -w @ollo/server",
+    "dev:web": "npm run dev -w @ollo/web",
+    "dev:all": "npx concurrently -k -n server,web -c cyan,magenta \"npm run dev -w @ollo/server\" \"npm run dev -w @ollo/web\"",
+    "start": "npm run start -w @ollo/server",
+    "test": "npm run test --workspaces --if-present",
+    "test:crypto": "npm run test -w @ollo/crypto",
+    "test:server": "npm run test -w @ollo/server",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "migrate": "npm run migrate -w @ollo/server",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.3"
+  }
+}

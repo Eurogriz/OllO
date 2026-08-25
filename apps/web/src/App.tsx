@@ -1,0 +1,1030 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { InnerMessage } from "@ollo/protocol";
+import { t, type Lang } from "./i18n";
+import {
+  type Account,
+  type ChatMessage,
+  type Thread,
+  api,
+  clearAccount,
+  computeSafety,
+  encryptFile,
+  loadAccount,
+  newDeviceMaterial,
+  openEnvelope,
+  parseBundle,
+  publicDevicePayload,
+  saveAccount,
+  sealForPeer,
+} from "./client";
+
+type Screen = "auth" | "app";
+type Tab = "chats" | "contacts";
+type Modal = null | "settings" | "safety" | "group" | "profile";
+
+const EMOJI = ["👍", "❤️", "😂", "🔥", "👏", "🎉", "😮", "😢"];
+
+export function App() {
+  const [lang, setLang] = useState<Lang>((localStorage.getItem("ollo.lang") as Lang) || "ru");
+  const [theme, setTheme] = useState(localStorage.getItem("ollo.theme") || "dark");
+  const [acc, setAcc] = useState<Account | null>(null);
+  const [screen, setScreen] = useState<Screen>("auth");
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("ollo.theme", theme);
+  }, [theme]);
+  useEffect(() => {
+    localStorage.setItem("ollo.lang", lang);
+  }, [lang]);
+
+  useEffect(() => {
+    const existing = loadAccount();
+    if (existing) {
+      setAcc(existing);
+      setScreen("app");
+    }
+    setReady(true);
+  }, []);
+
+  const persist = useCallback((next: Account) => {
+    saveAccount(next);
+    setAcc({ ...next, sessions: next.sessions, messages: { ...next.messages }, threads: [...next.threads] });
+  }, []);
+
+  if (!ready) return null;
+  if (screen === "auth" || !acc) {
+    return (
+      <Auth
+        lang={lang}
+        setLang={setLang}
+        onReady={(a) => {
+          persist(a);
+          setScreen("app");
+        }}
+      />
+    );
+  }
+  return (
+    <Shell
+      acc={acc}
+      persist={persist}
+      lang={lang}
+      setLang={setLang}
+      theme={theme}
+      setTheme={setTheme}
+      onLogout={() => {
+        clearAccount();
+        setAcc(null);
+        setScreen("auth");
+      }}
+    />
+  );
+}
+
+function Auth({
+  lang,
+  setLang,
+  onReady,
+}: {
+  lang: Lang;
+  setLang: (l: Lang) => void;
+  onReady: (a: Account) => void;
+}) {
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [phone, setPhone] = useState("+7");
+  const [challenge, setChallenge] = useState("");
+  const [otp, setOtp] = useState("");
+  const [devOtp, setDevOtp] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [username, setUsername] = useState("");
+  const [err, setErr] = useState("");
+  const mat = useRef(newDeviceMaterial());
+
+  async function requestOtp() {
+    setErr("");
+    try {
+      const res = await api("/v1/auth/request-otp", null, {
+        method: "POST",
+        body: JSON.stringify({ phone_e164: phone }),
+      });
+      setChallenge(res.challenge_id);
+      setDevOtp(res.dev_otp ?? "");
+      setStep(2);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+
+  async function verify() {
+    setErr("");
+    try {
+      const res = await api("/v1/auth/verify-otp", null, {
+        method: "POST",
+        body: JSON.stringify({
+          challenge_id: challenge,
+          otp,
+          device: publicDevicePayload(mat.current, navigator.userAgent.slice(0, 40), "web"),
+        }),
+      });
+      const acc: Account = {
+        userId: res.user.id,
+        deviceId: res.device_id,
+        username: res.user.username,
+        displayName: "",
+        about: "",
+        access: res.access_token,
+        refresh: res.refresh_token,
+        device: { ...mat.current, userId: res.user.id, deviceId: res.device_id },
+        sessions: {},
+        messages: {},
+        threads: [],
+        contacts: [],
+        pinned: {},
+        drafts: {},
+        firstSent: {},
+      };
+      if (res.user.is_new || !res.user.username) {
+        setStep(3);
+        sessionStorage.setItem("ollo.tmp", JSON.stringify({ acc: serializeTmp(acc) }));
+        (window as unknown as { __acc: Account }).__acc = acc;
+      } else {
+        onReady(acc);
+      }
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+
+  async function finishProfile() {
+    const acc = (window as unknown as { __acc: Account }).__acc;
+    if (!acc) return;
+    try {
+      const res = await api("/v1/me", acc.access, {
+        method: "PUT",
+        body: JSON.stringify({ username, display_name: displayName }),
+      });
+      acc.username = res.user.username;
+      acc.displayName = res.user.display_name;
+      onReady(acc);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+
+  return (
+    <div className="auth">
+      <div className="card">
+        <div className="brand">
+          <div className="logo">O</div> OllO
+        </div>
+        <h1>OllO</h1>
+        <p>{t(lang, "tagline")}</p>
+        {step === 1 && (
+          <>
+            <div className="field">
+              <label>{t(lang, "phone")}</label>
+              <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+79991234567" />
+            </div>
+            <button className="primary" onClick={() => void requestOtp()}>
+              {t(lang, "sendCode")}
+            </button>
+          </>
+        )}
+        {step === 2 && (
+          <>
+            <div className="field">
+              <label>{t(lang, "otp")}</label>
+              <input className="otp" value={otp} onChange={(e) => setOtp(e.target.value)} maxLength={6} />
+            </div>
+            {devOtp && <div className="hint">DEV OTP: {devOtp}</div>}
+            <button className="primary" onClick={() => void verify()}>
+              {t(lang, "verify")}
+            </button>
+          </>
+        )}
+        {step === 3 && (
+          <>
+            <div className="field">
+              <label>{t(lang, "displayName")}</label>
+              <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+            </div>
+            <div className="field">
+              <label>{t(lang, "username")}</label>
+              <input value={username} onChange={(e) => setUsername(e.target.value.toLowerCase())} placeholder="ivanov" />
+            </div>
+            <button className="primary" onClick={() => void finishProfile()}>
+              {t(lang, "continue")}
+            </button>
+          </>
+        )}
+        {err && <p style={{ color: "var(--danger)" }}>{err}</p>}
+        <div className="hint" style={{ marginTop: 16 }}>
+          <button className="ghost" onClick={() => setLang(lang === "ru" ? "en" : "ru")}>
+            {lang === "ru" ? "English" : "Русский"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function serializeTmp(a: Account) {
+  return a.userId;
+}
+
+function Shell({
+  acc,
+  persist,
+  lang,
+  setLang,
+  theme,
+  setTheme,
+  onLogout,
+}: {
+  acc: Account;
+  persist: (a: Account) => void;
+  lang: Lang;
+  setLang: (l: Lang) => void;
+  theme: string;
+  setTheme: (t: string) => void;
+  onLogout: () => void;
+}) {
+  const [tab, setTab] = useState<Tab>("chats");
+  const [active, setActive] = useState<string | null>(acc.threads[0]?.id ?? null);
+  const [query, setQuery] = useState("");
+  const [modal, setModal] = useState<Modal>(null);
+  const [safety, setSafety] = useState("");
+  const [typing, setTyping] = useState(false);
+  const [call, setCall] = useState<null | { media: "audio" | "video"; remote?: string; incoming?: boolean }>(null);
+  const [ctx, setCtx] = useState<null | { x: number; y: number; msg: ChatMessage }>(null);
+  const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+  const [text, setText] = useState(acc.drafts[active ?? ""] ?? "");
+  const fileRef = useRef<HTMLInputElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const pcRef = useRef<RTCPeerConnection | null>(null);
+  const localVideo = useRef<HTMLVideoElement>(null);
+  const remoteVideo = useRef<HTMLVideoElement>(null);
+
+  const thread = acc.threads.find((th) => th.id === active) ?? null;
+  const messages = active ? acc.messages[active] ?? [] : [];
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages.length, active]);
+
+  useEffect(() => {
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(`${proto}//${location.host}/v1/realtime?access_token=${acc.access}`);
+    ws.onopen = () => ws.send(JSON.stringify({ op: "hello" }));
+    ws.onmessage = (ev) => {
+      const frame = JSON.parse(String(ev.data));
+      if (frame.op === "envelope") {
+        void handleIncoming(frame.envelope);
+        ws.send(JSON.stringify({ op: "ack", ids: [frame.envelope.id] }));
+      }
+    };
+    const ping = setInterval(() => {
+      if (ws.readyState === 1) ws.send(JSON.stringify({ op: "ping" }));
+    }, 25000);
+    const drain = setInterval(() => void pullMailbox(), 8000);
+    void pullMailbox();
+    return () => {
+      clearInterval(ping);
+      clearInterval(drain);
+      ws.close();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [acc.access]);
+
+  async function pullMailbox() {
+    try {
+      const res = await api("/v1/envelopes?limit=100", acc.access);
+      const ids: string[] = [];
+      for (const env of res.envelopes as Array<Record<string, string>>) {
+        await handleIncoming(env);
+        ids.push(env.id);
+      }
+      if (ids.length) {
+        await api("/v1/envelopes/ack", acc.access, { method: "POST", body: JSON.stringify({ ids }) });
+      }
+    } catch {
+      /* offline */
+    }
+  }
+
+  async function handleIncoming(env: Record<string, string>) {
+    try {
+      const inner = openEnvelope(acc, env.sender_user_id, env.sender_device_id, env.ciphertext);
+      if (inner.type === "typing") {
+        if (threadPeer(env) === active || env.group_id === active) setTyping(true);
+        setTimeout(() => setTyping(false), 2000);
+        persist(acc);
+        return;
+      }
+      if (inner.type === "receipt_delivery" || inner.type === "receipt_read") {
+        const tid = inner.threadId;
+        const list = acc.messages[tid] ?? [];
+        for (const m of list) {
+          if (m.clientId === inner.receipt?.targetClientId) {
+            m.status = inner.type === "receipt_read" ? "read" : "delivered";
+          }
+        }
+        persist(acc);
+        return;
+      }
+      if (inner.type === "call_signal") {
+        if (inner.call?.signalType === "offer") {
+          setCall({ media: inner.call.media, incoming: true, remote: env.sender_user_id });
+          (window as unknown as { __offer: string }).__offer = inner.call.sdp ?? "";
+        }
+        persist(acc);
+        return;
+      }
+      const tid = inner.threadId || threadPeer(env);
+      ensureThread(tid, env.sender_user_id, env.group_id);
+      const msg: ChatMessage = {
+        clientId: inner.clientId,
+        threadId: tid,
+        fromMe: env.sender_user_id === acc.userId,
+        senderUserId: env.sender_user_id,
+        text: inner.text,
+        sentAt: inner.sentAt,
+        status: "delivered",
+        replyTo: inner.replyToClientId,
+        expiresAt: inner.expiresAt,
+      };
+      pushMsg(tid, msg);
+      if (inner.type === "delete") {
+        const list = acc.messages[tid] ?? [];
+        const tmsg = list.find((m) => m.clientId === inner.deleteFor && inner.editOf);
+        if (inner.editOf) {
+          const target = list.find((m) => m.clientId === inner.editOf);
+          if (target) {
+            target.deleted = true;
+            target.text = "";
+          }
+        }
+      }
+      persist(acc);
+      if (env.kind === "message" && env.sender_user_id !== acc.userId) {
+        void sendInner(env.sender_user_id, {
+          version: 1,
+          type: "receipt_delivery",
+          clientId: crypto.randomUUID(),
+          sentAt: new Date().toISOString(),
+          threadId: tid,
+          receipt: { targetClientId: inner.clientId, at: new Date().toISOString() },
+        }, "receipt");
+      }
+    } catch (e) {
+      console.error("decrypt failed", e);
+    }
+  }
+
+  function threadPeer(env: Record<string, string>) {
+    return env.group_id || (env.sender_user_id === acc.userId ? env.recipient_user_id : env.sender_user_id);
+  }
+
+  function ensureThread(id: string, peer?: string, groupId?: string | null) {
+    if (acc.threads.some((th) => th.id === id)) return;
+    acc.threads.unshift({
+      id,
+      kind: groupId ? "group" : "direct",
+      title: peer?.slice(0, 8) ?? "chat",
+      peerUserId: groupId ? undefined : peer,
+      groupId: groupId ?? undefined,
+      last: "",
+      unread: 0,
+      disappearingSeconds: 0,
+    });
+  }
+
+  function pushMsg(tid: string, msg: ChatMessage) {
+    const list = acc.messages[tid] ?? [];
+    if (list.some((m) => m.clientId === msg.clientId)) return;
+    list.push(msg);
+    acc.messages[tid] = list;
+    const th = acc.threads.find((x) => x.id === tid);
+    if (th) {
+      th.last = msg.text ?? (msg.attachments ? "📎" : "");
+      th.lastAt = msg.sentAt;
+    }
+  }
+
+  async function sendInner(peerUserId: string, inner: InnerMessage, kind: "message" | "receipt" | "typing" | "call" = "message") {
+    const bundles = await api(`/v1/keys/${peerUserId}`, acc.access);
+    const envelopes = [];
+    for (const raw of bundles.bundles) {
+      const bundle = parseBundle(raw);
+      const sealed = await sealForPeer(acc, bundle, inner);
+      envelopes.push({
+        recipient_user_id: peerUserId,
+        recipient_device_id: bundle.deviceId,
+        kind,
+        ciphertext: sealed.payload,
+        padding_bucket: sealed.bucket,
+        group_id: inner.threadId.startsWith("grp_") ? undefined : undefined,
+      });
+    }
+    if (envelopes.length) {
+      await api("/v1/envelopes", acc.access, { method: "POST", body: JSON.stringify({ envelopes }) });
+    }
+    persist(acc);
+  }
+
+  async function sendText() {
+    if (!thread || !text.trim()) return;
+    const ttl = thread.disappearingSeconds;
+    const inner: InnerMessage = {
+      version: 1,
+      type: replyTo ? "reply" : "text",
+      clientId: crypto.randomUUID(),
+      sentAt: new Date().toISOString(),
+      threadId: thread.id,
+      text: text.trim(),
+      replyToClientId: replyTo?.clientId,
+      ttlSeconds: ttl || undefined,
+      expiresAt: ttl ? new Date(Date.now() + ttl * 1000).toISOString() : undefined,
+    };
+    const local: ChatMessage = {
+      clientId: inner.clientId,
+      threadId: thread.id,
+      fromMe: true,
+      senderUserId: acc.userId,
+      text: inner.text,
+      sentAt: inner.sentAt,
+      status: "pending",
+      replyTo: inner.replyToClientId,
+      expiresAt: inner.expiresAt,
+    };
+    pushMsg(thread.id, local);
+    setText("");
+    setReplyTo(null);
+    acc.drafts[thread.id] = "";
+    persist(acc);
+    try {
+      if (thread.kind === "direct" && thread.peerUserId) {
+        await sendInner(thread.peerUserId, inner);
+      } else if (thread.groupId) {
+        const g = await api(`/v1/groups/${thread.groupId}`, acc.access);
+        for (const m of g.group.members as { user_id: string }[]) {
+          await sendInner(m.user_id, inner);
+        }
+      }
+      local.status = "sent";
+      persist(acc);
+    } catch {
+      local.status = "failed";
+      persist(acc);
+    }
+  }
+
+  async function searchUser() {
+    if (!query.trim()) return;
+    try {
+      const res = await api("/v1/users/search", acc.access, {
+        method: "POST",
+        body: JSON.stringify({ username: query.trim() }),
+      });
+      const u = res.users?.[0];
+      if (!u) return;
+      await api("/v1/contacts", acc.access, { method: "POST", body: JSON.stringify({ user_id: u.id }) });
+      ensureThread(u.id, u.id);
+      const th = acc.threads.find((x) => x.id === u.id);
+      if (th) th.title = u.display_name || u.username || u.id.slice(0, 8);
+      if (!acc.contacts.some((c) => c.id === u.id)) acc.contacts.push(u);
+      persist(acc);
+      setActive(u.id);
+      setQuery("");
+    } catch (e) {
+      alert((e as Error).message);
+    }
+  }
+
+  async function startSafety() {
+    if (!thread?.peerUserId) return;
+    const mat = await api(`/v1/keys/safety/${thread.peerUserId}`, acc.access);
+    const first = mat.devices?.[0];
+    if (!first) return;
+    const bytes = Uint8Array.from(atob(first.identity_x25519), (c) => c.charCodeAt(0));
+    setSafety(computeSafety(acc, bytes).grouped);
+    setModal("safety");
+  }
+
+  async function onAttach(file: File) {
+    if (!thread?.peerUserId && !thread?.groupId) return;
+    const enc = await encryptFile(file);
+    const created = await api("/v1/attachments", acc.access, {
+      method: "POST",
+      body: JSON.stringify({ size: enc.ciphertext.length }),
+    });
+    await fetch(`/v1/attachments/${created.object_id}/data`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${acc.access}`, "Content-Type": "application/octet-stream" },
+      body: enc.ciphertext,
+    });
+    const grant = thread.peerUserId
+      ? await api(`/v1/attachments/${created.object_id}/grants`, acc.access, {
+          method: "POST",
+          body: JSON.stringify({ recipient_user_id: thread.peerUserId }),
+        })
+      : { grant: "" };
+    const url = URL.createObjectURL(new Blob([enc.ciphertext]));
+    const inner: InnerMessage = {
+      version: 1,
+      type: file.type.startsWith("audio") ? "voice" : "attachment",
+      clientId: crypto.randomUUID(),
+      sentAt: new Date().toISOString(),
+      threadId: thread.id,
+      attachments: [
+        {
+          objectId: created.object_id,
+          key: enc.key,
+          nonce: enc.nonce,
+          digest: enc.digest,
+          size: enc.size,
+          mime: enc.mime,
+          filename: enc.filename,
+          grant: grant.grant,
+        },
+      ],
+    };
+    const local: ChatMessage = {
+      clientId: inner.clientId,
+      threadId: thread.id,
+      fromMe: true,
+      senderUserId: acc.userId,
+      sentAt: inner.sentAt,
+      status: "sent",
+      attachments: [{ name: file.name, mime: file.type, url: file.type.startsWith("image/") ? URL.createObjectURL(file) : url, objectId: created.object_id }],
+    };
+    pushMsg(thread.id, local);
+    persist(acc);
+    if (thread.peerUserId) await sendInner(thread.peerUserId, inner);
+  }
+
+  async function recordVoice() {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const rec = new MediaRecorder(stream);
+    const chunks: Blob[] = [];
+    rec.ondataavailable = (e) => chunks.push(e.data);
+    rec.onstop = () => {
+      stream.getTracks().forEach((tr) => tr.stop());
+      const blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
+      const file = new File([blob], "voice.webm", { type: blob.type });
+      void onAttach(file);
+    };
+    rec.start();
+    setTimeout(() => rec.state === "recording" && rec.stop(), 4000);
+  }
+
+  async function startCall(media: "audio" | "video") {
+    if (!thread?.peerUserId) return;
+    const created = await api("/v1/calls", acc.access, {
+      method: "POST",
+      body: JSON.stringify({ media, participant_user_ids: [thread.peerUserId] }),
+    });
+    const pc = new RTCPeerConnection({ iceServers: created.ice_servers });
+    pcRef.current = pc;
+    const local = await navigator.mediaDevices.getUserMedia({ audio: true, video: media === "video" });
+    local.getTracks().forEach((tr) => pc.addTrack(tr, local));
+    if (localVideo.current) localVideo.current.srcObject = local;
+    pc.ontrack = (e) => {
+      if (remoteVideo.current) remoteVideo.current.srcObject = e.streams[0]!;
+    };
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await sendInner(
+      thread.peerUserId,
+      {
+        version: 1,
+        type: "call_signal",
+        clientId: crypto.randomUUID(),
+        sentAt: new Date().toISOString(),
+        threadId: thread.id,
+        call: { callId: created.call_id, media, signalType: "offer", sdp: offer.sdp },
+      },
+      "call",
+    );
+    setCall({ media });
+  }
+
+  async function createGroup(name: string, ids: string[]) {
+    const res = await api("/v1/groups", acc.access, {
+      method: "POST",
+      body: JSON.stringify({ member_ids: ids }),
+    });
+    const id = res.group.id;
+    acc.threads.unshift({
+      id,
+      kind: "group",
+      title: name || "Group",
+      groupId: id,
+      last: "",
+      unread: 0,
+      disappearingSeconds: 0,
+    });
+    persist(acc);
+    setActive(id);
+    setModal(null);
+  }
+
+  const visibleThreads = useMemo(
+    () => acc.threads.filter((th) => tab === "chats" || th.kind === "direct"),
+    [acc.threads, tab],
+  );
+
+  return (
+    <div className="app">
+      <header className="topbar">
+        <div className="brand">
+          <div className="logo">O</div>
+          OllO
+          <span className="hint" style={{ fontWeight: 500 }}>
+            {acc.username ? `@${acc.username}` : acc.userId.slice(0, 8)}
+          </span>
+        </div>
+        <div className="top-actions">
+          <button className="ghost" onClick={() => setModal("group")}>
+            {t(lang, "group")}
+          </button>
+          <button className="ghost" onClick={() => setModal("settings")}>
+            {t(lang, "settings")}
+          </button>
+        </div>
+      </header>
+      <div className="shell">
+        <aside className="sidebar">
+          <div className="side-head">
+            <input
+              className="search"
+              placeholder={t(lang, "search")}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void searchUser()}
+            />
+            <div className="tabs">
+              <button className={`tab ${tab === "chats" ? "active" : ""}`} onClick={() => setTab("chats")}>
+                {t(lang, "chats")}
+              </button>
+              <button className={`tab ${tab === "contacts" ? "active" : ""}`} onClick={() => setTab("contacts")}>
+                {t(lang, "contacts")}
+              </button>
+            </div>
+          </div>
+          <div className="chat-list">
+            {tab === "contacts"
+              ? acc.contacts.map((c) => (
+                  <div
+                    key={c.id}
+                    className="chat-item"
+                    onClick={() => {
+                      ensureThread(c.id, c.id);
+                      const th = acc.threads.find((x) => x.id === c.id);
+                      if (th) th.title = c.display_name || c.username || c.id.slice(0, 8);
+                      persist(acc);
+                      setActive(c.id);
+                    }}
+                  >
+                    <div className="avatar">{(c.display_name || c.username || "?").slice(0, 1).toUpperCase()}</div>
+                    <div className="meta">
+                      <div className="title">{c.display_name || c.username}</div>
+                      <div className="preview">@{c.username}</div>
+                    </div>
+                  </div>
+                ))
+              : visibleThreads.map((th) => (
+                  <div
+                    key={th.id}
+                    className={`chat-item ${active === th.id ? "active" : ""}`}
+                    onClick={() => {
+                      setActive(th.id);
+                      setText(acc.drafts[th.id] ?? "");
+                    }}
+                  >
+                    <div className={`avatar ${th.kind === "group" ? "g" : ""}`}>
+                      {th.title.slice(0, 1).toUpperCase()}
+                    </div>
+                    <div className="meta">
+                      <div className="title">{th.title}</div>
+                      <div className="preview">{th.last}</div>
+                    </div>
+                    <div className="when">{th.lastAt ? new Date(th.lastAt).toLocaleTimeString().slice(0, 5) : ""}</div>
+                  </div>
+                ))}
+          </div>
+        </aside>
+        <section className="main">
+          {!thread ? (
+            <div className="empty">
+              <div className="logo" style={{ width: 56, height: 56, borderRadius: 18, fontSize: 24 }}>
+                O
+              </div>
+              <h2>{t(lang, "emptyTitle")}</h2>
+              <p>{t(lang, "emptyBody")}</p>
+            </div>
+          ) : (
+            <>
+              <div className="chat-head">
+                <div>
+                  <div className="title">{thread.title}</div>
+                  <div className="hint">{t(lang, "noPlaintext")}</div>
+                </div>
+                <div className="top-actions">
+                  <button className="ghost" onClick={() => void startCall("audio")}>
+                    {t(lang, "call")}
+                  </button>
+                  <button className="ghost" onClick={() => void startCall("video")}>
+                    {t(lang, "video")}
+                  </button>
+                  <button className="ghost" onClick={() => void startSafety()}>
+                    {t(lang, "safety")}
+                  </button>
+                  <button
+                    className="ghost"
+                    onClick={() => {
+                      thread.disappearingSeconds = thread.disappearingSeconds ? 0 : 30;
+                      persist(acc);
+                    }}
+                  >
+                    {t(lang, "disappearing")}
+                    {thread.disappearingSeconds ? ` ${thread.disappearingSeconds}s` : ""}
+                  </button>
+                </div>
+              </div>
+              <div className="messages">
+                {messages
+                  .filter((m) => !m.expiresAt || new Date(m.expiresAt).getTime() > Date.now())
+                  .map((m) => (
+                    <div
+                      key={m.clientId}
+                      className={`row ${m.fromMe ? "me" : "them"}`}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        setCtx({ x: e.clientX, y: e.clientY, msg: m });
+                      }}
+                    >
+                      <div className="bubble">
+                        {m.replyTo && (
+                          <div className="reply-chip">
+                            {messages.find((x) => x.clientId === m.replyTo)?.text ?? "…"}
+                          </div>
+                        )}
+                        {m.attachments?.map((a) =>
+                          a.mime.startsWith("image/") && a.url ? (
+                            <img key={a.objectId} className="attach" src={a.url} alt="" />
+                          ) : a.mime.startsWith("audio/") && a.url ? (
+                            <audio key={a.objectId} controls src={a.url} />
+                          ) : (
+                            <div key={a.objectId} className="file-chip">
+                              📄 {a.name}
+                            </div>
+                          ),
+                        )}
+                        {m.deleted ? <i className="hint">{t(lang, "del")}</i> : <div className="msg-text">{m.text}</div>}
+                        <div className="msg-meta">
+                          {m.edited && "✎ "}
+                          {new Date(m.sentAt).toLocaleTimeString().slice(0, 5)}
+                          {m.fromMe && (
+                            <span className={`ticks ${m.status === "read" ? "read" : ""}`}>
+                              {m.status === "pending" ? "…" : m.status === "failed" ? "!" : m.status === "read" ? "✓✓" : "✓"}
+                            </span>
+                          )}
+                        </div>
+                        {m.reaction && (
+                          <div className="reactions">
+                            <span className="rx">{m.reaction}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                <div ref={bottomRef} />
+              </div>
+              {typing && <div className="typing">● ● ●</div>}
+              {replyTo && (
+                <div className="hint" style={{ padding: "0 16px" }}>
+                  ↪ {replyTo.text}{" "}
+                  <button className="ghost" onClick={() => setReplyTo(null)}>
+                    ×
+                  </button>
+                </div>
+              )}
+              <div className="composer">
+                <button className="icon-btn" onClick={() => fileRef.current?.click()}>
+                  📎
+                </button>
+                <button className="icon-btn" onClick={() => void recordVoice()}>
+                  🎙
+                </button>
+                <input
+                  ref={fileRef}
+                  className="hidden"
+                  type="file"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) void onAttach(f);
+                    e.target.value = "";
+                  }}
+                />
+                <textarea
+                  rows={1}
+                  placeholder={t(lang, "message")}
+                  value={text}
+                  onChange={(e) => {
+                    setText(e.target.value);
+                    if (active) acc.drafts[active] = e.target.value;
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      void sendText();
+                    }
+                  }}
+                />
+                <button className="primary" onClick={() => void sendText()}>
+                  {t(lang, "send")}
+                </button>
+              </div>
+            </>
+          )}
+        </section>
+      </div>
+
+      {ctx && (
+        <div className="ctx" style={{ left: ctx.x, top: ctx.y }} onMouseLeave={() => setCtx(null)}>
+          <button onClick={() => { setReplyTo(ctx.msg); setCtx(null); }}>{t(lang, "reply")}</button>
+          {EMOJI.map((e) => (
+            <button
+              key={e}
+              onClick={() => {
+                ctx.msg.reaction = e;
+                persist(acc);
+                setCtx(null);
+              }}
+            >
+              {e}
+            </button>
+          ))}
+          <button
+            onClick={() => {
+              ctx.msg.deleted = true;
+              ctx.msg.text = "";
+              persist(acc);
+              setCtx(null);
+            }}
+          >
+            {t(lang, "del")}
+          </button>
+        </div>
+      )}
+
+      {modal === "settings" && (
+        <div className="modal-back" onClick={() => setModal(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>{t(lang, "settings")}</h3>
+            <div className="list-row">
+              <span>{t(lang, "theme")}</span>
+              <button className="ghost" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+                {theme}
+              </button>
+            </div>
+            <div className="list-row">
+              <span>{t(lang, "lang")}</span>
+              <button className="ghost" onClick={() => setLang(lang === "ru" ? "en" : "ru")}>
+                {lang}
+              </button>
+            </div>
+            <Devices acc={acc} lang={lang} />
+            <div className="list-row">
+              <button
+                className="danger"
+                onClick={() => {
+                  void api("/v1/auth/logout", acc.access, { method: "POST" });
+                  onLogout();
+                }}
+              >
+                {t(lang, "logout")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modal === "safety" && (
+        <div className="modal-back" onClick={() => setModal(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>{t(lang, "safety")}</h3>
+            <p>{t(lang, "verifySafety")}</p>
+            <div className="safety">{safety}</div>
+          </div>
+        </div>
+      )}
+
+      {modal === "group" && (
+        <GroupModal
+          lang={lang}
+          contacts={acc.contacts}
+          onClose={() => setModal(null)}
+          onCreate={(name, ids) => void createGroup(name, ids)}
+        />
+      )}
+
+      {call && (
+        <div className="call-overlay">
+          <div className="title">{call.incoming ? t(lang, "incoming") : t(lang, call.media)}</div>
+          <video ref={localVideo} autoPlay muted playsInline />
+          <video ref={remoteVideo} autoPlay playsInline />
+          <div className="call-actions">
+            {call.incoming && (
+              <button className="primary" onClick={() => setCall({ ...call, incoming: false })}>
+                {t(lang, "accept")}
+              </button>
+            )}
+            <button
+              className="danger"
+              onClick={() => {
+                pcRef.current?.close();
+                setCall(null);
+              }}
+            >
+              {t(lang, "hangup")}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Devices({ acc, lang }: { acc: Account; lang: Lang }) {
+  const [rows, setRows] = useState<Array<Record<string, string | boolean>>>([]);
+  useEffect(() => {
+    void api("/v1/devices", acc.access).then((r) => setRows(r.devices));
+  }, [acc.access]);
+  return (
+    <div>
+      <h4>{t(lang, "devices")}</h4>
+      {rows.map((d) => (
+        <div className="list-row" key={String(d.id)}>
+          <div>
+            {String(d.name)} {d.this_device ? `(${t(lang, "thisDevice")})` : ""}
+          </div>
+          {!d.this_device && (
+            <button
+              className="ghost"
+              onClick={() => {
+                void api(`/v1/devices/${d.id}`, acc.access, { method: "DELETE" }).then(() =>
+                  setRows(rows.filter((x) => x.id !== d.id)),
+                );
+              }}
+            >
+              {t(lang, "revoke")}
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function GroupModal({
+  lang,
+  contacts,
+  onClose,
+  onCreate,
+}: {
+  lang: Lang;
+  contacts: Account["contacts"];
+  onClose: () => void;
+  onCreate: (name: string, ids: string[]) => void;
+}) {
+  const [name, setName] = useState("");
+  const [ids, setIds] = useState<string[]>([]);
+  return (
+    <div className="modal-back" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h3>{t(lang, "createGroup")}</h3>
+        <div className="field">
+          <label>{t(lang, "displayName")}</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} />
+        </div>
+        {contacts.map((c) => (
+          <label key={c.id} className="list-row">
+            <span>{c.display_name || c.username}</span>
+            <input
+              type="checkbox"
+              checked={ids.includes(c.id)}
+              onChange={(e) => setIds(e.target.checked ? [...ids, c.id] : ids.filter((x) => x !== c.id))}
+            />
+          </label>
+        ))}
+        <button className="primary" onClick={() => onCreate(name, ids)}>
+          {t(lang, "continue")}
+        </button>
+      </div>
+    </div>
+  );
+}

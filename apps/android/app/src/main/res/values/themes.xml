@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.Ollo" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#070A0E</item>
+        <item name="android:navigationBarColor">#070A0E</item>
+        <item name="android:windowBackground">#070A0E</item>
+    </style>
+</resources>

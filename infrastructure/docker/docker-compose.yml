@@ -1,0 +1,48 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ollo
+      POSTGRES_PASSWORD: ollo
+      POSTGRES_DB: ollo
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ollo"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    command: ["redis-server", "--appendonly", "yes"]
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ollo
+      MINIO_ROOT_PASSWORD: ollo-minio-dev
+    ports: ["9000:9000", "9001:9001"]
+
+  coturn:
+    image: coturn/coturn:latest
+    network_mode: host
+    command: ["-n", "--log-file=stdout", "--min-port=49160", "--max-port=49200"]
+
+  server:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/Dockerfile.server
+    env_file: ../../.env
+    environment:
+      DATABASE_DRIVER: pglite
+      HOST: 0.0.0.0
+      PORT: 8080
+    ports: ["8080:8080"]
+    depends_on:
+      - redis
+
+volumes:
+  pgdata:

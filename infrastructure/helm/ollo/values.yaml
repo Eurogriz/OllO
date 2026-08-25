@@ -1,0 +1,42 @@
+image:
+  repository: ollo-server
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+service:
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  className: nginx
+  host: staging.ollo.example
+  tlsSecret: ollo-tls
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 1Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 20
+  targetCPU: 60
+
+env:
+  OLLO_ENV: staging
+  OTP_DEV_REVEAL: "false"
+  DATABASE_DRIVER: postgresql
+
+# Secrets are referenced, never stored in git.
+existingSecret: ollo-secrets
+
+slo:
+  apiP99Ms: 250
+  availability: "99.5"

@@ -1,0 +1,12 @@
+replicaCount: 3
+ingress:
+  host: api.ollo.example
+env:
+  OLLO_ENV: production
+  OTP_DEV_REVEAL: "false"
+slo:
+  apiP99Ms: 200
+  availability: "99.9"
+autoscaling:
+  minReplicas: 3
+  maxReplicas: 50

@@ -1,0 +1,150 @@
+import type { FastifyInstance } from "fastify";
+import { z } from "zod";
+import type { Db } from "../db/index.js";
+import { ApiError, requireAuth } from "../http.js";
+
+function b64(value: unknown): string {
+  if (Buffer.isBuffer(value)) return value.toString("base64");
+  if (value instanceof Uint8Array) return Buffer.from(value).toString("base64");
+  return Buffer.from(value as ArrayBuffer).toString("base64");
+}
+
+export async function registerKeys(app: FastifyInstance, db: Db): Promise<void> {
+  app.get("/v1/devices", async (req) => {
+    const auth = requireAuth(req);
+    const r = await db.query<{
+      id: string;
+      name: string;
+      platform: string;
+      created_at: string;
+      last_seen_at: string;
+      identity_ed25519: Buffer;
+    }>(
+      `SELECT id, name, platform, created_at, last_seen_at, identity_ed25519
+       FROM devices WHERE user_id = $1 AND revoked_at IS NULL`,
+      [auth.userId],
+    );
+    return {
+      devices: r.rows.map((d) => ({
+        id: d.id,
+        name: d.name,
+        platform: d.platform,
+        created_at: d.created_at,
+        last_seen_at: d.last_seen_at,
+        identity_ed25519: b64(d.identity_ed25519),
+        this_device: d.id === auth.deviceId,
+      })),
+    };
+  });
+
+  app.delete("/v1/devices/:id", async (req) => {
+    const auth = requireAuth(req);
+    const id = (req.params as { id: string }).id;
+    const r = await db.query<{ user_id: string }>(
+      "SELECT user_id FROM devices WHERE id = $1 AND revoked_at IS NULL",
+      [id],
+    );
+    if (!r.rows[0] || r.rows[0].user_id !== auth.userId) {
+      throw new ApiError("not_found", "Device not found", 404);
+    }
+    await db.query("UPDATE devices SET revoked_at = now() WHERE id = $1", [id]);
+    await db.query("UPDATE sessions SET revoked_at = now() WHERE device_id = $1 AND revoked_at IS NULL", [id]);
+    return { ok: true };
+  });
+
+  app.get("/v1/keys/:userId", async (req) => {
+    requireAuth(req);
+    const userId = (req.params as { userId: string }).userId;
+    const devices = await db.query<{
+      id: string;
+      registration_id: number;
+      identity_x25519: Buffer;
+      identity_ed25519: Buffer;
+      signed_prekey_id: number;
+      signed_prekey_public: Buffer;
+      signed_prekey_sig: Buffer;
+    }>(
+      `SELECT id, registration_id, identity_x25519, identity_ed25519,
+              signed_prekey_id, signed_prekey_public, signed_prekey_sig
+       FROM devices WHERE user_id = $1 AND revoked_at IS NULL`,
+      [userId],
+    );
+    const bundles = [];
+    for (const d of devices.rows) {
+      const opk = await db.query<{ key_id: number; public_key: Buffer }>(
+        `SELECT key_id, public_key FROM one_time_prekeys
+         WHERE device_id = $1 AND consumed_at IS NULL
+         ORDER BY key_id ASC LIMIT 1`,
+        [d.id],
+      );
+      let oneTime: { id: number; public: string } | undefined;
+      if (opk.rows[0]) {
+        await db.query(
+          "UPDATE one_time_prekeys SET consumed_at = now() WHERE device_id = $1 AND key_id = $2",
+          [d.id, opk.rows[0].key_id],
+        );
+        oneTime = { id: opk.rows[0].key_id, public: b64(opk.rows[0].public_key) };
+      }
+      bundles.push({
+        user_id: userId,
+        device_id: d.id,
+        registration_id: d.registration_id,
+        identity_key_x25519: b64(d.identity_x25519),
+        identity_key_ed25519: b64(d.identity_ed25519),
+        signed_prekey: {
+          id: d.signed_prekey_id,
+          public: b64(d.signed_prekey_public),
+          signature: b64(d.signed_prekey_sig),
+        },
+        one_time_prekey: oneTime ?? null,
+      });
+    }
+    return { bundles };
+  });
+
+  app.get("/v1/keys/safety/:userId", async (req) => {
+    requireAuth(req);
+    const userId = (req.params as { userId: string }).userId;
+    const r = await db.query<{ id: string; identity_x25519: Buffer; identity_ed25519: Buffer }>(
+      `SELECT id, identity_x25519, identity_ed25519 FROM devices
+       WHERE user_id = $1 AND revoked_at IS NULL ORDER BY created_at ASC`,
+      [userId],
+    );
+    return {
+      user_id: userId,
+      devices: r.rows.map((d) => ({
+        device_id: d.id,
+        identity_x25519: b64(d.identity_x25519),
+        identity_ed25519: b64(d.identity_ed25519),
+      })),
+    };
+  });
+
+  app.put("/v1/keys/signed-prekey", async (req) => {
+    const auth = requireAuth(req);
+    const body = z
+      .object({ id: z.number().int().positive(), public: z.string(), signature: z.string() })
+      .parse(req.body);
+    await db.query(
+      `UPDATE devices SET signed_prekey_id = $2, signed_prekey_public = $3, signed_prekey_sig = $4
+       WHERE id = $1`,
+      [auth.deviceId, body.id, Buffer.from(body.public, "base64"), Buffer.from(body.signature, "base64")],
+    );
+    return { ok: true };
+  });
+
+  app.post("/v1/keys/one-time", async (req) => {
+    const auth = requireAuth(req);
+    const body = z
+      .object({ keys: z.array(z.object({ id: z.number().int().positive(), public: z.string() })).max(200) })
+      .parse(req.body);
+    for (const k of body.keys) {
+      await db.query(
+        `INSERT INTO one_time_prekeys (device_id, key_id, public_key) VALUES ($1,$2,$3)
+         ON CONFLICT (device_id, key_id) DO NOTHING`,
+        [auth.deviceId, k.id, Buffer.from(k.public, "base64")],
+      );
+    }
+    return { ok: true, count: body.keys.length };
+  });
+}

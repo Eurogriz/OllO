@@ -1,0 +1,95 @@
+openapi: 3.0.3
+info:
+  title: OllO API
+  version: 1.0.0
+  description: |
+    Store-and-forward API for sealed envelopes. The server does not parse
+    message plaintext. See docs/api/API.md.
+servers:
+  - url: /v1
+paths:
+  /auth/request-otp:
+    post:
+      summary: Request an OTP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone_e164]
+              properties:
+                phone_e164: { type: string, example: "+79991234567" }
+                device_fingerprint: { type: string }
+      responses:
+        "200":
+          description: Always 200 to reduce enumeration
+  /auth/verify-otp:
+    post:
+      summary: Verify OTP and register a device
+      responses:
+        "200": { description: Session issued }
+  /auth/refresh:
+    post:
+      summary: Rotate refresh token
+      responses:
+        "200": { description: New pair }
+  /me:
+    get:
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Current user }
+    put:
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Updated }
+  /envelopes:
+    get:
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: cursor
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer }
+      responses:
+        "200": { description: Mailbox drain }
+    post:
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Accepted }
+  /keys/{userId}:
+    get:
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Prekey bundles }
+  /groups:
+    post:
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Created }
+    get:
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Membership }
+  /attachments:
+    post:
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Upload slot }
+  /calls:
+    post:
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Call + ICE servers }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer

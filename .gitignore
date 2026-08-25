@@ -1,0 +1,89 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+.npm/
+vendor/
+
+# Build
+dist/
+build/
+out/
+.next/
+.turbo/
+coverage/
+*.tsbuildinfo
+*.apk
+*.aab
+*.ipa
+*.dSYM
+*.xcarchive
+apps/android/app/release/
+apps/android/.gradle/
+apps/android/app/build/
+apps/android/build/
+apps/ios/DerivedData/
+apps/ios/Pods/
+apps/ios/*.xcworkspace/xcuserdata/
+*.iml
+.idea/
+.gradle/
+
+# Environment / secrets — NEVER commit real secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.p12
+*.mobileprovision
+*.jks
+*.keystore
+google-services.json
+GoogleService-Info.plist
+secrets/
+*.secret
+
+# Local data
+data/
+.pglite/
+*.sqlite
+*.sqlite3
+*.db
+uploads/
+tmp/
+.cache/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Test artifacts
+playwright-report/
+test-results/
+allure-results/
+
+# Terraform
+infrastructure/terraform/**/.terraform/
+infrastructure/terraform/**/*.tfstate
+infrastructure/terraform/**/*.tfstate.*
+infrastructure/terraform/**/*.tfvars
+!infrastructure/terraform/**/*.tfvars.example
+crash.log
+
+# Python
+__pycache__/
+.venv/
+.pytest_cache/
+*.pyc
+
+# Generated
+packages/protocol/generated/

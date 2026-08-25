@@ -1,0 +1,6 @@
+apiVersion: v2
+name: ollo
+description: OllO messenger backend
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
