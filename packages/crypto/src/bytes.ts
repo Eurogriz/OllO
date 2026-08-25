@@ -58,6 +58,14 @@ export function toHex(bytes: Uint8Array): string {
   return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+export function fromHex(hex: string): Uint8Array {
+  const h = hex.trim().toLowerCase();
+  if (h.length % 2 !== 0 || /[^0-9a-f]/.test(h)) throw new Error("invalid hex");
+  const out = new Uint8Array(h.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(h.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+
 export function compare(a: Uint8Array, b: Uint8Array): number {
   const n = Math.min(a.length, b.length);
   for (let i = 0; i < n; i++) {

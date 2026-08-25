@@ -168,7 +168,7 @@ export function loadAccount(): Account | null {
   if (sealed) {
     try {
       const pt = openVault(ensureVaultKey(), decodeVault(sealed));
-      return accountFromStored(JSON.parse(fromUtf8(pt)) as Stored);
+      return gcExpired(accountFromStored(JSON.parse(fromUtf8(pt)) as Stored));
     } catch {
       return null;
     }
@@ -176,13 +176,23 @@ export function loadAccount(): Account | null {
   const raw = localStorage.getItem(STORE_KEY);
   if (!raw) return null;
   try {
-    const acc = accountFromStored(JSON.parse(raw) as Stored);
+    const acc = gcExpired(accountFromStored(JSON.parse(raw) as Stored));
     saveAccount(acc);
     localStorage.removeItem(STORE_KEY);
     return acc;
   } catch {
     return null;
   }
+}
+
+function gcExpired(acc: Account): Account {
+  const now = Date.now();
+  for (const tid of Object.keys(acc.messages)) {
+    acc.messages[tid] = (acc.messages[tid] ?? []).filter(
+      (m) => !m.expiresAt || new Date(m.expiresAt).getTime() > now,
+    );
+  }
+  return acc;
 }
 
 function accountFromStored(j: Stored): Account {

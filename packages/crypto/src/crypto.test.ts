@@ -179,6 +179,17 @@ describe("Local vault", () => {
   });
 });
 
+describe("PIN / registration lock KDF", () => {
+  it("verifies Argon2id and rejects a wrong PIN", async () => {
+    const { hashPin, verifyPin } = await import("./pin.js");
+    const stored = hashPin("lock-pin-ok", "pepper");
+    assert.match(stored, /^argon2id\$/);
+    assert.equal(verifyPin("lock-pin-ok", "pepper", stored), true);
+    assert.equal(verifyPin("wrong-pin-xx", "pepper", stored), false);
+    assert.equal(verifyPin("lock-pin-ok", "other-pepper", stored), false);
+  });
+});
+
 describe("Safety number", () => {
   it("is stable regardless of argument order", () => {
     const a = generateIdentity();

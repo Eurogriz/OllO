@@ -160,8 +160,10 @@ deleted by a server-side TTL loop (`services/server/src/jobs/expire.ts`), not
 by a public HTTP endpoint.
 
 Local identity and session material live in an AEAD vault (`ollo-vault-v1`).
-Native wraps the vault key in Keystore/Keychain; web may wrap it with a PIN
-via Argon2id. Without a PIN, web localStorage is not a seizure-resistant store.
+Native wraps the vault key in Keystore/Keychain (AES-256-GCM, AAD
+`ollo-wrap-v1`); SQLCipher holds messages. `wipe()` on logout / revoke /
+account delete. Web may wrap the vault key with a PIN via Argon2id.
+Without a PIN, web localStorage is not a seizure-resistant store.
 
 ## 7. Backend modules
 

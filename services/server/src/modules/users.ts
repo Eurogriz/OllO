@@ -3,7 +3,7 @@ import { isValidUsername, normalizeUsername } from "@ollo/protocol";
 import { z } from "zod";
 import type { Db } from "../db/index.js";
 import { ApiError, requireAuth } from "../http.js";
-import { phoneHmac, randomUuid } from "../security/crypto-utils.js";
+import { randomUuid } from "../security/crypto-utils.js";
 
 function publicUser(row: {
   id: string;
@@ -30,10 +30,12 @@ export async function registerUsers(app: FastifyInstance, db: Db): Promise<void>
       display_name: string;
       about: string;
       avatar_object_id: string | null;
-    }>("SELECT id, username, display_name, about, avatar_object_id FROM users WHERE id = $1", [
-      auth.userId,
-    ]);
-    if (!r.rows[0]) throw new ApiError("not_found", "User not found", 404);
+      deleted_at: string | null;
+    }>(
+      "SELECT id, username, display_name, about, avatar_object_id, deleted_at FROM users WHERE id = $1",
+      [auth.userId],
+    );
+    if (!r.rows[0] || r.rows[0].deleted_at) throw new ApiError("not_found", "User not found", 404);
     return { user: publicUser(r.rows[0]), device_id: auth.deviceId };
   });
 
@@ -118,6 +120,13 @@ export async function registerUsers(app: FastifyInstance, db: Db): Promise<void>
   app.post("/v1/users/search", async (req) => {
     requireAuth(req);
     const body = z.object({ username: z.string().optional(), phone_e164: z.string().optional() }).parse(req.body);
+    if (body.phone_e164) {
+      throw new ApiError(
+        "validation",
+        "Phone lookup is not offered; contact discovery is on-device and mutual",
+        403,
+      );
+    }
     if (body.username) {
       const name = normalizeUsername(body.username);
       const r = await db.query<{
@@ -132,20 +141,7 @@ export async function registerUsers(app: FastifyInstance, db: Db): Promise<void>
       );
       return { users: r.rows.map(publicUser) };
     }
-    if (body.phone_e164) {
-      const r = await db.query<{
-        id: string;
-        username: string | null;
-        display_name: string;
-        about: string;
-        avatar_object_id: string | null;
-      }>(
-        "SELECT id, username, display_name, about, avatar_object_id FROM users WHERE phone_hmac = $1 AND deleted_at IS NULL",
-        [phoneHmac(body.phone_e164)],
-      );
-      return { users: r.rows.map(publicUser) };
-    }
-    throw new ApiError("validation", "username or phone_e164 required");
+    throw new ApiError("validation", "username required");
   });
 
   app.get("/v1/contacts", async (req) => {
@@ -217,12 +213,66 @@ export async function registerUsers(app: FastifyInstance, db: Db): Promise<void>
     return { blocked: r.rows.map((x) => x.blocked_user_id) };
   });
 
+  const reportWindow = new Map<string, { n: number; reset: number }>();
   app.post("/v1/reports", async (req) => {
     const auth = requireAuth(req);
-    const body = z.object({ user_id: z.string().uuid(), reason: z.string().min(1).max(500) }).parse(req.body);
+    const body = z
+      .object({
+        user_id: z.string().uuid(),
+        reason: z.enum(["spam", "abuse", "other"]),
+      })
+      .parse(req.body);
+    const now = Date.now();
+    const cur = reportWindow.get(auth.userId);
+    if (!cur || cur.reset < now) {
+      reportWindow.set(auth.userId, { n: 1, reset: now + 3_600_000 });
+    } else {
+      if (cur.n >= 8) throw new ApiError("rate_limited", "Too many reports", 429);
+      cur.n += 1;
+    }
     await db.query(
       `INSERT INTO reports (id, reporter_id, reportee_id, reason) VALUES ($1,$2,$3,$4)`,
       [randomUuid(), auth.userId, body.user_id, body.reason],
+    );
+    return { ok: true };
+  });
+
+  app.post("/v1/me/delete", async (req) => {
+    const auth = requireAuth(req);
+    const devices = await db.query<{ id: string }>(
+      "SELECT id FROM devices WHERE user_id = $1",
+      [auth.userId],
+    );
+    const ids = devices.rows.map((d) => d.id);
+    if (ids.length) {
+      await db.query("DELETE FROM one_time_prekeys WHERE device_id = ANY($1::uuid[])", [ids]);
+      await db.query(
+        "DELETE FROM envelopes WHERE recipient_device_id = ANY($1::uuid[]) OR sender_device_id = ANY($1::uuid[])",
+        [ids],
+      );
+    }
+    await db.query("UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL", [
+      auth.userId,
+    ]);
+    await db.query("UPDATE devices SET revoked_at = now(), push_token_enc = NULL WHERE user_id = $1", [
+      auth.userId,
+    ]);
+    await db.query("DELETE FROM contacts WHERE user_id = $1 OR contact_user_id = $1", [auth.userId]);
+    await db.query("DELETE FROM blocks WHERE user_id = $1 OR blocked_user_id = $1", [auth.userId]);
+    await db.query("DELETE FROM mutes WHERE user_id = $1", [auth.userId]);
+    await db.query("DELETE FROM archives WHERE user_id = $1", [auth.userId]);
+    await db.query("DELETE FROM backups WHERE user_id = $1", [auth.userId]);
+    await db.query(
+      `UPDATE users SET
+         deleted_at = now(),
+         username = NULL,
+         display_name = '',
+         about = '',
+         avatar_object_id = NULL,
+         registration_lock_hash = NULL,
+         phone_hmac = $2
+       WHERE id = $1`,
+      [auth.userId, `deleted:${auth.userId}`],
     );
     return { ok: true };
   });

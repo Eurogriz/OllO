@@ -5,6 +5,7 @@ export * from "./bytes.js";
 export * from "./vault.js";
 export * from "./engine.js";
 export * from "./kdf.js";
+export * from "./pin.js";
 export * from "./keys.js";
 export * from "./ratchet.js";
 export * from "./safety.js";

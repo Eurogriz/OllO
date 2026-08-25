@@ -43,7 +43,8 @@ talk to. Swapping the engine does not change envelope format.
 | AEAD | XChaCha20-Poly1305 | 24-byte nonce, 16-byte tag |
 | KDF | HKDF-SHA-256 | info-bound per use |
 | Hash | SHA-256 | safety numbers, digests |
-| Password / PIN | Argon2id | m=19 MiB, t=2, p=1 (OWASP) |
+| Password / PIN / registration lock | Argon2id | m=19 MiB, t=2, p=1 (OWASP) |
+| Native wrap (SQLCipher / identity) | AES-256-GCM | 12-byte IV, AAD `ollo-wrap-v1`, key in Keystore / Keychain |
 | Phone at rest | HMAC-SHA-256(pepper, e164) | pepper in secret manager |
 | Local DB | SQLCipher AES-256-CBC / HMAC (library default) | key in Keystore/Keychain |
 | Random | `crypto.getRandomValues` / `SecureRandom` / `SecRandomCopyBytes` | never Math.random |
@@ -63,6 +64,7 @@ could repeat across processes.
 | Attachment key | Per file, 32 random bytes | Inside E2EE message, not on server | N/A | With message delete |
 | Local DB key | First launch | Android Keystore / iOS Keychain | Rare (rekey) | Uninstall |
 | Registration lock | User | Argon2id hash on server | User | User |
+| Native DB wrap key | First launch | Android Keystore / iOS Keychain (this-device, when-unlocked) | Rare | Wipe / uninstall |
 | Session access / refresh | Login | Memory + Keychain (refresh) | Access 15m; refresh rotate | Logout / reuse detected |
 
 Server holds **only public** identity / prekeys.

@@ -1020,7 +1020,7 @@ function Shell({
   }
 
   const visibleThreads = useMemo(
-    () => acc.threads.filter((th) => tab === "chats" || th.kind === "direct"),
+    () => acc.threads.filter((th) => !th.archived && (tab === "chats" || th.kind === "direct")),
     [acc.threads, tab],
   );
 
@@ -1166,6 +1166,67 @@ function Shell({
                     {t(lang, "disappearing")}
                     {thread.disappearingSeconds ? ` ${thread.disappearingSeconds}s` : ""}
                   </button>
+                  {thread.peerUserId && (
+                    <button
+                      className="ghost"
+                      onClick={() => {
+                        void api("/v1/blocks", acc.access, {
+                          method: "POST",
+                          body: JSON.stringify({ user_id: thread.peerUserId }),
+                        }, acc).then(() => {
+                          thread.archived = true;
+                          persist(acc);
+                          setActive(null);
+                        });
+                      }}
+                    >
+                      {t(lang, "block")}
+                    </button>
+                  )}
+                  <button
+                    className="ghost"
+                    onClick={() => {
+                      const next = !thread.muted;
+                      void api("/v1/threads/mute", acc.access, {
+                        method: "POST",
+                        body: JSON.stringify({ thread_id: thread.id, until: next ? null : null }),
+                      }, acc).then(() => {
+                        thread.muted = next;
+                        persist(acc);
+                      });
+                    }}
+                  >
+                    {t(lang, "muteChat")}
+                  </button>
+                  <button
+                    className="ghost"
+                    onClick={() => {
+                      const next = !thread.archived;
+                      void api("/v1/threads/archive", acc.access, {
+                        method: "POST",
+                        body: JSON.stringify({ thread_id: thread.id, archived: next }),
+                      }, acc).then(() => {
+                        thread.archived = next;
+                        persist(acc);
+                        if (next) setActive(null);
+                      });
+                    }}
+                  >
+                    {t(lang, "archiveThread")}
+                  </button>
+                  {thread.peerUserId && (
+                    <button
+                      className="ghost"
+                      onClick={() => {
+                        void api("/v1/reports", acc.access, {
+                          method: "POST",
+                          body: JSON.stringify({ user_id: thread.peerUserId, reason: "other" }),
+                        }, acc);
+                      }}
+                    >
+                      {t(lang, "report")}
+                    </button>
+                  )}
                 </div>
               </div>
               <div className="messages">
@@ -1422,6 +1483,17 @@ function Shell({
                 }}
               >
                 {t(lang, "logout")}
+              </button>
+              <button
+                className="danger"
+                onClick={() => {
+                  if (!confirm(t(lang, "deleteAccount"))) return;
+                  void api("/v1/me/delete", acc.access, { method: "POST", body: "{}" }, acc).finally(() => {
+                    onLogout();
+                  });
+                }}
+              >
+                {t(lang, "deleteAccount")}
               </button>
             </div>
           </div>

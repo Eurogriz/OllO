@@ -438,4 +438,81 @@ describe("API integration", () => {
     assert.equal(last.payload.t, "msg");
     assert.equal(JSON.stringify(last.payload).includes("не в пуше"), false);
   });
+
+  it("refuses phone enumeration, drops OPKs on revoke, and wipes an account", async () => {
+    async function signup(phone: string, username: string) {
+      const otp = await json("POST", "/v1/auth/request-otp", { phone_e164: phone });
+      const verified = await json("POST", "/v1/auth/verify-otp", {
+        challenge_id: otp.body.challenge_id,
+        otp: otp.body.dev_otp,
+        device: devicePayload(username).json,
+      });
+      assert.equal(verified.status, 200, JSON.stringify(verified.body));
+      const tok = verified.body.access_token as string;
+      await json("PUT", "/v1/me", { username, display_name: username }, tok);
+      return {
+        tok,
+        userId: (verified.body.user as { id: string }).id,
+        deviceId: verified.body.device_id as string,
+      };
+    }
+    const alice = await signup("+79990000041", "alicepriv");
+    const bob = await signup("+79990000042", "bobpriv");
+
+    const phoneLookup = await json(
+      "POST",
+      "/v1/users/search",
+      { phone_e164: "+79990000042" },
+      alice.tok,
+    );
+    assert.equal(phoneLookup.status, 403);
+
+    const depth = await json("GET", "/v1/me/prekey-depth", undefined, bob.tok);
+    assert.ok((depth.body.remaining as number) >= 1);
+
+    const second = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000042" });
+    const bob2 = await json("POST", "/v1/auth/verify-otp", {
+      challenge_id: second.body.challenge_id,
+      otp: second.body.dev_otp,
+      device: devicePayload("bob-tablet").json,
+    });
+    const bob2Id = bob2.body.device_id as string;
+    const listed = await json("GET", "/v1/devices", undefined, bob.tok);
+    assert.ok(((listed.body.devices as unknown[]) ?? []).length >= 2);
+
+    const revoked = await json("DELETE", `/v1/devices/${bob2Id}`, {}, bob.tok);
+    assert.equal(revoked.status, 200, JSON.stringify(revoked.body));
+    const gone = await json("GET", `/v1/keys/${bob.userId}/${bob2Id}`, undefined, alice.tok);
+    assert.equal(gone.status, 404);
+
+    const report = await json(
+      "POST",
+      "/v1/reports",
+      { user_id: bob.userId, reason: "spam" },
+      alice.tok,
+    );
+    assert.equal(report.status, 200);
+    const badReport = await json(
+      "POST",
+      "/v1/reports",
+      { user_id: bob.userId, reason: "секретное сообщение которое нельзя хранить" },
+      alice.tok,
+    );
+    assert.equal(badReport.status, 400);
+
+    const lock = await json(
+      "POST",
+      "/v1/auth/registration-lock",
+      { pin: "lock-pin-ok" },
+      alice.tok,
+    );
+    assert.equal(lock.status, 200, JSON.stringify(lock.body));
+
+    const deleted = await json("POST", "/v1/me/delete", {}, alice.tok);
+    assert.equal(deleted.status, 200);
+    const me = await json("GET", "/v1/me", undefined, alice.tok);
+    assert.equal(me.status, 404);
+    const search = await json("POST", "/v1/users/search", { username: "alicepriv" }, bob.tok);
+    assert.equal((search.body.users as unknown[]).length, 0);
+  });
 });

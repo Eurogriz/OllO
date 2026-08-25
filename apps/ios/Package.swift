@@ -12,7 +12,7 @@ let package = Package(
     targets: [
         .target(name: "OlloCrypto"),
         .target(name: "OlloNetwork"),
-        .target(name: "OlloStorage"),
+        .target(name: "OlloStorage", dependencies: ["OlloCrypto"]),
         .testTarget(name: "OlloCryptoTests", dependencies: ["OlloCrypto"]),
     ]
 )

@@ -56,6 +56,7 @@ class AndroidKeyStore(private val alias: String = "ollo.db.wrap.v1") {
     fun wrap(raw: ByteArray): ByteArray {
         val c = Cipher.getInstance("AES/GCM/NoPadding")
         c.init(Cipher.ENCRYPT_MODE, getOrCreate())
+        c.updateAAD(AAD)
         return c.iv + c.doFinal(raw)
     }
 
@@ -64,6 +65,15 @@ class AndroidKeyStore(private val alias: String = "ollo.db.wrap.v1") {
         val ct = blob.copyOfRange(12, blob.size)
         val c = Cipher.getInstance("AES/GCM/NoPadding")
         c.init(Cipher.DECRYPT_MODE, getOrCreate(), GCMParameterSpec(128, iv))
+        c.updateAAD(AAD)
         return c.doFinal(ct)
+    }
+
+    fun delete() {
+        if (ks.containsAlias(alias)) ks.deleteEntry(alias)
+    }
+
+    companion object {
+        private val AAD = "ollo-wrap-v1".toByteArray(Charsets.UTF_8)
     }
 }

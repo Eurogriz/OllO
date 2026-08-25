@@ -1,8 +1,6 @@
-import { createHash, createHmac, randomBytes, scrypt as scryptCb, timingSafeEqual } from "node:crypto";
-import { promisify } from "node:util";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { hashPin, verifyPin } from "@ollo/crypto";
 import { config } from "../config.js";
-
-const scrypt = promisify(scryptCb);
 
 export function hmacHex(pepper: string, value: string): string {
   return createHmac("sha256", pepper).update(value).digest("hex");
@@ -35,18 +33,11 @@ export function otpCode(length: number): string {
 }
 
 export async function kdfHash(secret: string, pepper: string): Promise<string> {
-  const salt = randomBytes(16);
-  const key = (await scrypt(secret + pepper, salt, 32)) as Buffer;
-  return `scrypt$${salt.toString("hex")}$${key.toString("hex")}`;
+  return hashPin(secret, pepper);
 }
 
 export async function kdfVerify(secret: string, pepper: string, stored: string): Promise<boolean> {
-  const [alg, saltHex, hashHex] = stored.split("$");
-  if (alg !== "scrypt" || !saltHex || !hashHex) return false;
-  const key = (await scrypt(secret + pepper, Buffer.from(saltHex, "hex"), 32)) as Buffer;
-  const expected = Buffer.from(hashHex, "hex");
-  if (key.length !== expected.length) return false;
-  return timingSafeEqual(key, expected);
+  return verifyPin(secret, pepper, stored);
 }
 
 export function safeEqualStr(a: string, b: string): boolean {

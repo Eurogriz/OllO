@@ -47,8 +47,10 @@ export async function registerKeys(app: FastifyInstance, db: Db): Promise<void> 
     if (!r.rows[0] || r.rows[0].user_id !== auth.userId) {
       throw new ApiError("not_found", "Device not found", 404);
     }
-    await db.query("UPDATE devices SET revoked_at = now() WHERE id = $1", [id]);
+    await db.query("UPDATE devices SET revoked_at = now(), push_token_enc = NULL WHERE id = $1", [id]);
     await db.query("UPDATE sessions SET revoked_at = now() WHERE device_id = $1 AND revoked_at IS NULL", [id]);
+    await db.query("DELETE FROM one_time_prekeys WHERE device_id = $1", [id]);
+    await db.query("DELETE FROM envelopes WHERE recipient_device_id = $1", [id]);
     return { ok: true };
   });
 

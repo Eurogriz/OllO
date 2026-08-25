@@ -97,10 +97,11 @@ Set / change / remove Argon2id lock.
 - `GET /v1/me`
 - `GET /v1/users/{id}`
 - `GET /v1/users/by-username/{name}`
-- `POST /v1/users/search` — exact username; phone match is hashed
+- `POST /v1/users/search` — exact username only. Phone lookup is refused (403); contact discovery is on-device and mutual.
+- `POST /v1/me/delete` — mark the account deleted, revoke devices/sessions, drop OPKs and mailboxes. Access tokens may live up to 15 minutes.
 - `POST /v1/contacts` / `DELETE /v1/contacts/{user_id}`
 - `POST /v1/blocks` / `DELETE /v1/blocks/{user_id}`
-- `POST /v1/reports`
+- `POST /v1/reports` — `{ user_id, reason: spam|abuse|other }`. Metadata only; no message bodies.
 
 ## Devices and keys
 
