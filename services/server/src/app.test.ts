@@ -180,5 +180,17 @@ describe("API integration", () => {
     assert.ok(envs.length >= 1);
     const ct = Buffer.from(envs[0]!.ciphertext, "base64").toString("utf8");
     assert.equal(ct.includes("секретное сообщение"), false);
+
+    const depthBefore = await json("GET", "/v1/me/prekey-depth", undefined, bobTok);
+    const listed = await json("GET", `/v1/keys/${bobUser}?consume=0`, undefined, aliceTok);
+    assert.equal(listed.status, 200);
+    const listedBundles = listed.body.bundles as Array<{ one_time_prekey: unknown }>;
+    assert.equal(listedBundles[0]?.one_time_prekey, null);
+    const depthAfter = await json("GET", "/v1/me/prekey-depth", undefined, bobTok);
+    assert.equal(depthAfter.body.remaining, depthBefore.body.remaining);
+
+    const presence = await json("GET", `/v1/presence/${bobUser}`, undefined, aliceTok);
+    assert.equal(presence.status, 200);
+    assert.ok(presence.body.state === "online" || presence.body.state === "offline");
   });
 });

@@ -106,10 +106,15 @@ Set / change / remove Argon2id lock.
 
 - `GET /v1/devices`
 - `DELETE /v1/devices/{id}`
-- `GET /v1/keys/{user_id}` — prekey bundle for each of their devices
+- `GET /v1/keys/{user_id}` — prekey bundles (`?consume=0` does not take one-time prekeys)
+- `GET /v1/keys/{user_id}/devices` — device list without consuming prekeys
+- `GET /v1/keys/{user_id}/{device_id}` — consume one bundle for that device
 - `PUT /v1/keys/signed-prekey`
 - `POST /v1/keys/one-time` — replenish
-- `GET /v1/keys/safety/{user_id}` — public identity material for verification
+- `GET /v1/me/prekey-depth`
+- `GET /v1/safety/{user_id}` — public identity material for verification
+- `GET /v1/presence/{user_id}` — coarse online / last-seen day
+- `GET /v1/notifications/pending` — sealed wakeup count, no bodies
 
 ## Messaging
 

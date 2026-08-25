@@ -35,6 +35,14 @@ export function isOnline(userId: string): boolean {
   return (byUser.get(userId)?.size ?? 0) > 0;
 }
 
+export function pushToUser(userId: string, frame: unknown): number {
+  const devices = byUser.get(userId);
+  if (!devices) return 0;
+  let n = 0;
+  for (const deviceId of devices) n += pushToDevice(deviceId, frame);
+  return n;
+}
+
 export function pushToDevice(deviceId: string, frame: unknown): number {
   const set = byDevice.get(deviceId);
   if (!set) return 0;

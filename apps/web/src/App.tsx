@@ -4,18 +4,21 @@ import { t, type Lang } from "./i18n";
 import {
   type Account,
   type ChatMessage,
-  type Thread,
   api,
+  b64u,
   clearAccount,
   computeSafety,
+  downloadAndDecrypt,
   encryptFile,
+  flushOutbox,
   loadAccount,
   newDeviceMaterial,
   openEnvelope,
-  parseBundle,
   publicDevicePayload,
+  replenishPrekeys,
   saveAccount,
-  sealForPeer,
+  searchLocal,
+  sendToUser,
 } from "./client";
 
 type Screen = "auth" | "app";
@@ -49,6 +52,8 @@ export function App() {
   }, []);
 
   const persist = useCallback((next: Account) => {
+    if (!next.outbox) next.outbox = [];
+    if (!next.knownIdentities) next.knownIdentities = {};
     saveAccount(next);
     setAcc({ ...next, sessions: next.sessions, messages: { ...next.messages }, threads: [...next.threads] });
   }, []);
@@ -144,6 +149,8 @@ function Auth({
         pinned: {},
         drafts: {},
         firstSent: {},
+        knownIdentities: {},
+        outbox: [],
       };
       if (res.user.is_new || !res.user.username) {
         setStep(3);
@@ -271,29 +278,66 @@ function Shell({
   const messages = active ? acc.messages[active] ?? [] : [];
 
   useEffect(() => {
+    if (!thread?.peerUserId) {
+      setPresence("");
+      return;
+    }
+    let stop = false;
+    const tick = async () => {
+      try {
+        const p = await api(`/v1/presence/${thread.peerUserId}`, acc.access, {}, acc);
+        if (!stop) setPresence(p.state === "online" ? "online" : p.last_seen_day ?? "offline");
+      } catch {
+        /* ignore */
+      }
+    };
+    void tick();
+    const id = setInterval(() => void tick(), 15000);
+    return () => {
+      stop = true;
+      clearInterval(id);
+    };
+  }, [thread?.peerUserId, acc.access]);
+
+  useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length, active]);
 
   useEffect(() => {
-    const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${proto}//${location.host}/v1/realtime?access_token=${acc.access}`);
-    ws.onopen = () => ws.send(JSON.stringify({ op: "hello" }));
-    ws.onmessage = (ev) => {
-      const frame = JSON.parse(String(ev.data));
-      if (frame.op === "envelope") {
-        void handleIncoming(frame.envelope);
-        ws.send(JSON.stringify({ op: "ack", ids: [frame.envelope.id] }));
-      }
+    let stopped = false;
+    let ws: WebSocket | null = null;
+    let ping: ReturnType<typeof setInterval> | undefined;
+    const connect = () => {
+      if (stopped) return;
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      ws = new WebSocket(`${proto}//${location.host}/v1/realtime?access_token=${acc.access}`);
+      ws.onopen = () => {
+        ws?.send(JSON.stringify({ op: "hello" }));
+        void flushOutbox(acc).then(() => persist(acc));
+        void replenishPrekeys(acc).catch(() => undefined);
+      };
+      ws.onmessage = (ev) => {
+        const frame = JSON.parse(String(ev.data));
+        if (frame.op === "envelope") {
+          void handleIncoming(frame.envelope);
+          ws?.send(JSON.stringify({ op: "ack", ids: [frame.envelope.id] }));
+        }
+      };
+      ws.onclose = () => {
+        if (!stopped) setTimeout(connect, 1500);
+      };
     };
-    const ping = setInterval(() => {
-      if (ws.readyState === 1) ws.send(JSON.stringify({ op: "ping" }));
+    connect();
+    ping = setInterval(() => {
+      if (ws?.readyState === 1) ws.send(JSON.stringify({ op: "ping" }));
     }, 25000);
     const drain = setInterval(() => void pullMailbox(), 8000);
     void pullMailbox();
     return () => {
+      stopped = true;
       clearInterval(ping);
       clearInterval(drain);
-      ws.close();
+      ws?.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [acc.access]);
@@ -413,25 +457,58 @@ function Shell({
     }
   }
 
-  async function sendInner(peerUserId: string, inner: InnerMessage, kind: "message" | "receipt" | "typing" | "call" = "message") {
-    const bundles = await api(`/v1/keys/${peerUserId}`, acc.access);
-    const envelopes = [];
-    for (const raw of bundles.bundles) {
-      const bundle = parseBundle(raw);
-      const sealed = await sealForPeer(acc, bundle, inner);
-      envelopes.push({
-        recipient_user_id: peerUserId,
-        recipient_device_id: bundle.deviceId,
+  async function deliver(
+    peerUserId: string,
+    inner: InnerMessage,
+    kind: "message" | "receipt" | "typing" | "call" | "control" = "message",
+    groupId?: string,
+  ) {
+    try {
+      await sendToUser(acc, peerUserId, inner, kind, groupId);
+      persist(acc);
+    } catch (e) {
+      if ((e as Error).message === "identity_changed") {
+        setIdentityWarn(peerUserId);
+      }
+      acc.outbox.push({
+        id: crypto.randomUUID(),
+        peerUserId,
+        groupId,
         kind,
-        ciphertext: sealed.payload,
-        padding_bucket: sealed.bucket,
-        group_id: inner.threadId.startsWith("grp_") ? undefined : undefined,
+        inner,
+        attempts: 0,
       });
+      persist(acc);
+      throw e;
     }
-    if (envelopes.length) {
-      await api("/v1/envelopes", acc.access, { method: "POST", body: JSON.stringify({ envelopes }) });
+  }
+
+  async function onCallSignal(from: string, inner: InnerMessage) {
+    const sig = inner.call;
+    if (!sig) return;
+    if (sig.signalType === "offer") {
+      setCall({ media: sig.media, incoming: true, remote: from, callId: sig.callId });
+      (window as unknown as { __offer: string; __from: string }).__offer = sig.sdp ?? "";
+      (window as unknown as { __from: string }).__from = from;
+      return;
     }
-    persist(acc);
+    const pc = pcRef.current;
+    if (!pc) return;
+    if (sig.signalType === "answer" && sig.sdp) {
+      await pc.setRemoteDescription({ type: "answer", sdp: sig.sdp });
+    }
+    if (sig.signalType === "ice" && sig.ice) {
+      try {
+        await pc.addIceCandidate(sig.ice);
+      } catch {
+        /* ignore */
+      }
+    }
+    if (sig.signalType === "hangup" || sig.signalType === "reject") {
+      pc.close();
+      pcRef.current = null;
+      setCall(null);
+    }
   }
 
   async function sendText() {
@@ -466,11 +543,11 @@ function Shell({
     persist(acc);
     try {
       if (thread.kind === "direct" && thread.peerUserId) {
-        await sendInner(thread.peerUserId, inner);
+        await deliver(thread.peerUserId, inner);
       } else if (thread.groupId) {
-        const g = await api(`/v1/groups/${thread.groupId}`, acc.access);
+        const g = await api(`/v1/groups/${thread.groupId}`, acc.access, {}, acc);
         for (const m of g.group.members as { user_id: string }[]) {
-          await sendInner(m.user_id, inner);
+          await deliver(m.user_id, inner, "message", thread.groupId);
         }
       }
       local.status = "sent";
@@ -487,7 +564,7 @@ function Shell({
       const res = await api("/v1/users/search", acc.access, {
         method: "POST",
         body: JSON.stringify({ username: query.trim() }),
-      });
+      }, acc);
       const u = res.users?.[0];
       if (!u) return;
       await api("/v1/contacts", acc.access, { method: "POST", body: JSON.stringify({ user_id: u.id }) });
@@ -505,11 +582,13 @@ function Shell({
 
   async function startSafety() {
     if (!thread?.peerUserId) return;
-    const mat = await api(`/v1/keys/safety/${thread.peerUserId}`, acc.access);
+    const mat = await api(`/v1/safety/${thread.peerUserId}`, acc.access, {}, acc);
     const first = mat.devices?.[0];
     if (!first) return;
-    const bytes = Uint8Array.from(atob(first.identity_x25519), (c) => c.charCodeAt(0));
-    setSafety(computeSafety(acc, bytes).grouped);
+    const bytes = b64u(first.identity_x25519);
+    const sn = computeSafety(acc, bytes);
+    setSafety(sn.grouped);
+    setSafetyQr(sn.qr);
     setModal("safety");
   }
 
@@ -562,7 +641,13 @@ function Shell({
     };
     pushMsg(thread.id, local);
     persist(acc);
-    if (thread.peerUserId) await sendInner(thread.peerUserId, inner);
+    if (thread.peerUserId) await deliver(thread.peerUserId, inner);
+    else if (thread.groupId) {
+      const g = await api(`/v1/groups/${thread.groupId}`, acc.access, {}, acc);
+      for (const m of g.group.members as { user_id: string }[]) {
+        await deliver(m.user_id, inner, "message", thread.groupId);
+      }
+    }
   }
 
   async function recordVoice() {
@@ -662,8 +747,12 @@ function Shell({
               className="search"
               placeholder={t(lang, "search")}
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && void searchUser()}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                if (e.target.value.startsWith("/")) setSearchHits(searchLocal(acc, e.target.value.slice(1)));
+                else setSearchHits(null);
+              }}
+              onKeyDown={(e) => e.key === "Enter" && !query.startsWith("/") && void searchUser()}
             />
             <div className="tabs">
               <button className={`tab ${tab === "chats" ? "active" : ""}`} onClick={() => setTab("chats")}>
@@ -675,6 +764,26 @@ function Shell({
             </div>
           </div>
           <div className="chat-list">
+            {searchHits && (
+              <div className="hint" style={{ padding: "8px 14px" }}>
+                {searchHits.map((m) => (
+                  <div
+                    key={m.clientId}
+                    className="chat-item"
+                    onClick={() => {
+                      setActive(m.threadId);
+                      setSearchHits(null);
+                      setQuery("");
+                    }}
+                  >
+                    <div className="meta">
+                      <div className="title">{m.text}</div>
+                      <div className="preview">{new Date(m.sentAt).toLocaleString()}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
             {tab === "contacts"
               ? acc.contacts.map((c) => (
                   <div
@@ -730,7 +839,9 @@ function Shell({
               <div className="chat-head">
                 <div>
                   <div className="title">{thread.title}</div>
-                  <div className="hint">{t(lang, "noPlaintext")}</div>
+                  <div className="hint">
+                    {presence === "online" ? t(lang, "online") : presence || t(lang, "noPlaintext")}
+                  </div>
                 </div>
                 <div className="top-actions">
                   <button className="ghost" onClick={() => void startCall("audio")}>
@@ -863,6 +974,17 @@ function Shell({
                 ctx.msg.reaction = e;
                 persist(acc);
                 setCtx(null);
+                const peer = thread?.peerUserId;
+                if (peer) {
+                  void deliver(peer, {
+                    version: 1,
+                    type: "reaction",
+                    clientId: crypto.randomUUID(),
+                    sentAt: new Date().toISOString(),
+                    threadId: ctx.msg.threadId,
+                    reaction: { targetClientId: ctx.msg.clientId, emoji: e },
+                  }, "control");
+                }
               }}
             >
               {e}
@@ -874,6 +996,18 @@ function Shell({
               ctx.msg.text = "";
               persist(acc);
               setCtx(null);
+              const peer = thread?.peerUserId;
+              if (peer) {
+                void deliver(peer, {
+                  version: 1,
+                  type: "delete",
+                  clientId: crypto.randomUUID(),
+                  sentAt: new Date().toISOString(),
+                  threadId: ctx.msg.threadId,
+                  editOf: ctx.msg.clientId,
+                  deleteFor: "everyone",
+                }, "control");
+              }
             }}
           >
             {t(lang, "del")}
@@ -899,6 +1033,33 @@ function Shell({
             </div>
             <Devices acc={acc} lang={lang} />
             <div className="list-row">
+              <span>{t(lang, "lock")}</span>
+              <input
+                value={lockPin}
+                onChange={(e) => setLockPin(e.target.value)}
+                placeholder="PIN"
+                style={{ width: 90 }}
+              />
+              <button
+                className="ghost"
+                onClick={() => {
+                  void api(
+                    "/v1/auth/registration-lock",
+                    acc.access,
+                    { method: "POST", body: JSON.stringify({ pin: lockPin || null }) },
+                    acc,
+                  );
+                  setLockPin("");
+                }}
+              >
+                OK
+              </button>
+            </div>
+            <div className="list-row">
+              <span>{t(lang, "about")}</span>
+              <span>@{acc.username}</span>
+            </div>
+            <div className="list-row">
               <button
                 className="danger"
                 onClick={() => {
@@ -919,6 +1080,22 @@ function Shell({
             <h3>{t(lang, "safety")}</h3>
             <p>{t(lang, "verifySafety")}</p>
             <div className="safety">{safety}</div>
+            <div className="hint" style={{ marginTop: 10, wordBreak: "break-all" }}>
+              {safetyQr}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {identityWarn && (
+        <div className="modal-back" onClick={() => setIdentityWarn("")}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>{t(lang, "safety")}</h3>
+            <p>{t(lang, "verifySafety")}</p>
+            <p style={{ color: "var(--danger)" }}>Identity key changed for this contact. Re-verify the safety number.</p>
+            <button className="primary" onClick={() => setIdentityWarn("")}>
+              OK
+            </button>
           </div>
         </div>
       )}

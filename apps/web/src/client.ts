@@ -8,15 +8,16 @@ import {
   createLocalDevice,
   decryptAttachment,
   decryptMessage,
+  deserializeIdentity,
   deserializeSession,
   encryptAttachment,
   encryptFirstMessage,
   encryptMessage,
+  generateOneTimePrekeys,
   generateSignedPrekey,
   safetyNumber,
   serializeIdentity,
   serializeSession,
-  deserializeIdentity,
 } from "@ollo/crypto";
 
 const STORE_KEY = "ollo.account.v1";
@@ -30,12 +31,13 @@ export interface ChatMessage {
   sentAt: string;
   status: "pending" | "sent" | "delivered" | "read" | "failed";
   replyTo?: string;
-  attachments?: { name: string; mime: string; url?: string; objectId?: string }[];
+  attachments?: { name: string; mime: string; url?: string; objectId?: string; grant?: string }[];
   voice?: { url: string; durationMs: number };
   reaction?: string;
   edited?: boolean;
   deleted?: boolean;
   expiresAt?: string;
+  pinned?: boolean;
 }
 
 export interface Thread {
@@ -48,6 +50,17 @@ export interface Thread {
   lastAt?: string;
   unread: number;
   disappearingSeconds: number;
+  archived?: boolean;
+  muted?: boolean;
+}
+
+export interface OutboxItem {
+  id: string;
+  peerUserId: string;
+  groupId?: string;
+  kind: "message" | "receipt" | "typing" | "call" | "control";
+  inner: InnerMessage;
+  attempts: number;
 }
 
 export interface Account {
@@ -66,6 +79,8 @@ export interface Account {
   pinned: Record<string, string[]>;
   drafts: Record<string, string>;
   firstSent: Record<string, boolean>;
+  knownIdentities: Record<string, string>;
+  outbox: OutboxItem[];
 }
 
 export function sessionKey(userId: string, deviceId: string): string {
@@ -95,9 +110,7 @@ export function loadAccount(): Account | null {
       })),
     };
     const sessions: Record<string, SessionState> = {};
-    for (const [k, v] of Object.entries(j.sessions)) {
-      sessions[k] = deserializeSession(v);
-    }
+    for (const [k, v] of Object.entries(j.sessions)) sessions[k] = deserializeSession(v);
     return {
       userId: j.userId,
       deviceId: j.deviceId,
@@ -114,6 +127,8 @@ export function loadAccount(): Account | null {
       pinned: j.pinned,
       drafts: j.drafts,
       firstSent: j.firstSent ?? {},
+      knownIdentities: j.knownIdentities ?? {},
+      outbox: j.outbox ?? [],
     };
   } catch {
     return null;
@@ -142,15 +157,15 @@ export function saveAccount(acc: Account): void {
       privateKey: b64(k.privateKey),
       publicKey: b64(k.publicKey),
     })),
-    sessions: Object.fromEntries(
-      Object.entries(acc.sessions).map(([k, v]) => [k, serializeSession(v)]),
-    ),
+    sessions: Object.fromEntries(Object.entries(acc.sessions).map(([k, v]) => [k, serializeSession(v)])),
     messages: acc.messages,
     threads: acc.threads,
     contacts: acc.contacts,
     pinned: acc.pinned,
     drafts: acc.drafts,
     firstSent: acc.firstSent,
+    knownIdentities: acc.knownIdentities,
+    outbox: acc.outbox,
   };
   localStorage.setItem(STORE_KEY, JSON.stringify(stored));
 }
@@ -163,7 +178,11 @@ export function newDeviceMaterial() {
   return createLocalDevice();
 }
 
-export function publicDevicePayload(mat: ReturnType<typeof createLocalDevice>, name: string, platform: "web") {
+export function publicDevicePayload(
+  mat: ReturnType<typeof createLocalDevice>,
+  name: string,
+  platform: "web",
+) {
   return {
     name,
     platform,
@@ -182,18 +201,42 @@ export function publicDevicePayload(mat: ReturnType<typeof createLocalDevice>, n
   };
 }
 
-export async function api(path: string, access: string | null, init: RequestInit = {}) {
+export async function refreshSession(acc: Account): Promise<boolean> {
+  try {
+    const res = await fetch("/v1/auth/refresh", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: acc.refresh }),
+    });
+    if (!res.ok) return false;
+    const data = (await res.json()) as { access_token: string; refresh_token: string };
+    acc.access = data.access_token;
+    acc.refresh = data.refresh_token;
+    saveAccount(acc);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function api(path: string, access: string | null, init: RequestInit = {}, acc?: Account) {
   const headers = new Headers(init.headers);
   if (access) headers.set("Authorization", `Bearer ${access}`);
-  if (init.body && !(init.body instanceof Uint8Array) && !headers.has("Content-Type")) {
+  if (init.body && !(init.body instanceof Uint8Array) && !(init.body instanceof ArrayBuffer) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  const res = await fetch(path, { ...init, headers });
+  let res = await fetch(path, { ...init, headers });
+  if (res.status === 401 && acc?.refresh) {
+    const ok = await refreshSession(acc);
+    if (ok) {
+      headers.set("Authorization", `Bearer ${acc.access}`);
+      res = await fetch(path, { ...init, headers });
+    }
+  }
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) {
-    const msg = data?.error?.message ?? res.statusText;
-    throw new Error(msg);
+    throw new Error(data?.error?.message ?? res.statusText);
   }
   return data;
 }
@@ -224,12 +267,23 @@ export function parseBundle(raw: {
   };
 }
 
-export async function sealForPeer(
-  acc: Account,
-  bundle: PrekeyBundle,
-  inner: InnerMessage,
-): Promise<{ payload: string; bucket: number }> {
+export async function sealForExisting(acc: Account, userId: string, deviceId: string, inner: InnerMessage) {
+  const sk = sessionKey(userId, deviceId);
+  const session = acc.sessions[sk];
+  if (!session) return null;
+  const sealed = encryptMessage(session, inner);
+  const bytes = encodeSealed(sealed);
+  return { payload: b64(bytes), bucket: paddingBucket(bytes.length) };
+}
+
+export async function sealWithBundle(acc: Account, bundle: PrekeyBundle, inner: InnerMessage) {
   const sk = sessionKey(bundle.userId, bundle.deviceId);
+  const fp = b64(bundle.identityKeyX25519);
+  const prev = acc.knownIdentities[sk];
+  if (prev && prev !== fp) {
+    throw new Error("identity_changed");
+  }
+  acc.knownIdentities[sk] = fp;
   let sealed: SealedPayload;
   if (!acc.sessions[sk]) {
     const init = beginSession(acc.device, bundle);
@@ -243,6 +297,71 @@ export async function sealForPeer(
   return { payload: b64(bytes), bucket: paddingBucket(bytes.length) };
 }
 
+export async function sendToUser(
+  acc: Account,
+  peerUserId: string,
+  inner: InnerMessage,
+  kind: OutboxItem["kind"] = "message",
+  groupId?: string,
+): Promise<void> {
+  const listed = await api(`/v1/keys/${peerUserId}/devices`, acc.access, {}, acc);
+  const devices = (listed.devices ?? []) as Array<{ device_id: string }>;
+  const envelopes = [];
+  for (const d of devices) {
+    if (d.device_id === acc.deviceId && peerUserId === acc.userId) continue;
+    const existing = await sealForExisting(acc, peerUserId, d.device_id, inner);
+    if (existing) {
+      envelopes.push({
+        recipient_user_id: peerUserId,
+        recipient_device_id: d.device_id,
+        kind,
+        ciphertext: existing.payload,
+        padding_bucket: existing.bucket,
+        group_id: groupId,
+      });
+      continue;
+    }
+    const one = await api(`/v1/keys/${peerUserId}/${d.device_id}`, acc.access, {}, acc);
+    const sealed = await sealWithBundle(acc, parseBundle(one.bundle), inner);
+    envelopes.push({
+      recipient_user_id: peerUserId,
+      recipient_device_id: d.device_id,
+      kind,
+      ciphertext: sealed.payload,
+      padding_bucket: sealed.bucket,
+      group_id: groupId,
+    });
+  }
+  if (envelopes.length) {
+    await api("/v1/envelopes", acc.access, { method: "POST", body: JSON.stringify({ envelopes }) }, acc);
+  }
+}
+
+export function enqueue(acc: Account, item: Omit<OutboxItem, "id" | "attempts">): void {
+  acc.outbox.push({ ...item, id: crypto.randomUUID(), attempts: 0 });
+}
+
+export async function flushOutbox(acc: Account): Promise<void> {
+  const pending = [...acc.outbox];
+  for (const item of pending) {
+    try {
+      if (item.groupId) {
+        const g = await api(`/v1/groups/${item.groupId}`, acc.access, {}, acc);
+        for (const m of g.group.members as { user_id: string }[]) {
+          await sendToUser(acc, m.user_id, item.inner, item.kind, item.groupId);
+        }
+      } else {
+        await sendToUser(acc, item.peerUserId, item.inner, item.kind);
+      }
+      acc.outbox = acc.outbox.filter((x) => x.id !== item.id);
+    } catch {
+      item.attempts += 1;
+      if (item.attempts >= 8) acc.outbox = acc.outbox.filter((x) => x.id !== item.id);
+    }
+  }
+  saveAccount(acc);
+}
+
 export function openEnvelope(
   acc: Account,
   senderUserId: string,
@@ -252,19 +371,10 @@ export function openEnvelope(
   const sealed = decodeSealed(b64u(ciphertextB64));
   const sk = sessionKey(senderUserId, senderDeviceId);
   if (!acc.sessions[sk]) {
-    const { acceptSession } = requireAccept();
     acc.sessions[sk] = acceptSession(acc.device, sealed, senderUserId, senderDeviceId);
   }
   return decryptMessage(acc.sessions[sk]!, sealed);
 }
-
-function requireAccept() {
-  return { acceptSession: (awaiter as unknown as { acceptSession: typeof import("@ollo/crypto").acceptSession }).acceptSession };
-}
-
-// static import used above via function to keep tree simple
-import { acceptSession } from "@ollo/crypto";
-const awaiter = { acceptSession };
 
 export function computeSafety(acc: Account, theirX: Uint8Array) {
   return safetyNumber(acc.device.identity.x25519Public, theirX);
@@ -275,24 +385,86 @@ export async function encryptFile(file: File) {
   return encryptAttachment(buf, { mime: file.type || "application/octet-stream", filename: file.name });
 }
 
-export function decryptFile(
-  enc: Parameters<typeof decryptAttachment>[0],
-  ciphertext: Uint8Array,
-) {
+export function decryptFile(enc: Parameters<typeof decryptAttachment>[0], ciphertext: Uint8Array) {
   return decryptAttachment(enc, ciphertext);
+}
+
+export async function downloadAndDecrypt(
+  acc: Account,
+  pointer: {
+    objectId: string;
+    key: Uint8Array;
+    nonce: Uint8Array;
+    digest: Uint8Array;
+    mime: string;
+    filename: string;
+    grant?: string;
+  },
+): Promise<Blob> {
+  const q = pointer.grant ? `?grant=${encodeURIComponent(pointer.grant)}` : "";
+  const res = await fetch(`/v1/attachments/${pointer.objectId}/data${q}`, {
+    headers: { Authorization: `Bearer ${acc.access}` },
+  });
+  if (!res.ok) throw new Error("download failed");
+  const buf = new Uint8Array(await res.arrayBuffer());
+  const pt = decryptAttachment(
+    {
+      ciphertext: buf,
+      key: pointer.key,
+      nonce: pointer.nonce,
+      digest: pointer.digest,
+      size: buf.length,
+      mime: pointer.mime,
+      filename: pointer.filename,
+    },
+    buf,
+  );
+  return new Blob([pt], { type: pointer.mime });
+}
+
+export async function replenishPrekeys(acc: Account): Promise<void> {
+  const depth = await api("/v1/me/prekey-depth", acc.access, {}, acc);
+  if ((depth.remaining as number) >= 20) return;
+  const start =
+    acc.device.oneTimePrekeys.reduce((m, k) => Math.max(m, k.id), 0) + 1;
+  const extra = generateOneTimePrekeys(start, 80);
+  acc.device.oneTimePrekeys.push(...extra);
+  await api(
+    "/v1/keys/one-time",
+    acc.access,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        keys: extra.map((k) => ({ id: k.id, public: b64(k.publicKey) })),
+      }),
+    },
+    acc,
+  );
 }
 
 export function rotateLocalPrekey(acc: Account) {
   acc.device.signedPrekey = generateSignedPrekey(acc.device.identity, acc.device.signedPrekey.id + 1);
 }
 
-function b64(bytes: Uint8Array): string {
+export function searchLocal(acc: Account, q: string): ChatMessage[] {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return [];
+  const out: ChatMessage[] = [];
+  for (const list of Object.values(acc.messages)) {
+    for (const m of list) {
+      if (m.text?.toLowerCase().includes(needle)) out.push(m);
+    }
+  }
+  return out.slice(0, 50);
+}
+
+export function b64(bytes: Uint8Array): string {
   let s = "";
   for (const b of bytes) s += String.fromCharCode(b);
   return btoa(s);
 }
 
-function b64u(s: string): Uint8Array {
+export function b64u(s: string): Uint8Array {
   const bin = atob(s);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
@@ -318,4 +490,6 @@ interface Stored {
   pinned: Record<string, string[]>;
   drafts: Record<string, string>;
   firstSent: Record<string, boolean>;
+  knownIdentities: Record<string, string>;
+  outbox: OutboxItem[];
 }

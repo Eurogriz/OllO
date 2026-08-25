@@ -14,10 +14,11 @@ import { registerCalls } from "./modules/calls.js";
 import { registerGroups } from "./modules/groups.js";
 import { registerKeys } from "./modules/keys.js";
 import { registerMessaging } from "./modules/messaging.js";
+import { registerNotifications } from "./modules/notifications.js";
 import { registerUsers } from "./modules/users.js";
 import { log } from "./observability/logger.js";
 import { httpRequests, registry } from "./observability/metrics.js";
-import { attach, detach, type SocketClient, connectionCount } from "./realtime/hub.js";
+import { attach, detach, type SocketClient, connectionCount, isOnline } from "./realtime/hub.js";
 import { randomToken } from "./security/crypto-utils.js";
 
 function originAllowed(origin: string | undefined): boolean {
@@ -105,6 +106,23 @@ export async function buildApp(db: Db): Promise<FastifyInstance> {
   await registerGroups(app, db);
   await registerAttachments(app, db);
   await registerCalls(app, db);
+  await registerNotifications(app, db);
+
+  app.get("/v1/presence/:userId", async (req) => {
+    requireAuth(req);
+    const userId = (req.params as { userId: string }).userId;
+    const row = await db.query<{ last_seen_at: string }>(
+      `SELECT last_seen_at FROM devices WHERE user_id = $1 AND revoked_at IS NULL
+       ORDER BY last_seen_at DESC LIMIT 1`,
+      [userId],
+    );
+    const last = row.rows[0]?.last_seen_at;
+    return {
+      user_id: userId,
+      state: isOnline(userId) ? "online" : "offline",
+      last_seen_day: last ? String(last).slice(0, 10) : null,
+    };
+  });
 
   app.get("/v1/realtime", { websocket: true }, (socket, req) => {
     let client: SocketClient | null = null;
@@ -126,6 +144,7 @@ export async function buildApp(db: Db): Promise<FastifyInstance> {
             resume: msg.resume ?? randomToken(12),
           };
           attach(client);
+          void db.query("UPDATE devices SET last_seen_at = now() WHERE id = $1", [auth.deviceId]);
           socket.send(
             JSON.stringify({
               op: "welcome",

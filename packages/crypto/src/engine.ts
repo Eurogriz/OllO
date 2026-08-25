@@ -192,15 +192,28 @@ function reviveToJson(message: InnerMessage): unknown {
 }
 
 function jsonReplacer(_k: string, v: unknown): unknown {
-  if (v instanceof Uint8Array) {
-    return { __b: Buffer.from(v).toString("base64") };
-  }
+  if (v instanceof Uint8Array) return { __b: bytesToB64(v) };
   return v;
 }
 
 function jsonReviver(_k: string, v: unknown): unknown {
   if (v && typeof v === "object" && "__b" in (v as object)) {
-    return new Uint8Array(Buffer.from((v as { __b: string }).__b, "base64"));
+    return b64ToBytes((v as { __b: string }).__b);
   }
   return v;
+}
+
+function bytesToB64(bytes: Uint8Array): string {
+  if (typeof Buffer !== "undefined") return Buffer.from(bytes).toString("base64");
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+
+function b64ToBytes(b64: string): Uint8Array {
+  if (typeof Buffer !== "undefined") return new Uint8Array(Buffer.from(b64, "base64"));
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
 }
