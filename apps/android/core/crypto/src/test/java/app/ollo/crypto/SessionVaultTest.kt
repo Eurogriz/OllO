@@ -153,6 +153,21 @@ class SessionVaultTest {
         )
         assertEquals(listOf("g1:alice:phone:1"), Membership.planSenderKeyEpochPrune(listOf("g1:alice:phone:1", "g1:bob:d:2"), "g1", 2))
         assertEquals(listOf("g1:1"), Membership.planOwnSenderKeyEpochPrune(listOf("g1:1", "g1:2", "g10:2"), "g1", 2))
+        val share = Membership.planSenderKeyShare(
+            listOf("alice:phone", "bob:d1", "bob:d2", "alice:stolen"),
+            listOf("bob:d1", "carol:gone"),
+            "alice:phone",
+            listOf("alice:stolen"),
+        )
+        assertEquals(listOf("bob:d2"), share.first)
+        assertEquals(listOf("bob:d1"), share.second)
+        assertEquals(
+            mapOf("g1:2" to listOf("bob:d1"), "g2:1" to emptyList()),
+            Membership.planSenderKeySharedDrop(
+                mapOf("g1:2" to listOf("bob:d1", "bob:d2"), "g2:1" to listOf("bob:d2")),
+                "bob:d2",
+            ),
+        )
     }
 
     @Test

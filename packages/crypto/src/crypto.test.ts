@@ -104,6 +104,21 @@ describe("X3DH + Double Ratchet", () => {
     assert.throws(() => beginSession(alice, bundle));
   });
 
+  it("replaces the ratchet when a later PreKey whisper arrives", () => {
+    const alice = device("alice", "a1");
+    const bob = device("bob", "b1");
+    const init = beginSession(alice, bundleOf(bob));
+    const first = encryptFirstMessage(alice, init, text("t", "first"));
+    const bobSession = acceptSession(bob, first, "alice", "a1");
+    decryptMessage(bobSession, first);
+
+    const again = beginSession(alice, bundleOf(bob));
+    const second = encryptFirstMessage(alice, again, text("t", "reset"));
+    const replaced = acceptSession(bob, second, "alice", "a1");
+    assert.equal(decryptMessage(replaced, second).text, "reset");
+    assert.throws(() => decryptMessage(bobSession, second));
+  });
+
   it("accepts a first message after signed-prekey rotation using the retired key", async () => {
     const { rotateSignedPrekey, SIGNED_PREKEY_KEEP } = await import("./engine.js");
     const alice = device("alice", "a1");

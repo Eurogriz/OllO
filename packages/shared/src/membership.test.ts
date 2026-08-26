@@ -16,6 +16,8 @@ import {
   planSenderKeyEpochRotate,
   planSenderKeyIngest,
   planSenderKeyPrune,
+  planSenderKeyShare,
+  planSenderKeySharedDrop,
   planTrustedMembers,
   sameMembership,
 } from "./membership.js";
@@ -384,5 +386,18 @@ describe("membership apply planner", () => {
       ["g1:alice:phone:1"],
     );
     assert.deepEqual(planOwnSenderKeyEpochPrune(["g1:1", "g1:2", "g10:2", "g1:2:x"], "g1", 2), ["g1:1"]);
+    assert.deepEqual(
+      planSenderKeyShare({
+        liveAddresses: ["alice:phone", "bob:d1", "bob:d2", "alice:stolen"],
+        alreadyShared: ["bob:d1", "carol:gone"],
+        localAddress: "alice:phone",
+        droppedDevices: ["alice:stolen"],
+      }),
+      { missing: ["bob:d2"], keep: ["bob:d1"] },
+    );
+    assert.deepEqual(
+      planSenderKeySharedDrop({ "g1:2": ["bob:d1", "bob:d2"], "g2:1": ["bob:d2"] }, "bob:d2"),
+      { "g1:2": ["bob:d1"], "g2:1": [] },
+    );
   });
 });

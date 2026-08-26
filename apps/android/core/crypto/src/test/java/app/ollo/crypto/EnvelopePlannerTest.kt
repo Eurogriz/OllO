@@ -69,6 +69,10 @@ class EnvelopePlannerTest {
         assertEquals("accept", EnvelopePlanner.planPublicKeyAccept(pub, EnvelopePlanner.X25519_PUBLIC_LEN))
         assertEquals("drop", EnvelopePlanner.planPublicKeyAccept(ByteArray(3) { 1 }, EnvelopePlanner.X25519_PUBLIC_LEN))
         assertEquals("drop", EnvelopePlanner.planPublicKeyAccept(ByteArray(EnvelopePlanner.X25519_PUBLIC_LEN), EnvelopePlanner.X25519_PUBLIC_LEN))
+        assertEquals("accept-prekey", EnvelopePlanner.planSessionOpen(true, true))
+        assertEquals("accept-prekey", EnvelopePlanner.planSessionOpen(false, true))
+        assertEquals("use-session", EnvelopePlanner.planSessionOpen(true, false))
+        assertEquals("drop", EnvelopePlanner.planSessionOpen(false, false))
     }
 
     @Test

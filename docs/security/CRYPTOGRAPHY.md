@@ -116,6 +116,13 @@ After X3DH, Alice and Bob run the Double Ratchet as specified:
 Forward secrecy: old message keys are deleted after use.
 Post-compromise security: DH ratchet heals after a subsequent round-trip.
 
+A later PreKey whisper from the same address replaces the local ratchet
+(`planSessionOpen` → `accept-prekey`, matching libsignal SessionCipher,
+which archives the current SessionRecord then SessionBuilder.process).
+Identity mismatch is still `identity_changed`. We replace rather than
+keep previous SessionRecord states, so in-flight messages on the old
+ratchet fail. This is not Signal-level security.
+
 ## 6. Groups — Sender Keys
 
 We do **not** invent a group ratchet.
@@ -153,6 +160,13 @@ Each member, per group, per device, holds a Sender Key:
 - On member **add**: after `confirmPendingMembership`, current members send
   them the current sender keys over 1:1 (they cannot read history before the
   add unless someone forwards it)
+- `planSenderKeyShare` (Signal Android `SenderKeySharedTable`): SKDM only
+  to live member devices that do not yet have this distribution. A newly
+  linked device of an existing member gets the current epoch key on the
+  next `sendToGroup` without waiting for rotate. Rotate, epoch prune, and
+  device drop clear matching `senderKeyShared` records. Share is
+  best-effort: a failed SKDM leaves that device unable to decrypt until
+  a later send retries.
 - Server copies the **same** opaque ciphertext to every other member device
   (`POST /v1/groups/:id/fanout`). It cannot derive sender keys.
 

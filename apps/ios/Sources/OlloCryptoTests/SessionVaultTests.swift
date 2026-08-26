@@ -186,6 +186,21 @@ final class SessionVaultTests: XCTestCase {
             Membership.planOwnSenderKeyEpochPrune(keys: ["g1:1", "g1:2", "g10:2"], groupId: "g1", keepEpoch: 2),
             ["g1:1"]
         )
+        let share = Membership.planSenderKeyShare(
+            liveAddresses: ["alice:phone", "bob:d1", "bob:d2", "alice:stolen"],
+            alreadyShared: ["bob:d1", "carol:gone"],
+            localAddress: "alice:phone",
+            droppedDevices: ["alice:stolen"]
+        )
+        XCTAssertEqual(share.missing, ["bob:d2"])
+        XCTAssertEqual(share.keep, ["bob:d1"])
+        XCTAssertEqual(
+            Membership.planSenderKeySharedDrop(
+                slots: ["g1:2": ["bob:d1", "bob:d2"], "g2:1": ["bob:d2"]],
+                address: "bob:d2"
+            ),
+            ["g1:2": ["bob:d1"], "g2:1": []]
+        )
     }
 
     func testDropsAReplayedEnvelopeAndClearsOnWipe() throws {

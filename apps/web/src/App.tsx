@@ -94,6 +94,7 @@ export function App() {
     if (!next.pendingMemberships) next.pendingMemberships = {};
     if (!next.rejectedMemberships) next.rejectedMemberships = {};
     if (!next.droppedDevices) next.droppedDevices = [];
+    if (!next.senderKeyShared) next.senderKeyShared = {};
     saveAccount(next);
     setAcc({ ...next, sessions: next.sessions, messages: { ...next.messages }, threads: [...next.threads] });
   }, []);
@@ -252,6 +253,7 @@ function Auth({
         pendingMemberships: {},
         rejectedMemberships: {},
         droppedDevices: [],
+        senderKeyShared: {},
       };
       if (restoreRaw) {
         try {

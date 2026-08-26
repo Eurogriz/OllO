@@ -289,6 +289,36 @@ public enum Membership {
         return out
     }
 
+    public static func planSenderKeyShare(
+        liveAddresses: [String],
+        alreadyShared: [String],
+        localAddress: String,
+        droppedDevices: [String] = []
+    ) -> (missing: [String], keep: [String]) {
+        var seen = Set<String>()
+        let dropped = Set(droppedDevices.filter { !$0.isEmpty })
+        let already = Set(alreadyShared.filter { !$0.isEmpty })
+        var missing: [String] = []
+        var keep: [String] = []
+        for addr in liveAddresses {
+            if addr.isEmpty || addr == localAddress { continue }
+            if dropped.contains(addr) { continue }
+            if seen.contains(addr) { continue }
+            seen.insert(addr)
+            if already.contains(addr) { keep.append(addr) } else { missing.append(addr) }
+        }
+        return (missing, keep)
+    }
+
+    public static func planSenderKeySharedDrop(slots: [String: [String]], address: String) -> [String: [String]] {
+        if address.isEmpty { return slots }
+        var out: [String: [String]] = [:]
+        for (slot, addrs) in slots {
+            out[slot] = addrs.filter { !$0.isEmpty && $0 != address }
+        }
+        return out
+    }
+
     /// Fan-out only to the signed ∩ live intersection. Empty signed roster → nobody.
     public static func planFanoutRecipients(signedUserIds: [String], serverUserIds: [String]) -> [String] {
         if !signedUserIds.contains(where: { !$0.isEmpty }) { return [] }

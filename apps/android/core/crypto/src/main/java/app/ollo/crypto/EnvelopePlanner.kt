@@ -120,6 +120,13 @@ object EnvelopePlanner {
         return if ("$userId:$deviceId" in droppedDevices) "drop" else "accept"
     }
 
+    /** libsignal SessionCipher: a PreKeySignalMessage always rebuilds the ratchet. */
+    fun planSessionOpen(hasSession: Boolean, hasPrekey: Boolean): String {
+        if (hasPrekey) return "accept-prekey"
+        if (hasSession) return "use-session"
+        return "drop"
+    }
+
     fun planDeviceDropNotice(
         senderUserId: String,
         senderDeviceId: String,

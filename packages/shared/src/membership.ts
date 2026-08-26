@@ -273,6 +273,45 @@ export function planSenderKeyEpochRotate(
   return out;
 }
 
+/**
+ * Signal Android `SenderKeySharedTable`: only devices that do not yet
+ * have this distribution need a SenderKeyDistributionMessage.
+ */
+export function planSenderKeyShare(args: {
+  liveAddresses: string[];
+  alreadyShared: string[];
+  localAddress: string;
+  droppedDevices?: string[];
+}): { missing: string[]; keep: string[] } {
+  const seen = new Set<string>();
+  const dropped = new Set((args.droppedDevices ?? []).filter(Boolean));
+  const already = new Set(args.alreadyShared.filter(Boolean));
+  const missing: string[] = [];
+  const keep: string[] = [];
+  for (const addr of args.liveAddresses) {
+    if (!addr || addr === args.localAddress) continue;
+    if (dropped.has(addr)) continue;
+    if (seen.has(addr)) continue;
+    seen.add(addr);
+    if (already.has(addr)) keep.push(addr);
+    else missing.push(addr);
+  }
+  return { missing, keep };
+}
+
+/** Drop one address from every shared list (device unlink). */
+export function planSenderKeySharedDrop(
+  slots: Record<string, string[]>,
+  address: string,
+): Record<string, string[]> {
+  if (!address) return slots;
+  const out: Record<string, string[]> = {};
+  for (const [slot, addrs] of Object.entries(slots)) {
+    out[slot] = addrs.filter((a) => a && a !== address);
+  }
+  return out;
+}
+
 /** Non-admin cannot bump epoch; still replace this device's chain at the current epoch. */
 export function planOwnSenderKeyRotate(
   groups: { groupId: string; role: string; epoch: number }[],

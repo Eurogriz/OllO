@@ -10,6 +10,7 @@ import {
   planPublicKeyAccept,
   planRosterPrune,
   planSessionAccept,
+  planSessionOpen,
 } from "./identity.js";
 
 describe("remote identity guard", () => {
@@ -76,5 +77,9 @@ describe("remote identity guard", () => {
     assert.equal(planPublicKeyAccept(new Uint8Array(X25519_PUBLIC_LEN), X25519_PUBLIC_LEN), "drop");
     assert.equal(planPublicKeyAccept(new Uint8Array(ED25519_SIGNATURE_LEN).fill(1), ED25519_SIGNATURE_LEN), "accept");
     assert.equal(planPublicKeyAccept(new Uint8Array(32).fill(1), 0), "drop");
+    assert.equal(planSessionOpen({ hasSession: true, hasPrekey: true }), "accept-prekey");
+    assert.equal(planSessionOpen({ hasSession: false, hasPrekey: true }), "accept-prekey");
+    assert.equal(planSessionOpen({ hasSession: true, hasPrekey: false }), "use-session");
+    assert.equal(planSessionOpen({ hasSession: false, hasPrekey: false }), "drop");
   });
 });

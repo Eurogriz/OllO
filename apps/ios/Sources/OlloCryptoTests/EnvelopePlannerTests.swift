@@ -128,6 +128,10 @@ final class EnvelopePlannerTests: XCTestCase {
             ),
             "drop"
         )
+        XCTAssertEqual(EnvelopePlanner.planSessionOpen(hasSession: true, hasPrekey: true), "accept-prekey")
+        XCTAssertEqual(EnvelopePlanner.planSessionOpen(hasSession: false, hasPrekey: true), "accept-prekey")
+        XCTAssertEqual(EnvelopePlanner.planSessionOpen(hasSession: true, hasPrekey: false), "use-session")
+        XCTAssertEqual(EnvelopePlanner.planSessionOpen(hasSession: false, hasPrekey: false), "drop")
     }
 
     func testLaunchSkipsOtpWhenVaultHasSession() {

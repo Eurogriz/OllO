@@ -61,6 +61,20 @@ export function planSessionAccept(args: {
 }
 
 /**
+ * libsignal SessionCipher: a PreKeySignalMessage is always run through
+ * SessionBuilder.process, which archives the current SessionRecord and
+ * starts a new ratchet. A regular message needs an existing session.
+ */
+export function planSessionOpen(args: {
+  hasSession: boolean;
+  hasPrekey: boolean;
+}): "use-session" | "accept-prekey" | "drop" {
+  if (args.hasPrekey) return "accept-prekey";
+  if (args.hasSession) return "use-session";
+  return "drop";
+}
+
+/**
  * Another of this user's still-live devices announced a revoke.
  * Fail closed without a directory snapshot. Refuse if the target is still live
  * so a stolen sibling cannot drop an honest device.

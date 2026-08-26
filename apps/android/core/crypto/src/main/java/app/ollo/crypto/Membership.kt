@@ -250,6 +250,31 @@ object Membership {
         return out
     }
 
+    fun planSenderKeyShare(
+        liveAddresses: List<String>,
+        alreadyShared: List<String>,
+        localAddress: String,
+        droppedDevices: List<String> = emptyList(),
+    ): Pair<List<String>, List<String>> {
+        val seen = HashSet<String>()
+        val dropped = droppedDevices.filter { it.isNotEmpty() }.toSet()
+        val already = alreadyShared.filter { it.isNotEmpty() }.toSet()
+        val missing = ArrayList<String>()
+        val keep = ArrayList<String>()
+        for (addr in liveAddresses) {
+            if (addr.isEmpty() || addr == localAddress) continue
+            if (addr in dropped) continue
+            if (!seen.add(addr)) continue
+            if (addr in already) keep.add(addr) else missing.add(addr)
+        }
+        return Pair(missing, keep)
+    }
+
+    fun planSenderKeySharedDrop(slots: Map<String, List<String>>, address: String): Map<String, List<String>> {
+        if (address.isEmpty()) return slots
+        return slots.mapValues { (_, addrs) -> addrs.filter { it.isNotEmpty() && it != address } }
+    }
+
     /** Fan-out only to the signed ∩ live intersection. Empty signed roster → nobody. */
     fun planFanoutRecipients(signedUserIds: List<String>, serverUserIds: List<String>): List<String> {
         if (signedUserIds.none { it.isNotEmpty() }) return emptyList()

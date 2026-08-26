@@ -138,6 +138,13 @@ public enum EnvelopePlanner {
         return droppedDevices.contains("\(userId):\(deviceId)") ? "drop" : "accept"
     }
 
+    /// libsignal SessionCipher: a PreKeySignalMessage always rebuilds the ratchet.
+    public static func planSessionOpen(hasSession: Bool, hasPrekey: Bool) -> String {
+        if hasPrekey { return "accept-prekey" }
+        if hasSession { return "use-session" }
+        return "drop"
+    }
+
     public static func planDeviceDropNotice(
         senderUserId: String,
         senderDeviceId: String,

@@ -32,6 +32,9 @@ import {
   planSenderKeyEpochRotate,
   planSenderKeyIngest,
   planSenderKeyPrune,
+  planSenderKeyShare,
+  planSenderKeySharedDrop,
+  planSessionOpen,
   planTrustedMembers,
 } from "@ollo/shared";
 import {
@@ -159,6 +162,7 @@ export interface Account {
   pendingMemberships: Record<string, LocalGroupMembership>;
   rejectedMemberships: Record<string, string[]>;
   droppedDevices: string[];
+  senderKeyShared: Record<string, string[]>;
 }
 
 export interface LocalGroupMembership {
@@ -202,6 +206,9 @@ function noteDroppedDevice(acc: Account, userId: string, deviceId: string): void
   if (!acc.droppedDevices) acc.droppedDevices = [];
   acc.droppedDevices = planDroppedDevices(acc.droppedDevices, userId, deviceId);
   pruneSenderKeys(acc, { userId, deviceId });
+  if (acc.senderKeyShared) {
+    acc.senderKeyShared = planSenderKeySharedDrop(acc.senderKeyShared, sessionKey(userId, deviceId));
+  }
 }
 
 function pruneEpochSenderKeys(acc: Account, groupId: string, keepEpoch: number): void {
@@ -218,6 +225,11 @@ function pruneEpochSenderKeys(acc: Account, groupId: string, keepEpoch: number):
   if (acc.senderKeys) {
     for (const k of planOwnSenderKeyEpochPrune(Object.keys(acc.senderKeys), groupId, keepEpoch)) {
       delete acc.senderKeys[k];
+    }
+  }
+  if (acc.senderKeyShared) {
+    for (const k of planOwnSenderKeyEpochPrune(Object.keys(acc.senderKeyShared), groupId, keepEpoch)) {
+      delete acc.senderKeyShared[k];
     }
   }
 }
@@ -337,6 +349,7 @@ export function confirmPendingMembership(
   delete acc.pendingMemberships[groupId];
   flushHeldSenderKeys(acc, groupId, pending.members.map((m) => m.userId));
   for (const uid of delta.removed) pruneSenderKeys(acc, { userId: uid });
+  pruneEpochSenderKeys(acc, groupId, pending.epoch);
   return { applied: pending, added: delta.added };
 }
 
@@ -626,6 +639,7 @@ function accountFromStored(j: Stored): Account {
     pendingMemberships: j.pendingMemberships ?? {},
     rejectedMemberships: j.rejectedMemberships ?? {},
     droppedDevices: j.droppedDevices ?? [],
+    senderKeyShared: j.senderKeyShared ?? {},
   };
 }
 
@@ -672,6 +686,7 @@ export function saveAccount(acc: Account): void {
     pendingMemberships: acc.pendingMemberships ?? {},
     rejectedMemberships: acc.rejectedMemberships ?? {},
     droppedDevices: acc.droppedDevices ?? [],
+    senderKeyShared: acc.senderKeyShared ?? {},
   };
   const sealed = sealVault(ensureVaultKey(), utf8(JSON.stringify(stored)));
   localStorage.setItem(VAULT_STORE, encodeVault(sealed));
@@ -826,7 +841,8 @@ export async function sendToUser(
   inner: InnerMessage,
   kind: OutboxItem["kind"] = "message",
   groupId?: string,
-): Promise<void> {
+  onlyDeviceIds?: string[],
+): Promise<string[]> {
   const listed = await api(`/v1/keys/${peerUserId}/devices`, acc.access, {}, acc);
   const devices = (listed.devices ?? []) as Array<{ device_id: string }>;
   pruneSessionsForUser(
@@ -836,6 +852,7 @@ export async function sendToUser(
   );
   const envelopes = [];
   for (const d of devices) {
+    if (onlyDeviceIds && !onlyDeviceIds.includes(d.device_id)) continue;
     if (
       planSessionAccept({
         userId: peerUserId,
@@ -880,6 +897,7 @@ export async function sendToUser(
   if (envelopes.length) {
     await api("/v1/envelopes", acc.access, { method: "POST", body: JSON.stringify({ envelopes }) }, acc);
   }
+  return envelopes.map((e) => e.recipient_device_id as string);
 }
 
 export function enqueue(acc: Account, item: Omit<OutboxItem, "id" | "attempts">): void {
@@ -942,7 +960,17 @@ export function openEnvelope(
     return decryptGroupMessage(rk, sealed);
   }
   const sk = sessionKey(senderUserId, senderDeviceId);
-  if (!acc.sessions[sk]) {
+  const open = planSessionOpen({
+    hasSession: Boolean(acc.sessions[sk]),
+    hasPrekey: Boolean(sealed.prekey),
+  });
+  if (open === "drop") throw new Error("no_session");
+  if (open === "accept-prekey") {
+    const fp = b64(sealed.prekey!.identityKeyX25519);
+    if (noteRemoteIdentity(acc.knownIdentities[sk], fp) === "changed") {
+      throw new Error("identity_changed");
+    }
+    acc.knownIdentities[sk] = fp;
     acc.sessions[sk] = acceptSession(acc.device, sealed, senderUserId, senderDeviceId);
   }
   return decryptMessage(acc.sessions[sk]!, sealed);
@@ -1080,6 +1108,7 @@ export async function rotateSenderKeysAfterDeviceDrop(acc: Account): Promise<voi
     const local = acc.memberships[plan.groupId];
     if (!local) continue;
     if (acc.senderKeys) delete acc.senderKeys[`${plan.groupId}:${plan.epoch}`];
+    if (acc.senderKeyShared) delete acc.senderKeyShared[`${plan.groupId}:${plan.epoch}`];
     await distributeOwnSenderKey(
       acc,
       plan.groupId,
@@ -1178,10 +1207,79 @@ export async function distributeOwnSenderKey(
       identitySignature: dist.identitySignature,
     },
   };
+  const sent: string[] = [];
   for (const uid of memberIds) {
-    if (uid === acc.userId) continue;
-    await sendToUser(acc, uid, inner, "control", groupId);
+    if (!uid) continue;
+    const delivered = await sendToUser(acc, uid, inner, "control", groupId);
+    for (const did of delivered) sent.push(sessionKey(uid, did));
   }
+  if (!acc.senderKeyShared) acc.senderKeyShared = {};
+  acc.senderKeyShared[`${groupId}:${epoch}`] = sent;
+}
+
+async function shareOwnSenderKeyIfNeeded(
+  acc: Account,
+  groupId: string,
+  epoch: number,
+  memberIds: string[],
+): Promise<void> {
+  const live: string[] = [];
+  for (const uid of memberIds) {
+    if (!uid) continue;
+    const listed = await api(`/v1/keys/${uid}/devices`, acc.access, {}, acc);
+    const devices = (listed.devices ?? []) as Array<{ device_id: string }>;
+    pruneSessionsForUser(
+      acc,
+      uid,
+      devices.map((d) => d.device_id),
+    );
+    for (const d of devices) live.push(sessionKey(uid, d.device_id));
+  }
+  if (!acc.senderKeyShared) acc.senderKeyShared = {};
+  const slot = `${groupId}:${epoch}`;
+  const plan = planSenderKeyShare({
+    liveAddresses: live,
+    alreadyShared: acc.senderKeyShared[slot] ?? [],
+    localAddress: sessionKey(acc.userId, acc.deviceId),
+    droppedDevices: acc.droppedDevices,
+  });
+  const next = [...plan.keep];
+  if (plan.missing.length) {
+    const state = ensureOwnSenderKey(acc, groupId, epoch);
+    const dist = distributeSenderKey(state, acc.device.identity);
+    const inner: InnerMessage = {
+      version: 1,
+      type: "sender_key_distribute",
+      clientId: crypto.randomUUID(),
+      sentAt: new Date().toISOString(),
+      threadId: groupId,
+      senderKey: {
+        groupId: dist.groupId,
+        epoch: dist.epoch,
+        chainId: dist.chainId,
+        chainKey: dist.chainKey,
+        iteration: dist.iteration,
+        signingKey: dist.signingKey,
+        identitySignature: dist.identitySignature,
+      },
+    };
+    const byUser = new Map<string, string[]>();
+    for (const addr of plan.missing) {
+      const i = addr.indexOf(":");
+      if (i < 1) continue;
+      const uid = addr.slice(0, i);
+      const did = addr.slice(i + 1);
+      if (!did) continue;
+      const cur = byUser.get(uid) ?? [];
+      cur.push(did);
+      byUser.set(uid, cur);
+    }
+    for (const [uid, dids] of byUser) {
+      const delivered = await sendToUser(acc, uid, inner, "control", groupId, dids);
+      for (const did of delivered) next.push(sessionKey(uid, did));
+    }
+  }
+  acc.senderKeyShared[slot] = next;
 }
 
 export async function sendToGroup(
@@ -1208,6 +1306,8 @@ export async function sendToGroup(
   const existed = Boolean(acc.senderKeys?.[keyId]);
   if (!existed) {
     await distributeOwnSenderKey(acc, groupId, epoch, members);
+  } else {
+    await shareOwnSenderKeyIfNeeded(acc, groupId, epoch, members);
   }
   const state = ensureOwnSenderKey(acc, groupId, epoch);
   const sealed = encryptGroupMessage(state, inner);
@@ -1405,6 +1505,7 @@ export function backupPlaintext(acc: Account): Uint8Array {
     pendingMemberships: acc.pendingMemberships ?? {},
     rejectedMemberships: acc.rejectedMemberships ?? {},
     droppedDevices: acc.droppedDevices ?? [],
+    senderKeyShared: acc.senderKeyShared ?? {},
   };
   return utf8(JSON.stringify(stored));
 }
@@ -1452,6 +1553,7 @@ export function mergeBackupHistory(acc: Account, raw: string, passphrase: string
     if (uid && did) dropped = planDroppedDevices(dropped, uid, did);
   }
   acc.droppedDevices = dropped;
+  acc.senderKeyShared = { ...(stored.senderKeyShared ?? {}), ...(acc.senderKeyShared ?? {}) };
 }
 
 export function searchLocal(acc: Account, q: string): ChatMessage[] {
@@ -1531,4 +1633,5 @@ interface Stored {
   pendingMemberships?: Record<string, LocalGroupMembership>;
   rejectedMemberships?: Record<string, string[]>;
   droppedDevices?: string[];
+  senderKeyShared?: Record<string, string[]>;
 }
