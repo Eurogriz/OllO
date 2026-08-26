@@ -5,6 +5,7 @@ import {
   onRefreshRejected,
   onSendFailure,
   planDeviceDrop,
+  planDeviceDropNotice,
   planKeyFetch,
   planSessionAccept,
   planPrekeyReplenish,
@@ -1054,6 +1055,71 @@ export async function rotateSenderKeysAfterDeviceDrop(acc: Account): Promise<voi
       local.members.map((m) => m.userId),
     );
   }
+}
+
+export async function announceDeviceDrop(acc: Account, userId: string, deviceId: string): Promise<void> {
+  if (!userId || !deviceId) return;
+  const inner: InnerMessage = {
+    version: 1,
+    type: "device_drop",
+    clientId: crypto.randomUUID(),
+    sentAt: new Date().toISOString(),
+    threadId: userId,
+    deviceDrop: { userId, deviceId },
+  };
+  const seen = new Set<string>();
+  for (const m of Object.values(acc.memberships ?? {})) {
+    for (const row of m.members) {
+      if (!row.userId || seen.has(row.userId)) continue;
+      seen.add(row.userId);
+      try {
+        await sendToUser(acc, row.userId, inner, "control");
+      } catch {
+        /* best-effort: local drop already applied */
+      }
+    }
+  }
+  for (const th of acc.threads ?? []) {
+    if (!th.peerUserId || seen.has(th.peerUserId)) continue;
+    seen.add(th.peerUserId);
+    try {
+      await sendToUser(acc, th.peerUserId, inner, "control");
+    } catch {
+      /* best-effort */
+    }
+  }
+}
+
+export async function applyDeviceDropNotice(
+  acc: Account,
+  senderUserId: string,
+  senderDeviceId: string,
+  targetUserId: string,
+  targetDeviceId: string,
+): Promise<boolean> {
+  const already = (acc.droppedDevices ?? []).includes(sessionKey(targetUserId, targetDeviceId));
+  if (already) return true;
+  let live: string[] | undefined;
+  try {
+    const listed = await api(`/v1/keys/${targetUserId}/devices`, acc.access, {}, acc);
+    live = ((listed.devices ?? []) as Array<{ device_id: string }>).map((d) => d.device_id);
+  } catch {
+    return false;
+  }
+  if (
+    planDeviceDropNotice({
+      senderUserId,
+      senderDeviceId,
+      targetUserId,
+      targetDeviceId,
+      liveDeviceIds: live,
+    }) !== "apply"
+  ) {
+    return false;
+  }
+  dropDeviceSessions(acc, targetUserId, targetDeviceId);
+  await rotateSenderKeysAfterDeviceDrop(acc);
+  return true;
 }
 
 export async function distributeOwnSenderKey(

@@ -132,8 +132,14 @@ Each member, per group, per device, holds a Sender Key:
   replaces this device's chain at the current epoch so new messages
   from this device are not readable under the old distribution.
   Decline of an own-other-device roster runs the same rotate after
-  pinning `droppedDevices`. Past epoch chains remain readable to
-  anyone who already had them.
+  pinning `droppedDevices`. After a server revoke the remaining device
+  sends an E2EE `device_drop` control to group members and 1:1 peers.
+  Recipients apply it only if `planDeviceDropNotice` says so: same user,
+  different device, and the target is **absent** from the live key
+  directory (a still-listed sibling cannot drop an honest device).
+  Apply pins `droppedDevices` and runs the same sender-key rotate.
+  Decline without revoke cannot safely inform others. Past epoch chains
+  remain readable to anyone who already had them.
 - On member **add**: after `confirmPendingMembership`, current members send
   them the current sender keys over 1:1 (they cannot read history before the
   add unless someone forwards it)

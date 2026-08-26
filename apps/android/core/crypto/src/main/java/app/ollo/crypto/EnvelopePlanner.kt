@@ -120,6 +120,23 @@ object EnvelopePlanner {
         return if ("$userId:$deviceId" in droppedDevices) "drop" else "accept"
     }
 
+    fun planDeviceDropNotice(
+        senderUserId: String,
+        senderDeviceId: String,
+        targetUserId: String,
+        targetDeviceId: String,
+        liveDeviceIds: List<String>? = null,
+    ): String {
+        if (senderUserId.isEmpty() || senderDeviceId.isEmpty() || targetUserId.isEmpty() || targetDeviceId.isEmpty()) {
+            return "drop"
+        }
+        if (senderUserId != targetUserId) return "drop"
+        if (senderDeviceId == targetDeviceId) return "drop"
+        if (liveDeviceIds == null) return "drop"
+        if (targetDeviceId in liveDeviceIds) return "drop"
+        return "apply"
+    }
+
     fun planSignedPrekeyRotation(currentId: Int, createdAtMs: Long?, now: Long): SignedPrekeyPlan? {
         if (currentId < 1) return null
         if (createdAtMs == null) return null

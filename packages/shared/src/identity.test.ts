@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { noteRemoteIdentity, planDeviceDrop, planRosterPrune, planSessionAccept } from "./identity.js";
+import {
+  noteRemoteIdentity,
+  planDeviceDrop,
+  planDeviceDropNotice,
+  planRosterPrune,
+  planSessionAccept,
+} from "./identity.js";
 
 describe("remote identity guard", () => {
   it("treats a first-seen key as new and a mismatch as changed", () => {
@@ -19,5 +25,44 @@ describe("remote identity guard", () => {
     assert.equal(planSessionAccept({ userId: "u1", deviceId: "d2", droppedDevices: ["u1:d2"] }), "drop");
     assert.equal(planSessionAccept({ userId: "u1", deviceId: "d1", droppedDevices: ["u1:d2"] }), "accept");
     assert.equal(planSessionAccept({ userId: "u1", deviceId: "", droppedDevices: [] }), "drop");
+    assert.equal(
+      planDeviceDropNotice({
+        senderUserId: "u1",
+        senderDeviceId: "phone",
+        targetUserId: "u1",
+        targetDeviceId: "stolen",
+        liveDeviceIds: ["phone"],
+      }),
+      "apply",
+    );
+    assert.equal(
+      planDeviceDropNotice({
+        senderUserId: "u1",
+        senderDeviceId: "stolen",
+        targetUserId: "u1",
+        targetDeviceId: "phone",
+        liveDeviceIds: ["phone", "stolen"],
+      }),
+      "drop",
+    );
+    assert.equal(
+      planDeviceDropNotice({
+        senderUserId: "eve",
+        senderDeviceId: "d9",
+        targetUserId: "u1",
+        targetDeviceId: "phone",
+        liveDeviceIds: ["phone"],
+      }),
+      "drop",
+    );
+    assert.equal(
+      planDeviceDropNotice({
+        senderUserId: "u1",
+        senderDeviceId: "phone",
+        targetUserId: "u1",
+        targetDeviceId: "stolen",
+      }),
+      "drop",
+    );
   });
 });

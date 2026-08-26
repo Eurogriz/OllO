@@ -22,6 +22,8 @@ import {
   mergeBackupHistory,
   newDeviceMaterial,
   noteEnvelope,
+  announceDeviceDrop,
+  applyDeviceDropNotice,
   dropDeviceSessions,
   pruneSessionsForUser,
   rotateSenderKeysAfterDeviceDrop,
@@ -540,6 +542,17 @@ function Shell({
       if (inner.type === "sender_key_distribute") {
         const ed = await resolveSenderEd25519(acc, env.sender_user_id, env.sender_device_id);
         ingestSenderKey(acc, inner, env.sender_user_id, env.sender_device_id, ed);
+        persist(acc);
+        return;
+      }
+      if (inner.type === "device_drop" && inner.deviceDrop) {
+        await applyDeviceDropNotice(
+          acc,
+          env.sender_user_id,
+          env.sender_device_id,
+          inner.deviceDrop.userId,
+          inner.deviceDrop.deviceId,
+        );
         persist(acc);
         return;
       }
@@ -1701,7 +1714,9 @@ function Devices({ acc, lang }: { acc: Account; lang: Lang }) {
                   dropDeviceSessions(acc, acc.userId, String(d.id));
                   saveAccount(acc);
                   setRows(rows.filter((x) => x.id !== d.id));
-                  void rotateSenderKeysAfterDeviceDrop(acc).finally(() => saveAccount(acc));
+                  void rotateSenderKeysAfterDeviceDrop(acc)
+                    .then(() => announceDeviceDrop(acc, acc.userId, String(d.id)))
+                    .finally(() => saveAccount(acc));
                 });
               }}
             >

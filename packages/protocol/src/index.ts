@@ -35,6 +35,7 @@ export type InnerMessageType =
   | "typing"
   | "call_signal"
   | "sender_key_distribute"
+  | "device_drop"
   | "group_state"
   | "disappearing_timer"
   | "profile_key"
@@ -132,6 +133,7 @@ export interface InnerMessage {
   gif?: { urlCipher?: never; attachment: AttachmentPointer };
   call?: CallSignal;
   senderKey?: SenderKeyDistribution;
+  deviceDrop?: { userId: string; deviceId: string };
   groupState?: GroupStateUpdate;
   disappearingTimerSeconds?: number;
   receipt?: { targetClientId: string; at: string };

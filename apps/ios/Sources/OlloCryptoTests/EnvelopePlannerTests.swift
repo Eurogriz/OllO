@@ -75,6 +75,46 @@ final class EnvelopePlannerTests: XCTestCase {
         XCTAssertEqual(EnvelopePlanner.planSessionAccept(userId: "u1", deviceId: "d2", droppedDevices: ["u1:d2"]), "drop")
         XCTAssertEqual(EnvelopePlanner.planSessionAccept(userId: "u1", deviceId: "d1", droppedDevices: ["u1:d2"]), "accept")
         XCTAssertEqual(EnvelopePlanner.planSessionAccept(userId: "u1", deviceId: "", droppedDevices: []), "drop")
+        XCTAssertEqual(
+            EnvelopePlanner.planDeviceDropNotice(
+                senderUserId: "u1",
+                senderDeviceId: "phone",
+                targetUserId: "u1",
+                targetDeviceId: "stolen",
+                liveDeviceIds: ["phone"]
+            ),
+            "apply"
+        )
+        XCTAssertEqual(
+            EnvelopePlanner.planDeviceDropNotice(
+                senderUserId: "u1",
+                senderDeviceId: "stolen",
+                targetUserId: "u1",
+                targetDeviceId: "phone",
+                liveDeviceIds: ["phone", "stolen"]
+            ),
+            "drop"
+        )
+        XCTAssertEqual(
+            EnvelopePlanner.planDeviceDropNotice(
+                senderUserId: "eve",
+                senderDeviceId: "d9",
+                targetUserId: "u1",
+                targetDeviceId: "phone",
+                liveDeviceIds: ["phone"]
+            ),
+            "drop"
+        )
+        XCTAssertEqual(
+            EnvelopePlanner.planDeviceDropNotice(
+                senderUserId: "u1",
+                senderDeviceId: "phone",
+                targetUserId: "u1",
+                targetDeviceId: "stolen",
+                liveDeviceIds: nil
+            ),
+            "drop"
+        )
     }
 
     func testLaunchSkipsOtpWhenVaultHasSession() {

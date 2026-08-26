@@ -45,3 +45,25 @@ export function planSessionAccept(args: {
   if (args.droppedDevices?.includes(sessionAddress(args.userId, args.deviceId))) return "drop";
   return "accept";
 }
+
+/**
+ * Another of this user's still-live devices announced a revoke.
+ * Fail closed without a directory snapshot. Refuse if the target is still live
+ * so a stolen sibling cannot drop an honest device.
+ */
+export function planDeviceDropNotice(args: {
+  senderUserId: string;
+  senderDeviceId: string;
+  targetUserId: string;
+  targetDeviceId: string;
+  liveDeviceIds?: string[];
+}): "apply" | "drop" {
+  if (!args.senderUserId || !args.senderDeviceId || !args.targetUserId || !args.targetDeviceId) {
+    return "drop";
+  }
+  if (args.senderUserId !== args.targetUserId) return "drop";
+  if (args.senderDeviceId === args.targetDeviceId) return "drop";
+  if (!args.liveDeviceIds) return "drop";
+  if (args.liveDeviceIds.includes(args.targetDeviceId)) return "drop";
+  return "apply";
+}

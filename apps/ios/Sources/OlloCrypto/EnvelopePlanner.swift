@@ -138,6 +138,23 @@ public enum EnvelopePlanner {
         return droppedDevices.contains("\(userId):\(deviceId)") ? "drop" : "accept"
     }
 
+    public static func planDeviceDropNotice(
+        senderUserId: String,
+        senderDeviceId: String,
+        targetUserId: String,
+        targetDeviceId: String,
+        liveDeviceIds: [String]? = nil
+    ) -> String {
+        if senderUserId.isEmpty || senderDeviceId.isEmpty || targetUserId.isEmpty || targetDeviceId.isEmpty {
+            return "drop"
+        }
+        if senderUserId != targetUserId { return "drop" }
+        if senderDeviceId == targetDeviceId { return "drop" }
+        guard let liveDeviceIds else { return "drop" }
+        if liveDeviceIds.contains(targetDeviceId) { return "drop" }
+        return "apply"
+    }
+
     public static func planSignedPrekeyRotation(currentId: Int, createdAtMs: Int64?, now: Int64) -> SignedPrekeyPlan? {
         if currentId < 1 { return nil }
         guard let createdAtMs else { return nil }

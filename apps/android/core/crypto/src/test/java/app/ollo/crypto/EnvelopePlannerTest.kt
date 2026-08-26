@@ -55,6 +55,16 @@ class EnvelopePlannerTest {
         assertEquals("drop", EnvelopePlanner.planSessionAccept("u1", "d2", listOf("u1:d2")))
         assertEquals("accept", EnvelopePlanner.planSessionAccept("u1", "d1", listOf("u1:d2")))
         assertEquals("drop", EnvelopePlanner.planSessionAccept("u1", "", emptyList()))
+        assertEquals(
+            "apply",
+            EnvelopePlanner.planDeviceDropNotice("u1", "phone", "u1", "stolen", listOf("phone")),
+        )
+        assertEquals(
+            "drop",
+            EnvelopePlanner.planDeviceDropNotice("u1", "stolen", "u1", "phone", listOf("phone", "stolen")),
+        )
+        assertEquals("drop", EnvelopePlanner.planDeviceDropNotice("eve", "d9", "u1", "phone", listOf("phone")))
+        assertEquals("drop", EnvelopePlanner.planDeviceDropNotice("u1", "phone", "u1", "stolen", null))
     }
 
     @Test
