@@ -1,0 +1,341 @@
+/**
+ * Membership apply policy. Signature check lives in @ollo/crypto;
+ * this only decides whether a verified roster replaces local state
+ * and which user ids may receive sender keys.
+ */
+export type MembershipDecision = "accept" | "confirm" | "unchanged" | "stale" | "drop" | "rejected";
+
+export type MembershipSignerNotice = "self" | "own-other-device" | "other-admin";
+
+export interface LocalMembership {
+  epoch: number;
+  hash: string;
+}
+
+export const MAX_REJECTED_MEMBERSHIP_HASHES = 32;
+
+export function planMembershipDelta(
+  local: { userId: string; role: string }[],
+  incoming: { userId: string; role: string }[],
+): { added: string[]; removed: string[]; roleChanged: string[] } {
+  const loc = new Map(local.filter((m) => m.userId).map((m) => [m.userId, m.role]));
+  const inc = new Map(incoming.filter((m) => m.userId).map((m) => [m.userId, m.role]));
+  return {
+    added: [...inc.keys()].filter((id) => !loc.has(id)),
+    removed: [...loc.keys()].filter((id) => !inc.has(id)),
+    roleChanged: [...inc.keys()].filter((id) => loc.has(id) && loc.get(id) !== inc.get(id)),
+  };
+}
+
+/** Bounded FIFO of refused roster hashes. Same hash is not stored twice. */
+export function planRejectedHashes(existing: string[], nextHash: string, max = MAX_REJECTED_MEMBERSHIP_HASHES): string[] {
+  if (!nextHash) return existing.filter(Boolean).slice(-max);
+  const out = existing.filter((h) => h && h !== nextHash);
+  out.push(nextHash);
+  return out.slice(-max);
+}
+
+/**
+ * Another of this user's devices signed the roster (stolen-admin residual
+ * on honest devices). `self` is this device; `other-admin` is not us.
+ */
+export function planMembershipSignerNotice(args: {
+  localUserId: string;
+  localDeviceId: string;
+  signerUserId: string;
+  signerDeviceId: string;
+}): MembershipSignerNotice {
+  if (!args.localUserId || !args.localDeviceId || !args.signerUserId || !args.signerDeviceId) {
+    return "other-admin";
+  }
+  if (args.signerUserId !== args.localUserId) return "other-admin";
+  return args.signerDeviceId === args.localDeviceId ? "self" : "own-other-device";
+}
+
+export function planMembershipApply(args: {
+  local?: LocalMembership;
+  incomingEpoch: number;
+  incomingHash: string;
+  signatureValid: boolean;
+  signerRole: string;
+  signerUserId?: string;
+  localMembers?: { userId: string; role: string }[];
+  incomingMembers?: { userId: string; role: string }[];
+  rejectedHashes?: string[];
+  localDeviceId?: string;
+  signerDeviceId?: string;
+}): MembershipDecision {
+  if (!args.signatureValid) return "drop";
+  if (args.signerRole !== "admin") return "drop";
+  if (args.incomingEpoch < 1 || !args.incomingHash) return "drop";
+  if (args.rejectedHashes?.includes(args.incomingHash)) return "rejected";
+  if (args.localMembers && args.signerUserId) {
+    const prior = args.localMembers.find((m) => m.userId === args.signerUserId);
+    if (!prior || prior.role !== "admin") return "drop";
+  }
+  if (!args.local) {
+    if (args.localDeviceId && args.signerDeviceId) {
+      return args.localDeviceId === args.signerDeviceId ? "accept" : "confirm";
+    }
+    return "accept";
+  }
+  if (args.incomingEpoch < args.local.epoch) return "stale";
+  if (args.incomingEpoch === args.local.epoch) {
+    return args.incomingHash === args.local.hash ? "unchanged" : "drop";
+  }
+  if (args.localMembers && args.incomingMembers) {
+    const delta = planMembershipDelta(args.localMembers, args.incomingMembers);
+    if (delta.added.length || delta.roleChanged.length) return "confirm";
+  }
+  return "accept";
+}
+
+export function planTrustedMembers(
+  signedUserIds: string[],
+  serverUserIds: string[],
+): { trusted: string[]; extra: string[]; missing: string[] } {
+  const signed = new Set(signedUserIds.filter(Boolean));
+  const server = new Set(serverUserIds.filter(Boolean));
+  return {
+    trusted: [...signed].filter((id) => server.has(id)),
+    extra: [...server].filter((id) => !signed.has(id)),
+    missing: [...signed].filter((id) => !server.has(id)),
+  };
+}
+
+/**
+ * Install a sender-key distribution only for locally trusted members.
+ * `hold` = in the pending roster, not yet confirmed (new-device TOFU or add).
+ */
+export function planOwnOtherHoldDevices(args: {
+  localUserId: string;
+  localDeviceId: string;
+  pending: { signerUserId: string; signerDeviceId: string }[];
+}): string[] {
+  const out: string[] = [];
+  for (const p of args.pending) {
+    if (
+      planMembershipSignerNotice({
+        localUserId: args.localUserId,
+        localDeviceId: args.localDeviceId,
+        signerUserId: p.signerUserId,
+        signerDeviceId: p.signerDeviceId,
+      }) !== "own-other-device"
+    ) {
+      continue;
+    }
+    const key = droppedDeviceKey(p.signerUserId, p.signerDeviceId);
+    if (key && !out.includes(key)) out.push(key);
+  }
+  return out;
+}
+
+/**
+ * After the local roster has accepted epoch N, only that epoch is live.
+ * Unknown local epoch (first sync) must not drop — mailbox ACK is lossy.
+ */
+export function planGroupEpochAccept(args: {
+  localEpoch?: number;
+  envelopeEpoch: number;
+}): "accept" | "drop" {
+  if (!Number.isInteger(args.envelopeEpoch) || args.envelopeEpoch < 1) return "drop";
+  if (args.localEpoch == null || !Number.isInteger(args.localEpoch) || args.localEpoch < 1) {
+    return "accept";
+  }
+  return args.envelopeEpoch === args.localEpoch ? "accept" : "drop";
+}
+
+/** Drop remote/held slots for a group whose epoch is no longer live. */
+export function planSenderKeyEpochPrune(slots: string[], groupId: string, keepEpoch: number): string[] {
+  if (!groupId || keepEpoch < 1) return [];
+  return slots.filter((slot) => {
+    const p = parseSenderKeySlot(slot);
+    if (!p || p.groupId !== groupId) return false;
+    return Number(p.epoch) !== keepEpoch;
+  });
+}
+
+/** Own chains are stored as `groupId:epoch`. */
+export function planOwnSenderKeyEpochPrune(keys: string[], groupId: string, keepEpoch: number): string[] {
+  if (!groupId || keepEpoch < 1) return [];
+  const keep = `${groupId}:${keepEpoch}`;
+  return keys.filter((k) => {
+    if (k === keep) return false;
+    if (!k.startsWith(`${groupId}:`)) return false;
+    const rest = k.slice(groupId.length + 1);
+    return rest !== "" && !rest.includes(":");
+  });
+}
+
+export function planSenderKeyIngest(args: {
+  trustedUserIds: string[];
+  pendingUserIds: string[];
+  senderUserId: string;
+  senderDeviceId?: string;
+  droppedDevices?: string[];
+  holdDevices?: string[];
+  incomingEpoch?: number;
+  localEpoch?: number;
+}): "accept" | "hold" | "drop" {
+  if (!args.senderUserId) return "drop";
+  if (
+    args.incomingEpoch != null &&
+    planGroupEpochAccept({
+      localEpoch: args.localEpoch,
+      envelopeEpoch: args.incomingEpoch,
+    }) === "drop"
+  ) {
+    return "drop";
+  }
+  const deviceKey = args.senderDeviceId
+    ? droppedDeviceKey(args.senderUserId, args.senderDeviceId)
+    : "";
+  if (deviceKey && args.droppedDevices?.includes(deviceKey)) return "drop";
+  if (deviceKey && args.holdDevices?.includes(deviceKey)) return "hold";
+  if (args.trustedUserIds.includes(args.senderUserId)) return "accept";
+  if (args.pendingUserIds.includes(args.senderUserId)) return "hold";
+  return "drop";
+}
+
+export function planHeldSenderKeyFlush(
+  held: { slot: string; userId: string }[],
+  trustedUserIds: string[],
+): { install: string[]; discard: string[] } {
+  const trusted = new Set(trustedUserIds.filter(Boolean));
+  const install: string[] = [];
+  const discard: string[] = [];
+  for (const h of held) {
+    if (!h.slot) continue;
+    if (trusted.has(h.userId)) install.push(h.slot);
+    else discard.push(h.slot);
+  }
+  return { install, discard };
+}
+
+/** Slot is `groupId:userId:deviceId:epoch`. UUIDs have no extra colons. */
+export function parseSenderKeySlot(
+  slot: string,
+): { groupId: string; userId: string; deviceId: string; epoch: string } | null {
+  const parts = slot.split(":");
+  if (parts.length !== 4) return null;
+  const [groupId, userId, deviceId, epoch] = parts;
+  if (!groupId || !userId || !deviceId || !epoch) return null;
+  return { groupId, userId, deviceId, epoch };
+}
+
+/** Drop remote/held sender-key slots for a user (leave) or a device (revoke). */
+export function planSenderKeyPrune(
+  slots: string[],
+  filter: { userId?: string; deviceId?: string },
+): string[] {
+  if (!filter.userId && !filter.deviceId) return [];
+  return slots.filter((slot) => {
+    const p = parseSenderKeySlot(slot);
+    if (!p) return false;
+    if (filter.userId && p.userId !== filter.userId) return false;
+    if (filter.deviceId && p.deviceId !== filter.deviceId) return false;
+    return true;
+  });
+}
+
+export const MAX_DROPPED_DEVICES = 64;
+
+export function droppedDeviceKey(userId: string, deviceId: string): string {
+  if (!userId || !deviceId) return "";
+  return `${userId}:${deviceId}`;
+}
+
+export function planDroppedDevices(
+  existing: string[],
+  userId: string,
+  deviceId: string,
+  max = MAX_DROPPED_DEVICES,
+): string[] {
+  const next = droppedDeviceKey(userId, deviceId);
+  if (!next) return existing.filter(Boolean).slice(-max);
+  const out = existing.filter((h) => h && h !== next);
+  out.push(next);
+  return out.slice(-max);
+}
+
+/**
+ * After a user-initiated device revoke, remaining admin devices must start
+ * a new sender-key epoch (same roster). Non-admins cannot sign the bump.
+ */
+export function planSenderKeyEpochRotate(
+  groups: { groupId: string; role: string; epoch: number }[],
+): { groupId: string; nextEpoch: number }[] {
+  const out: { groupId: string; nextEpoch: number }[] = [];
+  for (const g of groups) {
+    if (!g.groupId || g.role !== "admin" || g.epoch < 1) continue;
+    out.push({ groupId: g.groupId, nextEpoch: g.epoch + 1 });
+  }
+  return out;
+}
+
+/**
+ * Signal Android `SenderKeySharedTable`: only devices that do not yet
+ * have this distribution need a SenderKeyDistributionMessage.
+ */
+export function planSenderKeyShare(args: {
+  liveAddresses: string[];
+  alreadyShared: string[];
+  localAddress: string;
+  droppedDevices?: string[];
+}): { missing: string[]; keep: string[] } {
+  const seen = new Set<string>();
+  const dropped = new Set((args.droppedDevices ?? []).filter(Boolean));
+  const already = new Set(args.alreadyShared.filter(Boolean));
+  const missing: string[] = [];
+  const keep: string[] = [];
+  for (const addr of args.liveAddresses) {
+    if (!addr || addr === args.localAddress) continue;
+    if (dropped.has(addr)) continue;
+    if (seen.has(addr)) continue;
+    seen.add(addr);
+    if (already.has(addr)) keep.push(addr);
+    else missing.push(addr);
+  }
+  return { missing, keep };
+}
+
+/** Drop one address from every shared list (device unlink). */
+export function planSenderKeySharedDrop(
+  slots: Record<string, string[]>,
+  address: string,
+): Record<string, string[]> {
+  if (!address) return slots;
+  const out: Record<string, string[]> = {};
+  for (const [slot, addrs] of Object.entries(slots)) {
+    out[slot] = addrs.filter((a) => a && a !== address);
+  }
+  return out;
+}
+
+/** Non-admin cannot bump epoch; still replace this device's chain at the current epoch. */
+export function planOwnSenderKeyRotate(
+  groups: { groupId: string; role: string; epoch: number }[],
+): { groupId: string; epoch: number }[] {
+  const out: { groupId: string; epoch: number }[] = [];
+  for (const g of groups) {
+    if (!g.groupId || g.role === "admin" || g.epoch < 1) continue;
+    out.push({ groupId: g.groupId, epoch: g.epoch });
+  }
+  return out;
+}
+
+/** Fan-out only to the signed ∩ live intersection. Empty signed roster → nobody. */
+export function planFanoutRecipients(signedUserIds: string[], serverUserIds: string[]): string[] {
+  if (!signedUserIds.some(Boolean)) return [];
+  return planTrustedMembers(signedUserIds, serverUserIds).trusted;
+}
+
+export function sameMembership(
+  a: { userId: string; role: string }[],
+  b: { userId: string; role: string }[],
+): boolean {
+  if (a.length !== b.length) return false;
+  const as = [...a].sort((x, y) => (x.userId < y.userId ? -1 : x.userId > y.userId ? 1 : 0));
+  const bs = [...b].sort((x, y) => (x.userId < y.userId ? -1 : x.userId > y.userId ? 1 : 0));
+  return as.every((m, i) => m.userId === bs[i]!.userId && m.role === bs[i]!.role);
+}

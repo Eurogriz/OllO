@@ -1,0 +1,4 @@
+env                = "staging"
+region             = "eu-central-1"
+vpc_id             = "vpc-00000000"
+private_subnet_ids = ["subnet-aaaa", "subnet-bbbb"]

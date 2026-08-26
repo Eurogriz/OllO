@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollo-server
+  namespace: ollo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ollo-server
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 25%
+  template:
+    metadata:
+      labels:
+        app: ollo-server
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      terminationGracePeriodSeconds: 40
+      containers:
+        - name: server
+          image: ollo-server:replace-me
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: ollo-secrets
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollo-server
+  namespace: ollo
+spec:
+  selector:
+    app: ollo-server
+  ports:
+    - port: 80
+      targetPort: 8080
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ollo-server
+  namespace: ollo
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: ollo-server

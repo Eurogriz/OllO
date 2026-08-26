@@ -1,0 +1,183 @@
+openapi: 3.0.3
+info:
+  title: OllO API
+  version: 1.0.0
+  description: |
+    Store-and-forward API for sealed envelopes. The server does not parse
+    message plaintext. Identity is an account Ed25519 key, not a phone.
+    Each device has a distinct X3DH identity. See docs/api/API.md.
+servers:
+  - url: /v1
+paths:
+  /auth/challenge:
+    post:
+      summary: Issue a single-use Ed25519 possession challenge
+      responses:
+        "200":
+          description: challenge_id + nonce
+        "429":
+          description: Per-IP quota
+  /auth/register-key:
+    post:
+      summary: Register or attach a device by signing the challenge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challenge_id, account_ed25519, signature, device]
+              properties:
+                challenge_id: { type: string }
+                account_ed25519: { type: string, description: Account Ed25519 public; address root }
+                signature: { type: string, description: Account Ed25519 over ollo-auth-v1 }
+                registration_lock: { type: string, nullable: true }
+                device: { type: object }
+      responses:
+        "200": { description: Session issued }
+        "401": { description: Bad proof or spent challenge }
+        "403": { description: Registration lock required }
+        "429": { description: Per-IP quota }
+  /auth/request-otp:
+    post:
+      summary: Request an OTP (legacy path; not the account root)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone_e164]
+              properties:
+                phone_e164: { type: string, example: "+79991234567" }
+                device_fingerprint: { type: string }
+      responses:
+        "200":
+          description: Always 200 to reduce enumeration
+  /auth/verify-otp:
+    post:
+      summary: Verify OTP and register a device. Never copies the device IK onto account_ed25519.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challenge_id, otp, device]
+              properties:
+                challenge_id: { type: string }
+                otp: { type: string }
+                account_ed25519:
+                  type: string
+                  description: Optional dedicated account Ed25519 public. Must not equal the device identity. Set once.
+                registration_lock: { type: string, nullable: true }
+                device: { type: object }
+      responses:
+        "200": { description: Session issued }
+        "400": { description: Device IK used as account, or OTP attach on a keyed account }
+  /auth/refresh:
+    post:
+      summary: Rotate refresh token
+      responses:
+        "200": { description: New pair }
+        "401": { description: Invalid or reused refresh }
+  /me:
+    get:
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Current user, includes address when set }
+    put:
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Updated }
+  /users/search:
+    post:
+      security: [{ bearerAuth: [] }]
+      summary: Exact username or ollo:user:v1 address
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username: { type: string }
+                address: { type: string }
+                phone_e164: { type: string, description: Always refused }
+      responses:
+        "200": { description: Matches }
+        "403": { description: Phone lookup refused }
+  /envelopes:
+    get:
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: cursor
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer }
+      responses:
+        "200": { description: Mailbox drain }
+    post:
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Accepted }
+  /keys/{userId}:
+    get:
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Prekey bundles }
+  /groups:
+    post:
+      security: [{ bearerAuth: [] }]
+      summary: Create a group with a signed membership roster
+      responses:
+        "200": { description: Created }
+        "400": { description: Missing or mismatched membership }
+    get:
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Membership }
+  /attachments:
+    post:
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Upload slot }
+  /calls:
+    post:
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Call + ICE servers }
+  /backups:
+    put:
+      security: [{ bearerAuth: [] }]
+      summary: Store an opaque sealed backup blob
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [blob]
+              properties:
+                blob: { type: string, description: base64 of client-sealed JSON }
+      responses:
+        "200": { description: Stored; at most 3 blobs kept }
+        "413": { description: Too large }
+  /backups/latest:
+    get:
+      security: [{ bearerAuth: [] }]
+      summary: Last sealed blob for this user
+      responses:
+        "200": { description: Opaque blob }
+        "404": { description: No backup }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer

@@ -1,0 +1,78 @@
+import Foundation
+
+/// Production builds must back this protocol with official libsignal.
+/// Do not implement a homegrown Double Ratchet here.
+public enum CryptoEngineError: Error, Equatable {
+    case unbound
+}
+
+public protocol CryptoEngine: Sendable {
+    func generateIdentity() throws -> IdentityMaterial
+    func deviceRegistrationJson(name: String, platform: String) throws -> String
+    func processPrekeyBundle(_ remote: Data) throws -> String
+    func existingSession(userId: String, deviceId: String) -> String?
+    func encrypt(sessionId: String, plaintext: Data) throws -> Data
+    func decrypt(sessionId: String, payload: Data) throws -> Data
+    func safetyNumber(local: Data, remote: Data) -> String
+    func sign(message: Data) throws -> Data
+}
+
+public struct IdentityMaterial: Sendable {
+    public var identityX25519: Data
+    public var identityEd25519: Data
+    public var signedPrekey: Data
+    public var signature: Data
+    public var oneTimePrekeys: [Data]
+
+    public init(
+        identityX25519: Data,
+        identityEd25519: Data,
+        signedPrekey: Data,
+        signature: Data,
+        oneTimePrekeys: [Data]
+    ) {
+        self.identityX25519 = identityX25519
+        self.identityEd25519 = identityEd25519
+        self.signedPrekey = signedPrekey
+        self.signature = signature
+        self.oneTimePrekeys = oneTimePrekeys
+    }
+}
+
+/// Fails closed until a libsignal-backed engine is bound. Shipping this
+/// type as the production engine is a release blocker.
+public struct UnboundCryptoEngine: CryptoEngine {
+    public init() {}
+
+    public func generateIdentity() throws -> IdentityMaterial {
+        throw CryptoEngineError.unbound
+    }
+
+    public func deviceRegistrationJson(name: String, platform: String) throws -> String {
+        throw CryptoEngineError.unbound
+    }
+
+    public func processPrekeyBundle(_ remote: Data) throws -> String {
+        throw CryptoEngineError.unbound
+    }
+
+    public func existingSession(userId: String, deviceId: String) -> String? {
+        nil
+    }
+
+    public func encrypt(sessionId: String, plaintext: Data) throws -> Data {
+        throw CryptoEngineError.unbound
+    }
+
+    public func decrypt(sessionId: String, payload: Data) throws -> Data {
+        throw CryptoEngineError.unbound
+    }
+
+    public func safetyNumber(local: Data, remote: Data) -> String {
+        SafetyNumber.of(identityA: local, identityB: remote).digits
+    }
+
+    public func sign(message: Data) throws -> Data {
+        throw CryptoEngineError.unbound
+    }
+}

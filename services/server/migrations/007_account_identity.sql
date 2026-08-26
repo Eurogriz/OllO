@@ -1,0 +1,14 @@
+ALTER TABLE users ADD COLUMN IF NOT EXISTS account_ed25519 BYTEA;
+ALTER TABLE users ALTER COLUMN phone_hmac DROP NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS users_account_ed25519_live
+  ON users (account_ed25519)
+  WHERE account_ed25519 IS NOT NULL AND deleted_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS auth_challenges (
+  id TEXT PRIMARY KEY,
+  nonce TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  consumed_at TIMESTAMPTZ
+);

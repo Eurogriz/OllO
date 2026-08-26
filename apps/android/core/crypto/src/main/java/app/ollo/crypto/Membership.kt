@@ -1,0 +1,283 @@
+package app.ollo.crypto
+
+import java.io.ByteArrayOutputStream
+import java.security.MessageDigest
+
+/**
+ * Canonical membership encoding + apply policy. Must stay in lockstep with
+ * `packages/crypto/src/membership.ts` and `packages/shared/src/membership.ts`.
+ * Native sign/verify uses platform Ed25519 later; the hash is SHA-256.
+ */
+object Membership {
+    const val DOMAIN = "ollo-membership-v1"
+
+    data class Member(val userId: String, val role: String)
+
+    data class Local(val epoch: Int, val hash: String)
+
+    enum class Decision { Accept, Confirm, Unchanged, Stale, Drop, Rejected }
+
+    fun canonicalize(members: List<Member>): List<Member> {
+        val sorted = members.sortedBy { it.userId }
+        val seen = HashSet<String>()
+        val out = ArrayList<Member>()
+        for (m in sorted) {
+            if (m.userId.isEmpty()) throw IllegalArgumentException("invalid membership row")
+            if (m.role != "admin" && m.role != "moderator" && m.role != "member") {
+                throw IllegalArgumentException("invalid membership row")
+            }
+            if (!seen.add(m.userId)) throw IllegalArgumentException("duplicate membership row")
+            out.add(m)
+        }
+        if (out.isEmpty()) throw IllegalArgumentException("empty membership")
+        return out
+    }
+
+    fun encode(groupId: String, epoch: Int, members: List<Member>): ByteArray {
+        if (groupId.isEmpty() || epoch < 1) throw IllegalArgumentException("invalid membership statement")
+        val rows = canonicalize(members)
+        val out = ByteArrayOutputStream()
+        out.write(DOMAIN.toByteArray(Charsets.UTF_8))
+        out.write(0)
+        out.write(groupId.toByteArray(Charsets.UTF_8))
+        out.write(0)
+        out.write(epoch.toString().toByteArray(Charsets.UTF_8))
+        out.write(0)
+        for (m in rows) {
+            out.write(m.userId.toByteArray(Charsets.UTF_8))
+            out.write(0)
+            out.write(m.role.toByteArray(Charsets.UTF_8))
+            out.write(0)
+        }
+        return out.toByteArray()
+    }
+
+    fun hash(groupId: String, epoch: Int, members: List<Member>): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(encode(groupId, epoch, members))
+        return digest.joinToString("") { b -> "%02x".format(b.toInt() and 0xff) }
+    }
+
+    fun planDelta(
+        local: List<Member>,
+        incoming: List<Member>,
+    ): Triple<List<String>, List<String>, List<String>> {
+        val loc = local.filter { it.userId.isNotEmpty() }.associate { it.userId to it.role }
+        val inc = incoming.filter { it.userId.isNotEmpty() }.associate { it.userId to it.role }
+        val added = inc.keys.filter { it !in loc }
+        val removed = loc.keys.filter { it !in inc }
+        val roleChanged = inc.keys.filter { it in loc && loc[it] != inc[it] }
+        return Triple(added, removed, roleChanged)
+    }
+
+    fun planRejectedHashes(existing: List<String>, nextHash: String, max: Int = 32): List<String> {
+        if (nextHash.isEmpty()) return existing.filter { it.isNotEmpty() }.takeLast(max)
+        val out = existing.filter { it.isNotEmpty() && it != nextHash }.toMutableList()
+        out.add(nextHash)
+        return out.takeLast(max)
+    }
+
+    fun planSignerNotice(localUserId: String, localDeviceId: String, signerUserId: String, signerDeviceId: String): String {
+        if (localUserId.isEmpty() || localDeviceId.isEmpty() || signerUserId.isEmpty() || signerDeviceId.isEmpty()) {
+            return "other-admin"
+        }
+        if (signerUserId != localUserId) return "other-admin"
+        return if (signerDeviceId == localDeviceId) "self" else "own-other-device"
+    }
+
+    fun planApply(
+        local: Local?,
+        incomingEpoch: Int,
+        incomingHash: String,
+        signatureValid: Boolean,
+        signerRole: String,
+        signerUserId: String? = null,
+        localMembers: List<Member>? = null,
+        incomingMembers: List<Member>? = null,
+        rejectedHashes: Collection<String> = emptyList(),
+        localDeviceId: String? = null,
+        signerDeviceId: String? = null,
+    ): Decision {
+        if (!signatureValid) return Decision.Drop
+        if (signerRole != "admin") return Decision.Drop
+        if (incomingEpoch < 1 || incomingHash.isEmpty()) return Decision.Drop
+        if (incomingHash in rejectedHashes) return Decision.Rejected
+        if (localMembers != null && signerUserId != null) {
+            val prior = localMembers.find { it.userId == signerUserId }
+            if (prior == null || prior.role != "admin") return Decision.Drop
+        }
+        if (local == null) {
+            if (localDeviceId != null && signerDeviceId != null) {
+                return if (localDeviceId == signerDeviceId) Decision.Accept else Decision.Confirm
+            }
+            return Decision.Accept
+        }
+        if (incomingEpoch < local.epoch) return Decision.Stale
+        if (incomingEpoch == local.epoch) {
+            return if (incomingHash == local.hash) Decision.Unchanged else Decision.Drop
+        }
+        if (localMembers != null && incomingMembers != null) {
+            val (added, _, roleChanged) = planDelta(localMembers, incomingMembers)
+            if (added.isNotEmpty() || roleChanged.isNotEmpty()) return Decision.Confirm
+        }
+        return Decision.Accept
+    }
+
+    fun parseSenderKeySlot(slot: String): Array<String>? {
+        val parts = slot.split(":")
+        if (parts.size != 4) return null
+        val groupId = parts[0]
+        val userId = parts[1]
+        val deviceId = parts[2]
+        val epoch = parts[3]
+        if (groupId.isEmpty() || userId.isEmpty() || deviceId.isEmpty() || epoch.isEmpty()) return null
+        return arrayOf(groupId, userId, deviceId, epoch)
+    }
+
+    fun planSenderKeyPrune(slots: List<String>, userId: String? = null, deviceId: String? = null): List<String> {
+        if (userId.isNullOrEmpty() && deviceId.isNullOrEmpty()) return emptyList()
+        return slots.filter { slot ->
+            val p = parseSenderKeySlot(slot) ?: return@filter false
+            if (!userId.isNullOrEmpty() && p[1] != userId) return@filter false
+            if (!deviceId.isNullOrEmpty() && p[2] != deviceId) return@filter false
+            true
+        }
+    }
+
+    const val MAX_DROPPED_DEVICES = 64
+
+    fun droppedDeviceKey(userId: String, deviceId: String): String {
+        if (userId.isEmpty() || deviceId.isEmpty()) return ""
+        return "$userId:$deviceId"
+    }
+
+    fun planDroppedDevices(existing: List<String>, userId: String, deviceId: String, max: Int = MAX_DROPPED_DEVICES): List<String> {
+        val next = droppedDeviceKey(userId, deviceId)
+        if (next.isEmpty()) return existing.filter { it.isNotEmpty() }.takeLast(max)
+        val out = existing.filter { it.isNotEmpty() && it != next }.toMutableList()
+        out.add(next)
+        return out.takeLast(max)
+    }
+
+    fun planOwnOtherHoldDevices(
+        localUserId: String,
+        localDeviceId: String,
+        pending: List<Pair<String, String>>,
+    ): List<String> {
+        val out = ArrayList<String>()
+        for ((signerUserId, signerDeviceId) in pending) {
+            if (planSignerNotice(localUserId, localDeviceId, signerUserId, signerDeviceId) != "own-other-device") {
+                continue
+            }
+            val key = droppedDeviceKey(signerUserId, signerDeviceId)
+            if (key.isNotEmpty() && key !in out) out.add(key)
+        }
+        return out
+    }
+
+    fun planGroupEpochAccept(envelopeEpoch: Int, localEpoch: Int? = null): String {
+        if (envelopeEpoch < 1) return "drop"
+        if (localEpoch == null || localEpoch < 1) return "accept"
+        return if (envelopeEpoch == localEpoch) "accept" else "drop"
+    }
+
+    fun planSenderKeyEpochPrune(slots: List<String>, groupId: String, keepEpoch: Int): List<String> {
+        if (groupId.isEmpty() || keepEpoch < 1) return emptyList()
+        return slots.filter { slot ->
+            val p = parseSenderKeySlot(slot) ?: return@filter false
+            p[0] == groupId && p[3].toIntOrNull() != keepEpoch
+        }
+    }
+
+    fun planOwnSenderKeyEpochPrune(keys: List<String>, groupId: String, keepEpoch: Int): List<String> {
+        if (groupId.isEmpty() || keepEpoch < 1) return emptyList()
+        val keep = "$groupId:$keepEpoch"
+        return keys.filter { k ->
+            k != keep && k.startsWith("$groupId:") && !k.removePrefix("$groupId:").contains(":")
+        }
+    }
+
+    fun planSenderKeyIngest(
+        trustedUserIds: List<String>,
+        pendingUserIds: List<String>,
+        senderUserId: String,
+        senderDeviceId: String? = null,
+        droppedDevices: List<String> = emptyList(),
+        holdDevices: List<String> = emptyList(),
+        incomingEpoch: Int? = null,
+        localEpoch: Int? = null,
+    ): String {
+        if (senderUserId.isEmpty()) return "drop"
+        if (incomingEpoch != null && planGroupEpochAccept(incomingEpoch, localEpoch) == "drop") return "drop"
+        val deviceKey = if (senderDeviceId.isNullOrEmpty()) "" else droppedDeviceKey(senderUserId, senderDeviceId)
+        if (deviceKey.isNotEmpty() && deviceKey in droppedDevices) return "drop"
+        if (deviceKey.isNotEmpty() && deviceKey in holdDevices) return "hold"
+        if (senderUserId in trustedUserIds) return "accept"
+        if (senderUserId in pendingUserIds) return "hold"
+        return "drop"
+    }
+
+    fun planHeldSenderKeyFlush(held: List<Pair<String, String>>, trustedUserIds: List<String>): Pair<List<String>, List<String>> {
+        val trusted = trustedUserIds.filter { it.isNotEmpty() }.toSet()
+        val install = held.filter { it.second in trusted }.map { it.first }
+        val discard = held.filter { it.second !in trusted }.map { it.first }
+        return Pair(install, discard)
+    }
+
+    fun trustedMembers(signedUserIds: List<String>, serverUserIds: List<String>): Triple<List<String>, List<String>, List<String>> {
+        val signed = signedUserIds.filter { it.isNotEmpty() }.toSet()
+        val server = serverUserIds.filter { it.isNotEmpty() }.toSet()
+        val trusted = signed.filter { it in server }
+        val extra = server.filter { it !in signed }
+        val missing = signed.filter { it !in server }
+        return Triple(trusted, extra, missing)
+    }
+
+    fun planSenderKeyEpochRotate(groups: List<Triple<String, String, Int>>): List<Pair<String, Int>> {
+        val out = ArrayList<Pair<String, Int>>()
+        for ((groupId, role, epoch) in groups) {
+            if (groupId.isEmpty() || role != "admin" || epoch < 1) continue
+            out.add(Pair(groupId, epoch + 1))
+        }
+        return out
+    }
+
+    fun planOwnSenderKeyRotate(groups: List<Triple<String, String, Int>>): List<Pair<String, Int>> {
+        val out = ArrayList<Pair<String, Int>>()
+        for ((groupId, role, epoch) in groups) {
+            if (groupId.isEmpty() || role == "admin" || epoch < 1) continue
+            out.add(Pair(groupId, epoch))
+        }
+        return out
+    }
+
+    fun planSenderKeyShare(
+        liveAddresses: List<String>,
+        alreadyShared: List<String>,
+        localAddress: String,
+        droppedDevices: List<String> = emptyList(),
+    ): Pair<List<String>, List<String>> {
+        val seen = HashSet<String>()
+        val dropped = droppedDevices.filter { it.isNotEmpty() }.toSet()
+        val already = alreadyShared.filter { it.isNotEmpty() }.toSet()
+        val missing = ArrayList<String>()
+        val keep = ArrayList<String>()
+        for (addr in liveAddresses) {
+            if (addr.isEmpty() || addr == localAddress) continue
+            if (addr in dropped) continue
+            if (!seen.add(addr)) continue
+            if (addr in already) keep.add(addr) else missing.add(addr)
+        }
+        return Pair(missing, keep)
+    }
+
+    fun planSenderKeySharedDrop(slots: Map<String, List<String>>, address: String): Map<String, List<String>> {
+        if (address.isEmpty()) return slots
+        return slots.mapValues { (_, addrs) -> addrs.filter { it.isNotEmpty() && it != address } }
+    }
+
+    /** Fan-out only to the signed ∩ live intersection. Empty signed roster → nobody. */
+    fun planFanoutRecipients(signedUserIds: List<String>, serverUserIds: List<String>): List<String> {
+        if (signedUserIds.none { it.isNotEmpty() }) return emptyList()
+        return trustedMembers(signedUserIds, serverUserIds).first
+    }
+}
