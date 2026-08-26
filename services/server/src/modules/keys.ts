@@ -1,9 +1,10 @@
 import type { FastifyInstance } from "fastify";
-import { deviceRosterHash } from "@ollo/crypto";
+import { deviceRosterHash, verifySignedPrekey } from "@ollo/crypto";
 import { z } from "zod";
 import type { Db } from "../db/index.js";
 import { ApiError, requireAuth } from "../http.js";
 import { dropDevice } from "../realtime/hub.js";
+import { takeWindow } from "../redis.js";
 import {
   ED25519_SIGNATURE_LEN,
   X25519_PUBLIC_LEN,
@@ -138,18 +139,20 @@ export async function registerKeys(app: FastifyInstance, db: Db): Promise<void> 
   });
 
   app.get("/v1/keys/:userId/:deviceId", async (req) => {
-    requireAuth(req);
+    const auth = requireAuth(req);
     const { userId, deviceId } = req.params as { userId: string; deviceId: string };
     const consume = String((req.query as { consume?: string }).consume ?? "1") !== "0";
+    if (consume) await takeOpkSlot(auth.userId, userId);
     const bundle = await takeBundle(db, userId, deviceId, consume);
     if (!bundle) throw new ApiError("not_found", "Device not found", 404);
     return { bundle };
   });
 
   app.get("/v1/keys/:userId", async (req) => {
-    requireAuth(req);
+    const auth = requireAuth(req);
     const userId = (req.params as { userId: string }).userId;
     const consume = String((req.query as { consume?: string }).consume ?? "1") !== "0";
+    if (consume) await takeOpkSlot(auth.userId, userId);
     const devices = await listDeviceRows(db, userId);
     const bundles = [];
     for (const d of devices) {
@@ -169,6 +172,17 @@ export async function registerKeys(app: FastifyInstance, db: Db): Promise<void> 
         xeddsa: z.string().optional(),
       })
       .parse(req.body);
+    const identity = await db.query<{ identity_ed25519: Buffer }>(
+      "SELECT identity_ed25519 FROM devices WHERE id = $1 AND revoked_at IS NULL",
+      [auth.deviceId],
+    );
+    const ed = identity.rows[0]?.identity_ed25519;
+    if (!ed) throw new ApiError("not_found", "Device not found", 404);
+    const pub = requirePublicBytes(body.public, X25519_PUBLIC_LEN, "signed_prekey.public");
+    const sig = requirePublicBytes(body.signature, ED25519_SIGNATURE_LEN, "signed_prekey.signature");
+    if (!verifySignedPrekey(new Uint8Array(ed), new Uint8Array(pub), new Uint8Array(sig))) {
+      throw new ApiError("validation", "signed_prekey.signature is not valid");
+    }
     await db.query(
       `UPDATE devices SET signed_prekey_id = $2, signed_prekey_public = $3, signed_prekey_sig = $4,
          signed_prekey_xeddsa = $5
@@ -176,8 +190,8 @@ export async function registerKeys(app: FastifyInstance, db: Db): Promise<void> 
       [
         auth.deviceId,
         body.id,
-        requirePublicBytes(body.public, X25519_PUBLIC_LEN, "signed_prekey.public"),
-        requirePublicBytes(body.signature, ED25519_SIGNATURE_LEN, "signed_prekey.signature"),
+        pub,
+        sig,
         body.xeddsa
           ? requirePublicBytes(body.xeddsa, ED25519_SIGNATURE_LEN, "signed_prekey.xeddsa")
           : null,
@@ -200,6 +214,39 @@ export async function registerKeys(app: FastifyInstance, db: Db): Promise<void> 
     }
     return { ok: true, count: body.keys.length };
   });
+}
+
+async function takeOpkSlot(requesterUserId: string, targetUserId: string): Promise<void> {
+  const ok = await takeWindow(`opk:${requesterUserId}:${targetUserId}`, 30, 60);
+  if (!ok) throw new ApiError("rate_limited", "Too many key fetches", 429);
+}
+
+async function consumeOneTime(
+  db: Db,
+  deviceId: string,
+): Promise<{ id: number; public: string } | null> {
+  const opk = await db.query<{ key_id: number; public_key: Buffer }>(
+    `UPDATE one_time_prekeys AS op
+     SET consumed_at = now()
+     FROM (
+       SELECT device_id, key_id FROM one_time_prekeys
+       WHERE device_id = $1 AND consumed_at IS NULL
+       ORDER BY key_id ASC
+       LIMIT 1
+     ) AS pick
+     WHERE op.device_id = pick.device_id
+       AND op.key_id = pick.key_id
+       AND op.consumed_at IS NULL
+     RETURNING op.key_id, op.public_key`,
+    [deviceId],
+  );
+  const row = opk.rows[0];
+  if (!row) return null;
+  await db.query(
+    "UPDATE one_time_prekeys SET public_key = $3 WHERE device_id = $1 AND key_id = $2",
+    [deviceId, row.key_id, Buffer.alloc(0)],
+  );
+  return { id: row.key_id, public: b64(row.public_key) };
 }
 
 function rosterHash(rows: { id: string; identity_x25519: Buffer }[]): string {
@@ -260,19 +307,7 @@ async function takeBundle(db: Db, userId: string, deviceId: string, consume: boo
   if (!d) return null;
   let oneTime: { id: number; public: string } | null = null;
   if (consume) {
-    const opk = await db.query<{ key_id: number; public_key: Buffer }>(
-      `SELECT key_id, public_key FROM one_time_prekeys
-       WHERE device_id = $1 AND consumed_at IS NULL
-       ORDER BY key_id ASC LIMIT 1`,
-      [d.id],
-    );
-    if (opk.rows[0]) {
-      await db.query(
-        "UPDATE one_time_prekeys SET consumed_at = now(), public_key = $3 WHERE device_id = $1 AND key_id = $2",
-        [d.id, opk.rows[0].key_id, Buffer.alloc(0)],
-      );
-      oneTime = { id: opk.rows[0].key_id, public: b64(opk.rows[0].public_key) };
-    }
+    oneTime = await consumeOneTime(db, d.id);
   }
   return {
     user_id: userId,

@@ -53,6 +53,14 @@ export async function registerCalls(app: FastifyInstance, db: Db): Promise<void>
       auth.userId,
       auth.deviceId,
     ]);
+    const invitees = new Set(invited);
+    invitees.add(auth.userId);
+    for (const uid of invitees) {
+      await db.query("INSERT INTO call_invitees (call_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING", [
+        id,
+        uid,
+      ]);
+    }
     return {
       call_id: id,
       ice_servers: iceServersFor(auth.userId),
@@ -74,6 +82,12 @@ export async function registerCalls(app: FastifyInstance, db: Db): Promise<void>
         [call.group_id, auth.userId],
       );
       if (!mem.rows[0]) throw new ApiError("forbidden", "Not a group member", 403);
+    } else {
+      const invited = await db.query(
+        "SELECT 1 FROM call_invitees WHERE call_id = $1 AND user_id = $2",
+        [id, auth.userId],
+      );
+      if (!invited.rows[0]) throw new ApiError("forbidden", "Not invited to this call", 403);
     }
     await db.query(
       `INSERT INTO call_participants (call_id, user_id, device_id) VALUES ($1,$2,$3)

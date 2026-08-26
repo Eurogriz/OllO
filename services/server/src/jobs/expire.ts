@@ -1,4 +1,5 @@
 import type { Db } from "../db/index.js";
+import { deleteObject } from "../objects.js";
 import { log } from "../observability/logger.js";
 
 export async function expireStale(
@@ -17,9 +18,21 @@ export async function expireStale(
         OR acked_at IS NOT NULL
      RETURNING id`,
   );
-  const attachments = await db.query<{ id: string }>(
-    "DELETE FROM attachments WHERE expires_at < now() AND completed_at IS NOT NULL RETURNING id",
+  await db.query(
+    `DELETE FROM attachment_grants WHERE attachment_id IN (
+       SELECT id FROM attachments WHERE expires_at < now()
+     )`,
   );
+  const attachments = await db.query<{ id: string; object_key: string }>(
+    "DELETE FROM attachments WHERE expires_at < now() RETURNING id, object_key",
+  );
+  for (const row of attachments.rows) {
+    try {
+      await deleteObject(row.object_key);
+    } catch {
+      /* object may already be gone */
+    }
+  }
   const otp = await db.query<{ id: string }>(
     `DELETE FROM otp_challenges
      WHERE expires_at < now() OR consumed_at IS NOT NULL

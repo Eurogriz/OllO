@@ -28,8 +28,10 @@ export function randomToken(bytes = 32): string {
 
 export function otpCode(length: number): string {
   const max = 10 ** length;
-  const n = randomBytes(4).readUInt32BE(0) % max;
-  return n.toString().padStart(length, "0");
+  const limit = Math.floor(0x1_0000_0000 / max) * max;
+  let n = randomBytes(4).readUInt32BE(0);
+  while (n >= limit) n = randomBytes(4).readUInt32BE(0);
+  return (n % max).toString().padStart(length, "0");
 }
 
 export async function kdfHash(secret: string, pepper: string): Promise<string> {

@@ -26,7 +26,7 @@ describe("TTL expiry job", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("deletes expired envelopes and completed attachments, keeps live rows", async () => {
+  it("deletes expired envelopes and attachments including grants, keeps live rows", async () => {
     const deadEnv = crypto.randomUUID();
     const liveEnv = crypto.randomUUID();
     const deadAtt = crypto.randomUUID();
@@ -42,12 +42,19 @@ describe("TTL expiry job", () => {
          ($2,$3,$3,$3,$3,'message',$4,256, now() + interval '1 day')`,
       [deadEnv, liveEnv, uid, Buffer.from("ciphertext-only")],
     );
+    const incompleteAtt = crypto.randomUUID();
     await db.query(
       `INSERT INTO attachments (id, uploader_device_id, object_key, size, expires_at, completed_at)
        VALUES
          ($1,$3,$4,12, now() - interval '1 hour', now()),
-         ($2,$3,$5,12, now() + interval '1 day', now())`,
-      [deadAtt, liveAtt, uid, `obj-${deadAtt}`, `obj-${liveAtt}`],
+         ($2,$3,$5,12, now() + interval '1 day', now()),
+         ($6,$3,$7,4, now() - interval '1 hour', NULL)`,
+      [deadAtt, liveAtt, uid, `obj-${deadAtt}`, `obj-${liveAtt}`, incompleteAtt, `obj-${incompleteAtt}`],
+    );
+    await db.query(
+      `INSERT INTO attachment_grants (token_hash, attachment_id, recipient_user_id, expires_at)
+       VALUES ('dead-grant', $1, $2, now() + interval '1 day')`,
+      [deadAtt, uid],
     );
 
     const did = crypto.randomUUID();
@@ -95,7 +102,7 @@ describe("TTL expiry job", () => {
 
     const result = await expireStale(db);
     assert.equal(result.envelopes, 1);
-    assert.equal(result.attachments, 1);
+    assert.equal(result.attachments, 2);
     assert.equal(result.prekeys, 1);
     assert.equal(result.revoked_keys, 1);
     assert.equal(result.otp, 1);
@@ -105,6 +112,8 @@ describe("TTL expiry job", () => {
     assert.deepEqual(envs.rows.map((r) => r.id), [liveEnv]);
     const atts = await db.query<{ id: string }>("SELECT id FROM attachments");
     assert.deepEqual(atts.rows.map((r) => r.id), [liveAtt]);
+    const grants = await db.query<{ token_hash: string }>("SELECT token_hash FROM attachment_grants");
+    assert.equal(grants.rows.length, 0);
     const opks = await db.query<{ key_id: number }>(
       "SELECT key_id FROM one_time_prekeys ORDER BY key_id",
     );

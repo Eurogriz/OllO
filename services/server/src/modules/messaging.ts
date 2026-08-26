@@ -156,7 +156,7 @@ export async function registerMessaging(app: FastifyInstance, db: Db): Promise<v
 
   app.put("/v1/drafts/:threadId", async (req) => {
     const auth = requireAuth(req);
-    const body = z.object({ ciphertext: z.string() }).parse(req.body);
+    const body = z.object({ ciphertext: z.string().max(350_000) }).parse(req.body);
     await db.query(
       `INSERT INTO drafts (user_id, device_id, thread_id, ciphertext, updated_at)
        VALUES ($1,$2,$3,$4,now())

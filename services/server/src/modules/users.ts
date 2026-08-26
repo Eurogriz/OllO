@@ -4,6 +4,7 @@ import { MAX_USERNAME_CHANGES_PER_DAY, encodeUserUri, parseUserUri } from "@ollo
 import { z } from "zod";
 import type { Db } from "../db/index.js";
 import { ApiError, requireAuth } from "../http.js";
+import { takeWindow } from "../redis.js";
 import { dropUser } from "../realtime/hub.js";
 import { randomUuid } from "../security/crypto-utils.js";
 import { ED25519_PUBLIC_LEN as ED_LEN, requirePublicBytes } from "../security/public-keys.js";
@@ -267,7 +268,6 @@ export async function registerUsers(app: FastifyInstance, db: Db): Promise<void>
     return { blocked: r.rows.map((x) => x.blocked_user_id) };
   });
 
-  const reportWindow = new Map<string, { n: number; reset: number }>();
   app.post("/v1/reports", async (req) => {
     const auth = requireAuth(req);
     const body = z
@@ -276,14 +276,8 @@ export async function registerUsers(app: FastifyInstance, db: Db): Promise<void>
         reason: z.enum(["spam", "abuse", "other"]),
       })
       .parse(req.body);
-    const now = Date.now();
-    const cur = reportWindow.get(auth.userId);
-    if (!cur || cur.reset < now) {
-      reportWindow.set(auth.userId, { n: 1, reset: now + 3_600_000 });
-    } else {
-      if (cur.n >= 8) throw new ApiError("rate_limited", "Too many reports", 429);
-      cur.n += 1;
-    }
+    const ok = await takeWindow(`report:${auth.userId}`, 8, 3600);
+    if (!ok) throw new ApiError("rate_limited", "Too many reports", 429);
     await db.query(
       `INSERT INTO reports (id, reporter_id, reportee_id, reason) VALUES ($1,$2,$3,$4)`,
       [randomUuid(), auth.userId, body.user_id, body.reason],

@@ -23,6 +23,7 @@ import {
   randomId,
   randomToken,
   randomUuid,
+  safeEqualStr,
   sha256Hex,
   signAccess,
 } from "../security/crypto-utils.js";
@@ -253,7 +254,11 @@ export async function registerAuth(app: FastifyInstance, db: Db): Promise<void> 
       consumed: Boolean(row.consumed_at),
     });
     if (decision !== "accept") throw new ApiError("unauthorized", "Invalid or expired challenge", 401);
-    await db.query("DELETE FROM auth_challenges WHERE id = $1", [row.id]);
+    const claimed = await db.query<{ id: string }>(
+      "DELETE FROM auth_challenges WHERE id = $1 RETURNING id",
+      [row.id],
+    );
+    if (!claimed.rows[0]) throw new ApiError("unauthorized", "Invalid or expired challenge", 401);
 
     const existing = await db.query<{
       id: string;
@@ -320,11 +325,15 @@ export async function registerAuth(app: FastifyInstance, db: Db): Promise<void> 
       throw new ApiError("rate_limited", "Too many attempts", 429);
     }
     const incoming = sha256Hex(`${config.otpPepper}:${body.challenge_id}:${body.otp}`);
-    if (incoming !== row.otp_hash) {
+    if (!safeEqualStr(incoming, row.otp_hash)) {
       await db.query("UPDATE otp_challenges SET attempts = attempts + 1 WHERE id = $1", [row.id]);
       throw new ApiError("otp_invalid", "Invalid or expired code");
     }
-    await db.query("DELETE FROM otp_challenges WHERE id = $1", [row.id]);
+    const claimed = await db.query<{ phone_hmac: string }>(
+      "DELETE FROM otp_challenges WHERE id = $1 RETURNING phone_hmac",
+      [row.id],
+    );
+    if (!claimed.rows[0]) throw new ApiError("otp_invalid", "Invalid or expired code");
 
     const existing = await db.query<{
       id: string;

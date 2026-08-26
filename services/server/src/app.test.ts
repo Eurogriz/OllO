@@ -670,6 +670,9 @@ describe("API integration", () => {
     const joined = await json("POST", `/v1/calls/${callId}/join`, {}, bob.tok);
     assert.equal(joined.status, 200, JSON.stringify(joined.body));
 
+    const eveJoin = await json("POST", `/v1/calls/${callId}/join`, {}, eve.tok);
+    assert.equal(eveJoin.status, 403);
+
     const peek = await json("GET", `/v1/calls/${callId}`, undefined, eve.tok);
     assert.equal(peek.status, 403);
 
@@ -1310,6 +1313,18 @@ describe("API integration", () => {
     );
     const webSpk = (webKeys.body.bundle as { signed_prekey: { xeddsa?: string } }).signed_prekey;
     assert.equal(webSpk.xeddsa, undefined);
+
+    const forged = await json(
+      "PUT",
+      "/v1/keys/signed-prekey",
+      {
+        id: 3,
+        public: web.json.signed_prekey.public,
+        signature: Buffer.alloc(64, 1).toString("base64"),
+      },
+      webReg.body.access_token as string,
+    );
+    assert.equal(forged.status, 400);
   });
 
   it("rate-limits auth challenges per client address", async () => {
