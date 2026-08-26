@@ -83,4 +83,10 @@ object Membership {
         val missing = signed.filter { it !in server }
         return Triple(trusted, extra, missing)
     }
+
+    /** Fan-out only to the signed ∩ live intersection. Empty signed roster → nobody. */
+    fun planFanoutRecipients(signedUserIds: List<String>, serverUserIds: List<String>): List<String> {
+        if (signedUserIds.none { it.isNotEmpty() }) return emptyList()
+        return trustedMembers(signedUserIds, serverUserIds).first
+    }
 }

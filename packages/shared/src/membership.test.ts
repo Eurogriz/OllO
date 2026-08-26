@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { planMembershipApply, planTrustedMembers, sameMembership } from "./membership.js";
+import { planFanoutRecipients, planMembershipApply, planTrustedMembers, sameMembership } from "./membership.js";
 
 describe("membership apply planner", () => {
   it("drops unsigned, stale, and forked rosters", () => {
@@ -53,6 +53,8 @@ describe("membership apply planner", () => {
     assert.deepEqual(plan.trusted.sort(), ["a", "b"]);
     assert.deepEqual(plan.extra, ["eve"]);
     assert.deepEqual(plan.missing, []);
+    assert.deepEqual(planFanoutRecipients(["a", "b"], ["a", "b", "eve"]).sort(), ["a", "b"]);
+    assert.deepEqual(planFanoutRecipients([], ["a", "eve"]), []);
     assert.equal(
       sameMembership(
         [

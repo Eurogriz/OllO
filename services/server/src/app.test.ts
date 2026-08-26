@@ -8,6 +8,7 @@ import { encodeSealed, paddingBucket } from "@ollo/protocol";
 
 process.env.OLLO_ENV = "development";
 process.env.OTP_DEV_REVEAL = "true";
+process.env.RATE_LIMIT_MAX = "1000";
 process.env.PGLITE_DATA_DIR = mkdtempSync(join(tmpdir(), "ollo-test-"));
 process.env.PHONE_HMAC_PEPPER = "test-phone-pepper";
 process.env.SESSION_SIGNING_KEY = "test-session-key";
@@ -351,6 +352,96 @@ describe("API integration", () => {
       alice.tok,
     );
     assert.equal(injected.status, 400);
+  });
+
+  it("keeps invite-join pending until an admin re-signs", async () => {
+    const aDev = devicePayload("alice-inv");
+    const bDev = devicePayload("bob-inv");
+    const eDev = devicePayload("eve-inv");
+
+    async function signup(phone: string, username: string, dev: ReturnType<typeof devicePayload>) {
+      const otp = await json("POST", "/v1/auth/request-otp", { phone_e164: phone });
+      const verified = await json("POST", "/v1/auth/verify-otp", {
+        challenge_id: otp.body.challenge_id,
+        otp: otp.body.dev_otp,
+        device: dev.json,
+      });
+      assert.equal(verified.status, 200, JSON.stringify(verified.body));
+      const tok = verified.body.access_token as string;
+      await json("PUT", "/v1/me", { username, display_name: username }, tok);
+      return {
+        tok,
+        userId: (verified.body.user as { id: string }).id,
+        deviceId: verified.body.device_id as string,
+      };
+    }
+
+    const alice = await signup("+79990000071", "aliceinv", aDev);
+    const bob = await signup("+79990000072", "bobinv", bDev);
+    const eve = await signup("+79990000073", "eveinv", eDev);
+    const groupId = crypto.randomUUID();
+    const signed = signMembership(
+      {
+        groupId,
+        epoch: 1,
+        members: [
+          { userId: alice.userId, role: "admin" },
+          { userId: bob.userId, role: "member" },
+        ],
+      },
+      aDev.mat.identity,
+    );
+    const created = await json(
+      "POST",
+      "/v1/groups",
+      {
+        id: groupId,
+        member_ids: [bob.userId],
+        membership: {
+          epoch: 1,
+          members: signed.members.map((m) => ({ user_id: m.userId, role: m.role })),
+          signer_user_id: alice.userId,
+          signer_device_id: alice.deviceId,
+          signature: Buffer.from(signed.signature).toString("base64"),
+        },
+      },
+      alice.tok,
+    );
+    assert.equal(created.status, 200, JSON.stringify(created.body));
+
+    const invite = await json("POST", `/v1/groups/${groupId}/invites`, {}, alice.tok);
+    assert.equal(invite.status, 200, JSON.stringify(invite.body));
+    const joined = await json("POST", `/v1/groups/join/${invite.body.token as string}`, {}, eve.tok);
+    assert.equal(joined.status, 200, JSON.stringify(joined.body));
+    assert.equal(joined.body.pending, true);
+    assert.equal(joined.body.epoch, 1);
+
+    const evePeek = await json("GET", `/v1/groups/${groupId}`, undefined, eve.tok);
+    assert.equal(evePeek.status, 403);
+    const peeked = await json("GET", `/v1/groups/${groupId}`, undefined, alice.tok);
+    const group = peeked.body.group as {
+      epoch: number;
+      members: { user_id: string }[];
+      pending_joins: { user_id: string }[];
+    };
+    assert.equal(group.epoch, 1);
+    assert.equal(group.members.some((m) => m.user_id === eve.userId), false);
+    assert.equal(group.pending_joins.some((p) => p.user_id === eve.userId), true);
+
+    const fan = await json(
+      "POST",
+      `/v1/groups/${groupId}/fanout`,
+      {
+        kind: "message",
+        ciphertext: Buffer.from("opaque-group").toString("base64"),
+        padding_bucket: 256,
+      },
+      alice.tok,
+    );
+    assert.equal(fan.status, 200, JSON.stringify(fan.body));
+    const eveBox = await json("GET", "/v1/envelopes?limit=20", undefined, eve.tok);
+    const eveEnvs = (eveBox.body.envelopes as Array<{ group_id?: string }>) ?? [];
+    assert.equal(eveEnvs.some((e) => e.group_id === groupId), false);
   });
 
   it("issues call rooms without SDP and rejects blocked callees", async () => {

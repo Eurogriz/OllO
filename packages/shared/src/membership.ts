@@ -41,6 +41,12 @@ export function planTrustedMembers(
   };
 }
 
+/** Fan-out only to the signed ∩ live intersection. Empty signed roster → nobody. */
+export function planFanoutRecipients(signedUserIds: string[], serverUserIds: string[]): string[] {
+  if (!signedUserIds.some(Boolean)) return [];
+  return planTrustedMembers(signedUserIds, serverUserIds).trusted;
+}
+
 export function sameMembership(
   a: { userId: string; role: string }[],
   b: { userId: string; role: string }[],

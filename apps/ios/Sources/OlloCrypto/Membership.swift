@@ -105,4 +105,10 @@ public enum Membership {
             signed.filter { !server.contains($0) }
         )
     }
+
+    /// Fan-out only to the signed ∩ live intersection. Empty signed roster → nobody.
+    public static func planFanoutRecipients(signedUserIds: [String], serverUserIds: [String]) -> [String] {
+        if !signedUserIds.contains(where: { !$0.isEmpty }) { return [] }
+        return trustedMembers(signedUserIds: signedUserIds, serverUserIds: serverUserIds).trusted
+    }
 }

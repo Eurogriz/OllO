@@ -58,6 +58,8 @@ class SessionVaultTest {
         val (trusted, extra, _) = Membership.trustedMembers(listOf("a", "b"), listOf("a", "b", "eve"))
         assertEquals(listOf("a", "b"), trusted)
         assertEquals(listOf("eve"), extra)
+        assertEquals(listOf("a", "b"), Membership.planFanoutRecipients(listOf("a", "b"), listOf("a", "b", "eve")))
+        assertEquals(emptyList<String>(), Membership.planFanoutRecipients(emptyList(), listOf("a", "eve")))
     }
 
     @Test

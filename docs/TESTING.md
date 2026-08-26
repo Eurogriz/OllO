@@ -28,6 +28,7 @@ A change that touches any of these is incomplete without tests:
 - iOS `AuthRepository` 401-refresh-wipe and incomplete device JSON rejection
 - Device registration and revoke
 - Group membership + epoch
+- Invite-join stays pending; fan-out skips unsigned extras
 - Message ordering and de-dupe
 - Attachment encrypt / digest / grant
 - Reconnect / resume

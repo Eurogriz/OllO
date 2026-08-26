@@ -138,9 +138,10 @@ an admin identity key (`signMembership`). Clients apply
 `planMembershipApply` and refuse sender-key distribution or a group send
 when `planTrustedMembers` reports a server-only extra id. The server
 stores the latest signature so a new device can fetch it; a compromised
-server can still insert a SQL row (availability / extra mailbox copies)
-but cannot mint a valid admin signature. Invite-join is server-visible
-until an admin re-signs. This is not MLS.
+server can still insert a SQL row (availability) but cannot mint a valid
+admin signature. Invite-join is pending only (`used_by`, no live row, no
+epoch bump). Fan-out uses `planFanoutRecipients` so a server-only extra id
+does not get a mailbox copy. This is not MLS.
 
 Evolution path (not in v1 code): IETF MLS (RFC 9420) via OpenMLS. The
 envelope `alg` field is versioned so we can migrate.

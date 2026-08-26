@@ -216,7 +216,8 @@ fabricates a device payload.
 - Removing a member increments epoch; clients ratchet sender keys
 - Server cannot add a silent member without clients noticing (membership
   changes are signed by an admin identity, stored on GET, applied with
-  `planMembershipApply`)
+  `planMembershipApply`). Invite-join is pending until that signature.
+  Fan-out recipients are `planFanoutRecipients` (signed ∩ live).
 
 ### 7.6 Attachments
 

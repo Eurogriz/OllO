@@ -46,6 +46,11 @@ final class SessionVaultTests: XCTestCase {
         let plan = Membership.trustedMembers(signedUserIds: ["a", "b"], serverUserIds: ["a", "b", "eve"])
         XCTAssertEqual(Set(plan.trusted), Set(["a", "b"]))
         XCTAssertEqual(plan.extra, ["eve"])
+        XCTAssertEqual(
+            Set(Membership.planFanoutRecipients(signedUserIds: ["a", "b"], serverUserIds: ["a", "b", "eve"])),
+            Set(["a", "b"])
+        )
+        XCTAssertEqual(Membership.planFanoutRecipients(signedUserIds: [], serverUserIds: ["a", "eve"]), [])
     }
 
     func testDropsAReplayedEnvelopeAndClearsOnWipe() throws {

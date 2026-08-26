@@ -157,7 +157,7 @@ never wake the OS.
 - `POST /v1/groups/{id}/epoch` — `{ membership }` after sender-key rotation
 - `POST /v1/groups/{id}/fanout` — copy one opaque ciphertext to every other member device
 - `POST /v1/groups/{id}/invites`
-- `POST /v1/groups/join/{token}` — server row only; not trusted until an admin re-signs
+- `POST /v1/groups/join/{token}` — consumes the invite into `pending_joins`; no live member row and no epoch bump until an admin re-signs via `POST /members`
 
 Fan-out body (server never parses the inner payload):
 
@@ -171,6 +171,7 @@ Fan-out body (server never parses the inner payload):
 ```
 
 The same ciphertext is stored once per recipient device (except the sender device).
+Fan-out copies only to `planFanoutRecipients` (signed roster ∩ live members).
 A membership change increments `epoch`; clients must redistribute Sender Keys
 over 1:1 sessions before the next group send. Mutations except invite-join
 require `membership`: `{ epoch, members[{user_id,role}], signer_user_id,

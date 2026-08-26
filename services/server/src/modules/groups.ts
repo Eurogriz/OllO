@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { verifyMembership } from "@ollo/crypto";
-import { sameMembership } from "@ollo/shared";
+import { planFanoutRecipients, sameMembership } from "@ollo/shared";
 import type { Db } from "../db/index.js";
 import { ApiError, requireAuth } from "../http.js";
 import { pushToDevice } from "../realtime/hub.js";
@@ -188,12 +188,23 @@ export async function registerGroups(app: FastifyInstance, db: Db): Promise<void
     );
     const row = g.rows[0];
     if (!row) throw new ApiError("not_found", "Group not found", 404);
+    const pending = await db.query<{ used_by: string }>(
+      `SELECT i.used_by
+       FROM group_invites i
+       WHERE i.group_id = $1 AND i.used_at IS NOT NULL AND i.used_by IS NOT NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM group_members m
+           WHERE m.group_id = i.group_id AND m.user_id = i.used_by AND m.removed_at IS NULL
+         )`,
+      [id],
+    );
     return {
       group: {
         id: row.id,
         epoch: row.epoch,
         creator_id: row.creator_id,
         members: members.rows,
+        pending_joins: pending.rows.map((p) => ({ user_id: p.used_by })),
         membership: wireMembership(row),
       },
     };
@@ -294,15 +305,37 @@ export async function registerGroups(app: FastifyInstance, db: Db): Promise<void
     if (payload.length > 256 * 1024) {
       throw new ApiError("payload_too_large", "Envelope too large", 413);
     }
+    const g = await db.query<{
+      membership_epoch: number | null;
+      membership_json: string | null;
+      membership_sig: Uint8Array | null;
+      membership_signer_user_id: string | null;
+      membership_signer_device_id: string | null;
+    }>(
+      `SELECT membership_epoch, membership_json, membership_sig,
+              membership_signer_user_id, membership_signer_device_id
+       FROM groups WHERE id = $1`,
+      [id],
+    );
+    const signed = g.rows[0] ? wireMembership(g.rows[0]) : null;
+    if (!signed) throw new ApiError("unsigned_membership", "Signed membership required", 400);
     const members = await db.query<{ user_id: string }>(
       "SELECT user_id FROM group_members WHERE group_id = $1 AND removed_at IS NULL",
       [id],
     );
+    const recipients = planFanoutRecipients(
+      signed.members.map((m) => m.user_id),
+      members.rows.map((m) => m.user_id),
+    );
+    if (!recipients.includes(auth.userId)) {
+      throw new ApiError("forbidden", "Not a signed member", 403);
+    }
     const expires = body.ttl_seconds
       ? new Date(Date.now() + body.ttl_seconds * 1000).toISOString()
       : new Date(Date.now() + 30 * 86400_000).toISOString();
     let n = 0;
-    for (const m of members.rows) {
+    for (const uid of recipients) {
+      const m = { user_id: uid };
       const devices = await db.query<{ id: string }>(
         "SELECT id FROM devices WHERE user_id = $1 AND revoked_at IS NULL",
         [m.user_id],
@@ -363,19 +396,22 @@ export async function registerGroups(app: FastifyInstance, db: Db): Promise<void
     if (!inv || inv.used_at || new Date(inv.expires_at).getTime() < Date.now()) {
       throw new ApiError("not_found", "Invite not found", 404);
     }
-    await db.query(
-      `INSERT INTO group_members (group_id, user_id, role) VALUES ($1,$2,'member')
-       ON CONFLICT (group_id, user_id) DO UPDATE SET removed_at = NULL`,
+    const live = await db.query<{ user_id: string }>(
+      "SELECT user_id FROM group_members WHERE group_id = $1 AND user_id = $2 AND removed_at IS NULL",
       [inv.group_id, auth.userId],
     );
-    const epoch = await bumpEpoch(db, inv.group_id);
-    return { group_id: inv.group_id, epoch };
+    const claimed = await db.query<{ group_id: string }>(
+      `UPDATE group_invites SET used_at = now(), used_by = $2
+       WHERE token_hash = $1 AND used_at IS NULL
+       RETURNING group_id`,
+      [sha256Hex(token), auth.userId],
+    );
+    if (!claimed.rows[0]) throw new ApiError("not_found", "Invite not found", 404);
+    const epochRow = await db.query<{ epoch: number }>("SELECT epoch FROM groups WHERE id = $1", [inv.group_id]);
+    return {
+      group_id: inv.group_id,
+      epoch: epochRow.rows[0]?.epoch ?? 1,
+      pending: live.rows.length === 0,
+    };
   });
-}
-
-async function bumpEpoch(db: Db, groupId: string): Promise<number> {
-  const r = await db.query<{ epoch: number }>("UPDATE groups SET epoch = epoch + 1 WHERE id = $1 RETURNING epoch", [
-    groupId,
-  ]);
-  return r.rows[0]?.epoch ?? 0;
 }

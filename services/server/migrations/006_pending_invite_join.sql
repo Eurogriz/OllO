@@ -1,0 +1,1 @@
+ALTER TABLE group_invites ADD COLUMN IF NOT EXISTS used_by UUID;
