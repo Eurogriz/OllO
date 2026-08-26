@@ -15,6 +15,7 @@ interface CryptoEngine {
     fun encrypt(session: SessionHandle, plaintext: ByteArray): ByteArray
     fun decrypt(session: SessionHandle, payload: ByteArray): ByteArray
     fun safetyNumber(localIdentity: ByteArray, remoteIdentity: ByteArray): String
+    fun sign(message: ByteArray): ByteArray
 }
 
 data class IdentityMaterial(
@@ -49,4 +50,7 @@ class UnboundCryptoEngine : CryptoEngine {
 
     override fun safetyNumber(localIdentity: ByteArray, remoteIdentity: ByteArray): String =
         SafetyNumber.of(localIdentity, remoteIdentity).digits
+
+    override fun sign(message: ByteArray): ByteArray =
+        throw IllegalStateException("libsignal engine is not bound")
 }

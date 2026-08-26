@@ -23,8 +23,8 @@ Out of scope for this revision: desktop native, federated servers, SGX.
 
 | Attack | L | Impact | Mitigation | Residual |
 |---|---|---|---|---|
-| OTP brute force | M | Account takeover of unlocked accounts | 6-digit OTP, 5 tries, per-number and per-IP lockout, exponential backoff, delete OTP hash after use | SIM-swap still works without registration lock |
-| OTP intercept (SS7 / SMS) | M | Same | Registration lock PIN, new-device warning, no history pull | SMS is a weak channel; lock is optional |
+| Stolen identity private key | M | New device on the same account | Key never leaves the device; registration lock; new-device warning | Backup passphrase leak; malware |
+| Forged auth proof | L | Fake registration | Ed25519 over `ollo-auth-v1` challenge; single-use nonce | Stolen private key |
 | Session token theft | M | Impersonate device | Device-bound refresh, rotation + reuse detection, short access TTL, TLS only | Malware on device |
 | Stolen refresh reuse | M | Session hijack | Reuse → revoke family | Attacker who is first wins the race |
 | Forged device identity | L | Silent extra mailbox | Identity key is client-generated; server stores public only; other devices warn on new IK; `planSessionAccept` refuses 1:1 rebuild from `droppedDevices` | User clicks through warning. Stolen **live** device still talks until revoke/decline pins it |
@@ -69,7 +69,7 @@ Out of scope for this revision: desktop native, federated servers, SGX.
 
 | Attack | L | Impact | Mitigation | Residual |
 |---|---|---|---|---|
-| OTP flood / SMS bill | H | Cost, lockout | Per-IP, per-number, per-device quotas, provider-level caps | Distributed botnet |
+| Cheap key-only account flood | H | Directory spam | Per-IP challenge / register-key quotas | Distributed botnet |
 | Envelope flood | H | Mailbox / disk | Per-sender quotas, max envelope size, group fan-out budget | Popular groups |
 | WS connection flood | H | File descriptors | Edge limits, auth-before-upgrade, per-account connection cap | Large botnet |
 | Huge attachment | M | Cost | Max size, auth, prepaid quota | Paid attacker |
@@ -92,7 +92,7 @@ Out of scope for this revision: desktop native, federated servers, SGX.
 | Category | Issue | Mitigation |
 |---|---|---|
 | Linkability | Same user id across devices and groups | Separate from display; no global advertising id; minimize logs |
-| Identifiability | Phone number at registration | Peppered HMAC; no other PII required |
+| Identifiability | Account Ed25519 public key | Public by design; phone is not required |
 | Non-repudiation | Delivery logs | Short TTL on envelopes and connection logs |
 | Detectability | Online status | Coarse, optional, not exposed to non-contacts |
 | Disclosure of information | Profile | User-controlled; username search is exact-match |
@@ -148,7 +148,8 @@ Reduced, not eliminated. Padding + TTL + no content in push.
 
 ### Account takeover / SIM swap / social engineering
 Registration lock, new-device warnings, remote revoke, support must never
-ask for OTP or PIN (runbook). Residual: user gives PIN to an impostor.
+ask for the private key or PIN (runbook). Residual: user gives a backup
+passphrase to an impostor.
 
 ## 5. Abuse without breaking E2EE
 
@@ -168,13 +169,13 @@ This is enough to fight spam without a mass-decryption backdoor.
 
 ## 6. Residual risk register (top)
 
-1. SMS OTP + no registration lock → SIM-swap ATO of a new device.
+1. Lost device without backup → account is unrecoverable (key is the identity).
 2. TypeScript protocol path not independently audited.
 3. Metadata graph on the server.
 4. Web client key storage weaker than Keystore / Secure Enclave.
 5. User ignoring new-device / safety-number change warnings.
 6. Supply-chain compromise of a crypto dependency.
 7. TURN without media E2EE on a fallback path.
-8. Operator error enabling `OTP_DEV_REVEAL` or debug routes in prod.
+8. Operator error enabling debug routes in prod.
 
 Each item has an owner in OPERATIONS.md and a test or control in CI.

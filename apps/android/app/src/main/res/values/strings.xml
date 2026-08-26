@@ -1,8 +1,9 @@
 <resources>
     <string name="app_name">OllO</string>
     <string name="tagline">Private messages. The server cannot read them.</string>
-    <string name="continue_label">Continue</string>
-    <string name="empty_inbox">No chats yet. Search a username after you sign in. Nothing is seeded on this device.</string>
+    <string name="continue_label">Create account</string>
+    <string name="address_hint">The private key stays on this device. The public key is your address.</string>
+    <string name="empty_inbox">No chats yet. Search an ollo:user:… address or username after you sign in. Nothing is seeded on this device.</string>
     <string name="e2ee_hint">Messages are encrypted on this device.</string>
     <string name="message_hint">Message</string>
     <string name="settings">Settings</string>

@@ -61,6 +61,37 @@ public final class AuthRepository: @unchecked Sendable {
         )
     }
 
+    /// Primary registration: prove possession of the device Ed25519 key.
+    public func signInWithKey(
+        engine: CryptoEngine,
+        name: String,
+        platform: String,
+        registrationLock: String? = nil
+    ) async throws -> AuthSession {
+        let deviceJson = try engine.deviceRegistrationJson(name: name, platform: platform)
+        let raw = try await client.authChallenge()
+        let challenge = try AuthPayload.parseAuthChallenge(raw)
+        let proof = IdentityAddress.authProof(challengeId: challenge.challengeId, nonce: challenge.nonce)
+        let signature = try engine.sign(message: proof).base64EncodedString()
+        let body = try AuthPayload.registerKeyBody(
+            challengeId: challenge.challengeId,
+            signature: signature,
+            deviceJson: deviceJson,
+            registrationLock: registrationLock
+        )
+        let sessionRaw = try await client.registerKey(body: body)
+        let session = try AuthPayload.parseSession(sessionRaw)
+        try sessions?.save(
+            SessionSecrets(
+                userId: session.userId,
+                deviceId: session.deviceId,
+                access: session.access,
+                refresh: session.refresh
+            )
+        )
+        return session
+    }
+
     public func logout() {
         sessions?.wipe()
     }

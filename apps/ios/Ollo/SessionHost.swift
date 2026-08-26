@@ -43,15 +43,9 @@ final class SessionHost {
         try engine.deviceRegistrationJson(name: name, platform: platform)
     }
 
-    func signIn(phone: String, otp: String) async throws {
+    func signIn() async throws {
         if try launch() == .signedIn { return }
-        _ = try await auth.signIn(
-            engine: engine,
-            phone: phone,
-            otp: otp,
-            name: "iPhone",
-            platform: "ios"
-        )
+        _ = try await auth.signInWithKey(engine: engine, name: "iPhone", platform: "ios")
     }
 
     static func open(

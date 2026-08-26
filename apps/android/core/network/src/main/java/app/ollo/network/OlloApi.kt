@@ -23,6 +23,13 @@ class OlloApi(
         return post("/v1/auth/request-otp", body, auth = false)
     }
 
+    fun authChallenge(): String = post("/v1/auth/challenge", "{}", auth = false)
+
+    fun searchAddress(address: String): String {
+        val body = """{"address":${JSONString(address)}}"""
+        return post("/v1/users/search", body, auth = true)
+    }
+
     fun postEnvelopes(payload: String): String = post("/v1/envelopes", payload, auth = true)
 
     fun mailbox(): String = get("/v1/envelopes?limit=100")

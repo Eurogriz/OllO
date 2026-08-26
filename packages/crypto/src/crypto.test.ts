@@ -16,7 +16,7 @@ import {
   serializeSession,
 } from "./engine.js";
 import { acceptSenderKey, createSenderKey, distributeSenderKey, senderDecrypt, senderEncrypt } from "./sender-keys.js";
-import { generateIdentity } from "./keys.js";
+import { generateIdentity, sign, verify } from "./keys.js";
 
 function device(userId: string, deviceId: string) {
   const d = createLocalDevice();
@@ -276,5 +276,26 @@ describe("Safety number", () => {
     assert.equal(s.digits, "153665515321528787008757103930069366995789004059450082545955");
     assert.equal(s.hex, "f1d7e960a6cd69014103fcdd5ff23a894e93c8008057e107ab6e6795df5a9003");
     assert.equal(safetyNumber(b, a).digits, s.digits);
+  });
+});
+
+describe("Identity possession proof", () => {
+  it("signs a challenge that only the matching Ed25519 key verifies", () => {
+    const id = generateIdentity();
+    const other = generateIdentity();
+    const enc = new TextEncoder();
+    const a = enc.encode("ollo-auth-v1");
+    const b = enc.encode("ch_1");
+    const c = enc.encode("nonce");
+    const msg = new Uint8Array(a.length + 1 + b.length + 1 + c.length);
+    msg.set(a, 0);
+    msg[a.length] = 0;
+    msg.set(b, a.length + 1);
+    msg[a.length + 1 + b.length] = 0;
+    msg.set(c, a.length + 2 + b.length);
+    const sig = sign(id.ed25519Private, msg);
+    assert.equal(verify(id.ed25519Public, msg, sig), true);
+    assert.equal(verify(other.ed25519Public, msg, sig), false);
+    assert.equal(verify(id.ed25519Public, msg, new Uint8Array(64)), false);
   });
 });

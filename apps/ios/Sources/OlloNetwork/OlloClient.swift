@@ -25,8 +25,20 @@ public actor OlloClient {
         try await post(path: "/v1/auth/request-otp", body: ["phone_e164": phone], auth: false)
     }
 
+    public func authChallenge() async throws -> Data {
+        try await post(path: "/v1/auth/challenge", data: Data("{}".utf8), auth: false)
+    }
+
+    public func registerKey(body: Data) async throws -> Data {
+        try await post(path: "/v1/auth/register-key", data: body, auth: false)
+    }
+
     public func verifyOTP(body: Data) async throws -> Data {
         try await post(path: "/v1/auth/verify-otp", data: body, auth: false)
+    }
+
+    public func searchAddress(_ address: String) async throws -> Data {
+        try await post(path: "/v1/users/search", body: ["address": address], auth: true)
     }
 
     /// Unauthenticated. A 401 here must not recurse into another refresh.

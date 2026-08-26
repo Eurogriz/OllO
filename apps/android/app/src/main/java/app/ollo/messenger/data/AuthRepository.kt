@@ -1,9 +1,12 @@
 package app.ollo.messenger.data
 
+import app.ollo.crypto.CryptoEngine
+import app.ollo.crypto.IdentityAddress
 import app.ollo.crypto.SessionController
 import app.ollo.crypto.SessionSecrets
 import app.ollo.network.OlloApi
 import org.json.JSONObject
+import java.util.Base64
 
 class AuthRepository(
     private val api: OlloApi,
@@ -14,6 +17,41 @@ class AuthRepository(
         val json = JSONObject(raw)
         val dev = if (json.has("dev_otp") && !json.isNull("dev_otp")) json.getString("dev_otp") else null
         return json.getString("challenge_id") to dev
+    }
+
+    fun challenge(): Pair<String, String> {
+        val json = JSONObject(api.authChallenge())
+        return json.getString("challenge_id") to json.getString("nonce")
+    }
+
+    fun registerKey(
+        challengeId: String,
+        signatureB64: String,
+        deviceJson: String,
+        registrationLock: String? = null,
+    ): Session {
+        val device = JSONObject(deviceJson)
+        require(device.has("identity_key_x25519") && device.has("identity_key_ed25519")) {
+            "libsignal engine is not bound"
+        }
+        require(device.has("registration_id") && device.has("signed_prekey") && device.has("one_time_prekeys")) {
+            "libsignal engine is not bound"
+        }
+        val body = JSONObject()
+            .put("challenge_id", challengeId)
+            .put("signature", signatureB64)
+            .put("device", device)
+        if (!registrationLock.isNullOrEmpty()) body.put("registration_lock", registrationLock)
+        val raw = api.post("/v1/auth/register-key", body.toString(), auth = false)
+        return persistSession(raw)
+    }
+
+    fun signInWithKey(engine: CryptoEngine, name: String, platform: String, registrationLock: String? = null): Session {
+        val deviceJson = engine.deviceRegistrationJson(name, platform)
+        val (challengeId, nonce) = challenge()
+        val proof = IdentityAddress.authProof(challengeId, nonce)
+        val signature = Base64.getEncoder().encodeToString(engine.sign(proof))
+        return registerKey(challengeId, signature, deviceJson, registrationLock)
     }
 
     fun verify(challengeId: String, otp: String, deviceJson: String, registrationLock: String? = null): Session {
@@ -30,6 +68,10 @@ class AuthRepository(
             .put("device", device)
         if (!registrationLock.isNullOrEmpty()) body.put("registration_lock", registrationLock)
         val raw = api.post("/v1/auth/verify-otp", body.toString(), auth = false)
+        return persistSession(raw)
+    }
+
+    private fun persistSession(raw: String): Session {
         val json = JSONObject(raw)
         val user = json.getJSONObject("user")
         val session = Session(

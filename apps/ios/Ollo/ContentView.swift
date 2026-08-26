@@ -12,8 +12,6 @@ struct ChatRow: Identifiable, Equatable {
 struct ContentView: View {
     let host: SessionHost
     @State private var dest: Dest
-    @State private var phone = "+7"
-    @State private var otp = ""
     @State private var authError = ""
     @State private var threads: [ChatRow]
     @State private var active: ChatRow?
@@ -40,15 +38,14 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     Text("OllO").font(.system(size: 40, weight: .heavy)).foregroundStyle(Color(red: 0.24, green: 0.88, blue: 0.70))
                     Text(tagline).foregroundStyle(.secondary)
-                    TextField("E.164", text: $phone).textFieldStyle(.roundedBorder)
-                    TextField("OTP", text: $otp).textFieldStyle(.roundedBorder)
+                    Text(addressHint).foregroundStyle(.secondary).font(.footnote)
                     if !authError.isEmpty {
                         Text(authError).foregroundStyle(.red)
                     }
                     Button(continueLabel) {
                         Task {
                             do {
-                                try await host.signIn(phone: phone, otp: otp)
+                                try await host.signIn()
                                 reloadInbox()
                                 dest = .chats
                             } catch is UnboundCryptoEngine.EngineError {
@@ -124,12 +121,18 @@ struct ContentView: View {
             : "Private messages. The server cannot read them."
     }
 
-    private var continueLabel: String { russian ? "Продолжить" : "Continue" }
+    private var continueLabel: String { russian ? "Создать аккаунт" : "Create account" }
+
+    private var addressHint: String {
+        russian
+            ? "Приватный ключ остаётся на устройстве. Публичный ключ — ваш адрес."
+            : "The private key stays on this device. The public key is your address."
+    }
 
     private var emptyInbox: String {
         russian
-            ? "Чатов пока нет. Найдите пользователя по username после входа. На устройстве нет демо-переписок."
-            : "No chats yet. Search a username after you sign in. Nothing is seeded on this device."
+            ? "Чатов пока нет. Найдите пользователя по адресу ollo:user:… или username. На устройстве нет демо-переписок."
+            : "No chats yet. Search an ollo:user:… address or username after you sign in. Nothing is seeded on this device."
     }
 
     private var e2eeHint: String {

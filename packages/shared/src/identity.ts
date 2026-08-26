@@ -89,6 +89,73 @@ export function planArchiveTrim(count: number, max = MAX_ARCHIVED_SESSIONS): num
   return count > max ? count - max : 0;
 }
 
+/** Account address: the long-term identity Ed25519 public key, not a phone. */
+export const USER_URI_PREFIX = "ollo:user:v1:";
+export const AUTH_PROOF_DOMAIN = "ollo-auth-v1";
+
+function b64urlEncode(bytes: Uint8Array): string {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function b64urlDecode(raw: string): Uint8Array | null {
+  const t = raw.trim().replace(/-/g, "+").replace(/_/g, "/");
+  if (!t || /[^A-Za-z0-9+/=]/.test(t)) return null;
+  const pad = t.length % 4 === 0 ? t : t + "=".repeat(4 - (t.length % 4));
+  try {
+    const bin = atob(pad);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+export function encodeUserUri(ed25519Public: Uint8Array): string {
+  if (planPublicKeyAccept(ed25519Public, ED25519_PUBLIC_LEN) !== "accept") return "";
+  return `${USER_URI_PREFIX}${b64urlEncode(ed25519Public)}`;
+}
+
+export function parseUserUri(raw: string): Uint8Array | null {
+  if (!raw) return null;
+  const s = raw.trim();
+  const payload = s.startsWith(USER_URI_PREFIX) ? s.slice(USER_URI_PREFIX.length) : s;
+  const bytes = b64urlDecode(payload);
+  if (!bytes || planPublicKeyAccept(bytes, ED25519_PUBLIC_LEN) !== "accept") return null;
+  return bytes;
+}
+
+/** Canonical bytes signed to prove possession of the identity Ed25519 key. */
+export function encodeAuthProof(challengeId: string, nonce: string): Uint8Array {
+  if (!challengeId || !nonce) return new Uint8Array();
+  const enc = new TextEncoder();
+  const a = enc.encode(AUTH_PROOF_DOMAIN);
+  const b = enc.encode(challengeId);
+  const c = enc.encode(nonce);
+  const out = new Uint8Array(a.length + 1 + b.length + 1 + c.length);
+  out.set(a, 0);
+  out[a.length] = 0;
+  out.set(b, a.length + 1);
+  out[a.length + 1 + b.length] = 0;
+  out.set(c, a.length + 2 + b.length);
+  return out;
+}
+
+export function planAuthProofAccept(args: {
+  challengeId: string;
+  nonce: string;
+  signatureValid: boolean;
+  expired?: boolean;
+  consumed?: boolean;
+}): "accept" | "drop" {
+  if (!args.challengeId || !args.nonce) return "drop";
+  if (args.expired || args.consumed) return "drop";
+  if (!args.signatureValid) return "drop";
+  return "accept";
+}
+
 /**
  * Another of this user's still-live devices announced a revoke.
  * Fail closed without a directory snapshot. Refuse if the target is still live

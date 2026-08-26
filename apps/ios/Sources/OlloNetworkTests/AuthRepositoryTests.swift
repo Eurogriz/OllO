@@ -41,6 +41,26 @@ final class AuthRepositoryTests: XCTestCase {
         XCTAssertNil(obj?["registration_id"])
     }
 
+    func testParseAuthChallengeAndRegisterBody() throws {
+        let ch = try AuthPayload.parseAuthChallenge(Data(#"{"challenge_id":"ch1","nonce":"n1"}"#.utf8))
+        XCTAssertEqual(ch.challengeId, "ch1")
+        XCTAssertEqual(ch.nonce, "n1")
+        XCTAssertThrowsError(try AuthPayload.parseAuthChallenge(Data(#"{"challenge_id":"ch1"}"#.utf8)))
+        XCTAssertThrowsError(
+            try AuthPayload.registerKeyBody(challengeId: "ch", signature: "sig", deviceJson: #"{"name":"iPhone"}"#)
+        ) { error in
+            XCTAssertEqual(error as? AuthPayload.Error, .missingDevice)
+        }
+        let body = try AuthPayload.registerKeyBody(
+            challengeId: "ch",
+            signature: "sig",
+            deviceJson: boundEngineFixture()
+        )
+        let obj = try JSONSerialization.jsonObject(with: body) as? [String: Any]
+        XCTAssertEqual(obj?["signature"] as? String, "sig")
+        XCTAssertNil(obj?["otp"])
+    }
+
     func testUnboundSignInDoesNotRequestOtp() async {
         var hit = false
         MockURLProtocol.handler = { _ in
@@ -53,10 +73,8 @@ final class AuthRepositoryTests: XCTestCase {
             urlSession: MockURLProtocol.session()
         )
         do {
-            _ = try await repo.signIn(
+            _ = try await repo.signInWithKey(
                 engine: UnboundCryptoEngine(),
-                phone: "+70000000000",
-                otp: "123456",
                 name: "iPhone",
                 platform: "ios"
             )

@@ -65,8 +65,6 @@ fun OlloRoot(host: SessionHost) {
             if (host.launch() == EnvelopePlanner.SessionLaunch.SignedIn) Dest.Chats else Dest.Auth,
         )
     }
-    var phone by remember { mutableStateOf("+7") }
-    var otp by remember { mutableStateOf("") }
     var authError by remember { mutableStateOf("") }
     val inbox = remember { host.loadInbox() }
     var threads by remember { mutableStateOf(inbox.visible()) }
@@ -76,11 +74,7 @@ fun OlloRoot(host: SessionHost) {
     Box(Modifier.fillMaxSize().background(Bg)) {
         when (dest) {
             Dest.Splash, Dest.Auth -> AuthScreen(
-                phone = phone,
-                otp = otp,
                 error = authError,
-                onPhone = { phone = it },
-                onOtp = { otp = it },
                 onContinue = {
                     scope.launch {
                         try {
@@ -88,9 +82,7 @@ fun OlloRoot(host: SessionHost) {
                                 if (host.launch() == EnvelopePlanner.SessionLaunch.SignedIn) {
                                     return@withContext host.loadInbox()
                                 }
-                                val deviceJson = host.requireRegistration("Android", "android")
-                                val (challenge, _) = host.auth.requestOtp(phone)
-                                host.auth.verify(challenge, otp, deviceJson)
+                                host.auth.signInWithKey(host.engine, "Android", "android")
                                 host.loadInbox()
                             }
                             inbox.wipe()
@@ -133,11 +125,7 @@ fun OlloRoot(host: SessionHost) {
 
 @Composable
 private fun AuthScreen(
-    phone: String,
-    otp: String,
     error: String,
-    onPhone: (String) -> Unit,
-    onOtp: (String) -> Unit,
     onContinue: () -> Unit,
 ) {
     Column(
@@ -150,8 +138,7 @@ private fun AuthScreen(
         ) { Text("O", color = Color(0xFF06241B), fontWeight = FontWeight.Black, fontSize = 22.sp) }
         Text("OllO", color = Accent, fontSize = 40.sp, fontWeight = FontWeight.ExtraBold)
         Text(stringResource(R.string.tagline), color = Mute, modifier = Modifier.padding(top = 6.dp, bottom = 24.dp))
-        OlloField(phone, onPhone, "E.164")
-        OlloField(otp, onOtp, "OTP", KeyboardType.Number)
+        Text(stringResource(R.string.address_hint), color = Mute, fontSize = 13.sp, modifier = Modifier.padding(bottom = 12.dp))
         if (error.isNotEmpty()) {
             Text(error, color = Color(0xFFFFC9C9), modifier = Modifier.padding(top = 8.dp))
         }

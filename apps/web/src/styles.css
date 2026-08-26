@@ -249,3 +249,11 @@ button { cursor: pointer; }
   .sidebar { display: none; }
   .sidebar.open { display: flex; position: absolute; inset: 56px 0 0 0; z-index: 5; }
 }
+
+.qr-card { margin: 12px 0; }
+.qr { background: #fff; border-radius: 12px; padding: 8px; display: inline-block; line-height: 0; }
+.qr svg { display: block; }
+.qr-uri {
+  margin-top: 8px; font-family: "IBM Plex Mono", monospace; font-size: 11px;
+  word-break: break-all; color: var(--muted);
+}

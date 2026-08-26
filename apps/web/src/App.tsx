@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { InnerMessage } from "@ollo/protocol";
 import { t, type Lang } from "./i18n";
+import { QrCard } from "./QrCard";
 import {
   type Account,
   type ChatMessage,
+  accountAddress,
   api,
   b64u,
   clearAccount,
@@ -30,8 +32,9 @@ import {
   realtimeHello,
   realtimeUrl,
   openEnvelope,
-  publicDevicePayload,
+  parseUserUri,
   pendingMembershipNotice,
+  registerWithIdentity,
   rejectPendingMembership,
   replenishPrekeys,
   resolveSenderEd25519,
@@ -186,46 +189,24 @@ function Auth({
   setLang: (l: Lang) => void;
   onReady: (a: Account) => void;
 }) {
-  const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [phone, setPhone] = useState("+7");
-  const [challenge, setChallenge] = useState("");
-  const [otp, setOtp] = useState("");
+  const [step, setStep] = useState<1 | 2>(1);
   const [lockPin, setLockPin] = useState("");
-  const [devOtp, setDevOtp] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [username, setUsername] = useState("");
   const [err, setErr] = useState("");
   const [restorePass, setRestorePass] = useState("");
   const [restoreRaw, setRestoreRaw] = useState("");
+  const [address, setAddress] = useState("");
   const mat = useRef(newDeviceMaterial());
 
-  async function requestOtp() {
+  async function createAccount() {
     setErr("");
     try {
-      const res = await api("/v1/auth/request-otp", null, {
-        method: "POST",
-        body: JSON.stringify({ phone_e164: phone }),
-      });
-      setChallenge(res.challenge_id);
-      setDevOtp(res.dev_otp ?? "");
-      setStep(2);
-    } catch (e) {
-      setErr((e as Error).message);
-    }
-  }
-
-  async function verify() {
-    setErr("");
-    try {
-      const res = await api("/v1/auth/verify-otp", null, {
-        method: "POST",
-        body: JSON.stringify({
-          challenge_id: challenge,
-          otp,
-          registration_lock: lockPin.trim() || undefined,
-          device: publicDevicePayload(mat.current, navigator.userAgent.slice(0, 40), "web"),
-        }),
-      });
+      const res = await registerWithIdentity(
+        mat.current,
+        navigator.userAgent.slice(0, 40),
+        lockPin.trim() || undefined,
+      );
       const acc: Account = {
         userId: res.user.id,
         deviceId: res.device_id,
@@ -262,8 +243,9 @@ function Auth({
           /* history optional */
         }
       }
+      setAddress(accountAddress(acc));
       if (res.user.is_new || !res.user.username) {
-        setStep(3);
+        setStep(2);
         sessionStorage.setItem("ollo.tmp", JSON.stringify({ acc: serializeTmp(acc) }));
         (window as unknown as { __acc: Account }).__acc = acc;
       } else {
@@ -300,22 +282,7 @@ function Auth({
         <p>{t(lang, "tagline")}</p>
         {step === 1 && (
           <>
-            <div className="field">
-              <label>{t(lang, "phone")}</label>
-              <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+79991234567" />
-            </div>
-            <button className="primary" onClick={() => void requestOtp()}>
-              {t(lang, "sendCode")}
-            </button>
-          </>
-        )}
-        {step === 2 && (
-          <>
-            <div className="field">
-              <label>{t(lang, "otp")}</label>
-              <input className="otp" value={otp} onChange={(e) => setOtp(e.target.value)} maxLength={6} />
-            </div>
-            {devOtp && <div className="hint">DEV OTP: {devOtp}</div>}
+            <p className="hint">{t(lang, "addressHint")}</p>
             <div className="field">
               <label>{t(lang, "lock")}</label>
               <input
@@ -323,15 +290,25 @@ function Auth({
                 value={lockPin}
                 onChange={(e) => setLockPin(e.target.value)}
                 autoComplete="off"
+                placeholder="PIN"
               />
             </div>
-            <button className="primary" onClick={() => void verify()}>
-              {t(lang, "verify")}
+            <button className="primary" onClick={() => void createAccount()}>
+              {t(lang, "createAccount")}
             </button>
           </>
         )}
-        {step === 3 && (
+        {step === 2 && (
           <>
+            <QrCard value={address} label={t(lang, "yourAddress")} />
+            <button
+              className="ghost"
+              onClick={() => {
+                void navigator.clipboard.writeText(address);
+              }}
+            >
+              {t(lang, "copyAddress")}
+            </button>
             <div className="field">
               <label>{t(lang, "displayName")}</label>
               <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
@@ -804,9 +781,11 @@ function Shell({
   async function searchUser() {
     if (!query.trim()) return;
     try {
+      const q = query.trim();
+      const body = parseUserUri(q) ? { address: q } : { username: q };
       const res = await api("/v1/users/search", acc.access, {
         method: "POST",
-        body: JSON.stringify({ username: query.trim() }),
+        body: JSON.stringify(body),
       }, acc);
       const u = res.users?.[0];
       if (!u) return;
@@ -1504,6 +1483,17 @@ function Shell({
         <div className="modal-back" onClick={() => setModal(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>{t(lang, "settings")}</h3>
+            <QrCard value={accountAddress(acc)} label={t(lang, "yourAddress")} />
+            <div className="list-row">
+              <button
+                className="ghost"
+                onClick={() => {
+                  void navigator.clipboard.writeText(accountAddress(acc));
+                }}
+              >
+                {t(lang, "copyAddress")}
+              </button>
+            </div>
             <div className="list-row">
               <span>{t(lang, "theme")}</span>
               <button className="ghost" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>

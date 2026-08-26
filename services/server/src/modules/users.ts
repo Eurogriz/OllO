@@ -1,11 +1,12 @@
 import type { FastifyInstance } from "fastify";
 import { isValidUsername, normalizeUsername } from "@ollo/protocol";
-import { MAX_USERNAME_CHANGES_PER_DAY } from "@ollo/shared";
+import { MAX_USERNAME_CHANGES_PER_DAY, encodeUserUri, parseUserUri } from "@ollo/shared";
 import { z } from "zod";
 import type { Db } from "../db/index.js";
 import { ApiError, requireAuth } from "../http.js";
 import { dropUser } from "../realtime/hub.js";
 import { randomUuid } from "../security/crypto-utils.js";
+import { ED25519_PUBLIC_LEN as ED_LEN, requirePublicBytes } from "../security/public-keys.js";
 
 function publicUser(row: {
   id: string;
@@ -13,13 +14,16 @@ function publicUser(row: {
   display_name: string;
   about: string;
   avatar_object_id: string | null;
+  account_ed25519?: Buffer | Uint8Array | null;
 }) {
+  const ed = row.account_ed25519 ? new Uint8Array(row.account_ed25519) : null;
   return {
     id: row.id,
     username: row.username,
     display_name: row.display_name,
     about: row.about,
     avatar_object_id: row.avatar_object_id,
+    address: ed && ed.length === ED_LEN ? encodeUserUri(ed) : null,
   };
 }
 
@@ -32,9 +36,10 @@ export async function registerUsers(app: FastifyInstance, db: Db): Promise<void>
       display_name: string;
       about: string;
       avatar_object_id: string | null;
+      account_ed25519: Buffer | null;
       deleted_at: string | null;
     }>(
-      "SELECT id, username, display_name, about, avatar_object_id, deleted_at FROM users WHERE id = $1",
+      "SELECT id, username, display_name, about, avatar_object_id, account_ed25519, deleted_at FROM users WHERE id = $1",
       [auth.userId],
     );
     if (!r.rows[0] || r.rows[0].deleted_at) throw new ApiError("not_found", "User not found", 404);
@@ -97,7 +102,7 @@ export async function registerUsers(app: FastifyInstance, db: Db): Promise<void>
       display_name: string;
       about: string;
       avatar_object_id: string | null;
-    }>("SELECT id, username, display_name, about, avatar_object_id FROM users WHERE id = $1", [
+    }>("SELECT id, username, display_name, about, avatar_object_id, account_ed25519 FROM users WHERE id = $1", [
       auth.userId,
     ]);
     return { user: publicUser(r.rows[0]!) };
@@ -113,7 +118,7 @@ export async function registerUsers(app: FastifyInstance, db: Db): Promise<void>
       about: string;
       avatar_object_id: string | null;
     }>(
-      "SELECT id, username, display_name, about, avatar_object_id FROM users WHERE id = $1 AND deleted_at IS NULL",
+      "SELECT id, username, display_name, about, avatar_object_id, account_ed25519 FROM users WHERE id = $1 AND deleted_at IS NULL",
       [id],
     );
     if (!r.rows[0]) throw new ApiError("not_found", "User not found", 404);
@@ -130,7 +135,7 @@ export async function registerUsers(app: FastifyInstance, db: Db): Promise<void>
       about: string;
       avatar_object_id: string | null;
     }>(
-      "SELECT id, username, display_name, about, avatar_object_id FROM users WHERE lower(username) = $1 AND deleted_at IS NULL",
+      "SELECT id, username, display_name, about, avatar_object_id, account_ed25519 FROM users WHERE lower(username) = $1 AND deleted_at IS NULL",
       [name],
     );
     if (!r.rows[0]) throw new ApiError("not_found", "User not found", 404);
@@ -139,13 +144,41 @@ export async function registerUsers(app: FastifyInstance, db: Db): Promise<void>
 
   app.post("/v1/users/search", async (req) => {
     requireAuth(req);
-    const body = z.object({ username: z.string().optional(), phone_e164: z.string().optional() }).parse(req.body);
+    const body = z
+      .object({
+        username: z.string().optional(),
+        phone_e164: z.string().optional(),
+        address: z.string().optional(),
+        identity_ed25519: z.string().optional(),
+      })
+      .parse(req.body);
     if (body.phone_e164) {
       throw new ApiError(
         "validation",
         "Phone lookup is not offered; contact discovery is on-device and mutual",
         403,
       );
+    }
+    if (body.address || body.identity_ed25519) {
+      const fromUri = body.address ? parseUserUri(body.address) : null;
+      if (body.address && !fromUri && !body.identity_ed25519) {
+        throw new ApiError("validation", "Invalid address");
+      }
+      const ed = fromUri
+        ? Buffer.from(fromUri)
+        : requirePublicBytes(body.identity_ed25519!, ED_LEN, "identity_ed25519");
+      const r = await db.query<{
+        id: string;
+        username: string | null;
+        display_name: string;
+        about: string;
+        avatar_object_id: string | null;
+        account_ed25519: Buffer | null;
+      }>(
+        "SELECT id, username, display_name, about, avatar_object_id, account_ed25519 FROM users WHERE account_ed25519 = $1 AND deleted_at IS NULL",
+        [ed],
+      );
+      return { users: r.rows.map(publicUser) };
     }
     if (body.username) {
       const name = normalizeUsername(body.username);
@@ -155,13 +188,14 @@ export async function registerUsers(app: FastifyInstance, db: Db): Promise<void>
         display_name: string;
         about: string;
         avatar_object_id: string | null;
+        account_ed25519: Buffer | null;
       }>(
-        "SELECT id, username, display_name, about, avatar_object_id FROM users WHERE lower(username) = $1 AND deleted_at IS NULL",
+        "SELECT id, username, display_name, about, avatar_object_id, account_ed25519 FROM users WHERE lower(username) = $1 AND deleted_at IS NULL",
         [name],
       );
       return { users: r.rows.map(publicUser) };
     }
-    throw new ApiError("validation", "username required");
+    throw new ApiError("validation", "username or address required");
   });
 
   app.get("/v1/contacts", async (req) => {
@@ -173,7 +207,7 @@ export async function registerUsers(app: FastifyInstance, db: Db): Promise<void>
       about: string;
       avatar_object_id: string | null;
     }>(
-      `SELECT u.id, u.username, u.display_name, u.about, u.avatar_object_id
+      `SELECT u.id, u.username, u.display_name, u.about, u.avatar_object_id, u.account_ed25519
        FROM contacts c JOIN users u ON u.id = c.contact_user_id
        WHERE c.user_id = $1 AND u.deleted_at IS NULL`,
       [auth.userId],
@@ -301,7 +335,8 @@ export async function registerUsers(app: FastifyInstance, db: Db): Promise<void>
          about = '',
          avatar_object_id = NULL,
          registration_lock_hash = NULL,
-         phone_hmac = $2
+         phone_hmac = $2,
+         account_ed25519 = NULL
        WHERE id = $1`,
       [auth.userId, `deleted:${auth.userId}`],
     );

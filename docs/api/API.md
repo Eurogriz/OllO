@@ -34,6 +34,45 @@ Full machine-readable spec: [`openapi.yaml`](openapi.yaml).
 
 ## Auth
 
+Identity is a device Ed25519 keypair. The private key never leaves the
+device. The public key is the account address (`ollo:user:v1:<b64url>`).
+
+### POST /v1/auth/challenge
+
+```json
+{}
+```
+
+Response 200:
+
+```json
+{ "challenge_id": "ch_...", "nonce": "...", "expires_in": 300 }
+```
+
+The client signs `ollo-auth-v1 || 0x00 || challenge_id || 0x00 || nonce`
+with the identity Ed25519 private key.
+
+### POST /v1/auth/register-key
+
+```json
+{
+  "challenge_id": "ch_...",
+  "signature": "b64",
+  "registration_lock": null,
+  "device": {
+    "name": "Pixel 8",
+    "platform": "android",
+    "identity_key_x25519": "b64",
+    "identity_key_ed25519": "b64",
+    "signed_prekey": { "id": 1, "public": "b64", "signature": "b64" },
+    "one_time_prekeys": [{ "id": 1, "public": "b64" }]
+  }
+}
+```
+
+Response is the same session object as `verify-otp`. A matching
+`account_ed25519` adds another device (registration lock if set).
+
 ### POST /v1/auth/request-otp
 
 ```json
@@ -96,10 +135,10 @@ Set / change / remove Argon2id lock.
 ## Users
 
 - `PUT /v1/me` — username, display name, about, avatar. Username may change at most 3 times per rolling 24 hours (`429 rate_limited`). Repeating the current username is not counted.
-- `GET /v1/me`
+- `GET /v1/me` — includes `address` (`ollo:user:v1:…`) when the account key is set
 - `GET /v1/users/{id}`
 - `GET /v1/users/by-username/{name}`
-- `POST /v1/users/search` — exact username only. Phone lookup is refused (403); contact discovery is on-device and mutual.
+- `POST /v1/users/search` — exact username **or** `address` / `identity_ed25519`. Phone lookup is refused (403); contact discovery is on-device and mutual.
 - `POST /v1/me/delete` — mark the account deleted, revoke devices/sessions, drop OPKs and mailboxes. Access of those devices is rejected immediately.
 - `POST /v1/contacts` / `DELETE /v1/contacts/{user_id}`
 - `POST /v1/blocks` / `DELETE /v1/blocks/{user_id}`

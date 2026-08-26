@@ -9,6 +9,7 @@ public protocol CryptoEngine: Sendable {
     func encrypt(sessionId: String, plaintext: Data) throws -> Data
     func decrypt(sessionId: String, payload: Data) throws -> Data
     func safetyNumber(local: Data, remote: Data) -> String
+    func sign(message: Data) throws -> Data
 }
 
 public struct IdentityMaterial: Sendable {
@@ -60,6 +61,10 @@ public struct UnboundCryptoEngine: CryptoEngine {
 
     public func safetyNumber(local: Data, remote: Data) -> String {
         SafetyNumber.of(identityA: local, identityB: remote).digits
+    }
+
+    public func sign(message: Data) throws -> Data {
+        throw EngineError.unbound
     }
 
     public enum EngineError: Error {

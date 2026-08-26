@@ -8,6 +8,18 @@ public enum AuthPayload {
         case missingDevice
     }
 
+    public static func parseAuthChallenge(_ data: Data) throws -> (challengeId: String, nonce: String) {
+        guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw Error.malformed
+        }
+        guard let challengeId = obj["challenge_id"] as? String, !challengeId.isEmpty,
+              let nonce = obj["nonce"] as? String, !nonce.isEmpty
+        else {
+            throw Error.malformed
+        }
+        return (challengeId, nonce)
+    }
+
     public static func parseOtpChallenge(_ data: Data) throws -> (challengeId: String, devOtp: String?) {
         guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw Error.malformed
@@ -71,6 +83,36 @@ public enum AuthPayload {
         var body: [String: Any] = [
             "challenge_id": challengeId,
             "otp": otp,
+            "device": device,
+        ]
+        if let registrationLock, !registrationLock.isEmpty {
+            body["registration_lock"] = registrationLock
+        }
+        return try JSONSerialization.data(withJSONObject: body)
+    }
+
+    public static func registerKeyBody(
+        challengeId: String,
+        signature: String,
+        deviceJson: String,
+        registrationLock: String? = nil
+    ) throws -> Data {
+        guard let deviceData = deviceJson.data(using: .utf8),
+              let device = try JSONSerialization.jsonObject(with: deviceData) as? [String: Any]
+        else {
+            throw Error.missingDevice
+        }
+        guard device["identity_key_x25519"] is String,
+              device["identity_key_ed25519"] is String,
+              device["registration_id"] is NSNumber || device["registration_id"] is Int,
+              device["signed_prekey"] is [String: Any],
+              device["one_time_prekeys"] is [Any]
+        else {
+            throw Error.missingDevice
+        }
+        var body: [String: Any] = [
+            "challenge_id": challengeId,
+            "signature": signature,
             "device": device,
         ]
         if let registrationLock, !registrationLock.isEmpty {

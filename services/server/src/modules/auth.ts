@@ -1,6 +1,12 @@
 import type { FastifyInstance } from "fastify";
+import { verify, verifySignedPrekey } from "@ollo/crypto";
 import { isValidE164 } from "@ollo/protocol";
-import { ACCESS_TTL_SECONDS, REFRESH_TTL_SECONDS } from "@ollo/shared";
+import {
+  ACCESS_TTL_SECONDS,
+  REFRESH_TTL_SECONDS,
+  encodeAuthProof,
+  planAuthProofAccept,
+} from "@ollo/shared";
 import { z } from "zod";
 import { config } from "../config.js";
 import type { Db } from "../db/index.js";
@@ -28,29 +34,32 @@ const requestOtpSchema = z.object({
   device_fingerprint: z.string().max(128).optional(),
 });
 
+const deviceSchema = z.object({
+  name: z.string().min(1).max(64),
+  platform: z.enum(["android", "ios", "web", "desktop"]),
+  identity_key_x25519: z.string(),
+  identity_key_ed25519: z.string(),
+  registration_id: z.number().int().nonnegative(),
+  signed_prekey: z.object({
+    id: z.number().int().positive(),
+    public: z.string(),
+    signature: z.string(),
+  }),
+  one_time_prekeys: z
+    .array(z.object({ id: z.number().int().positive(), public: z.string() }))
+    .min(1)
+    .max(200),
+});
+
 const verifySchema = z.object({
   challenge_id: z.string(),
   otp: z.string().min(4).max(10),
   registration_lock: z.string().min(4).max(128).nullable().optional(),
-  device: z.object({
-    name: z.string().min(1).max(64),
-    platform: z.enum(["android", "ios", "web", "desktop"]),
-    identity_key_x25519: z.string(),
-    identity_key_ed25519: z.string(),
-    registration_id: z.number().int().nonnegative(),
-    signed_prekey: z.object({
-      id: z.number().int().positive(),
-      public: z.string(),
-      signature: z.string(),
-    }),
-    one_time_prekeys: z
-      .array(z.object({ id: z.number().int().positive(), public: z.string() }))
-      .min(1)
-      .max(200),
-  }),
+  device: deviceSchema,
 });
 
 const otpWindow = new Map<string, { n: number; reset: number }>();
+const authWindow = new Map<string, { n: number; reset: number }>();
 
 function takeOtpSlot(phoneH: string): void {
   const now = Date.now();
@@ -61,6 +70,66 @@ function takeOtpSlot(phoneH: string): void {
   }
   if (cur.n >= 3) throw new ApiError("rate_limited", "Too many OTP requests", 429);
   cur.n += 1;
+}
+
+function takeAuthSlot(key: string): void {
+  const now = Date.now();
+  const cur = authWindow.get(key);
+  if (!cur || cur.reset < now) {
+    authWindow.set(key, { n: 1, reset: now + 60_000 });
+    return;
+  }
+  if (cur.n >= 8) throw new ApiError("rate_limited", "Too many auth requests", 429);
+  cur.n += 1;
+}
+
+type DeviceBody = z.infer<typeof deviceSchema>;
+
+function parseDeviceKeys(device: DeviceBody) {
+  const identityX = requirePublicBytes(device.identity_key_x25519, X25519_PUBLIC_LEN, "identity_key_x25519");
+  const identityEd = requirePublicBytes(device.identity_key_ed25519, ED25519_PUBLIC_LEN, "identity_key_ed25519");
+  const spkPub = requirePublicBytes(device.signed_prekey.public, X25519_PUBLIC_LEN, "signed_prekey.public");
+  const spkSig = requirePublicBytes(device.signed_prekey.signature, ED25519_SIGNATURE_LEN, "signed_prekey.signature");
+  if (!verifySignedPrekey(new Uint8Array(identityEd), new Uint8Array(spkPub), new Uint8Array(spkSig))) {
+    throw new ApiError("validation", "signed_prekey.signature is not valid");
+  }
+  return { identityX, identityEd, spkPub, spkSig };
+}
+
+async function insertDevice(db: Db, userId: string, deviceId: string, device: DeviceBody): Promise<void> {
+  const keys = parseDeviceKeys(device);
+  await db.query(
+    `INSERT INTO devices (
+       id, user_id, name, platform, registration_id,
+       identity_x25519, identity_ed25519,
+       signed_prekey_id, signed_prekey_public, signed_prekey_sig
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+    [
+      deviceId,
+      userId,
+      device.name,
+      device.platform,
+      device.registration_id,
+      keys.identityX,
+      keys.identityEd,
+      device.signed_prekey.id,
+      keys.spkPub,
+      keys.spkSig,
+    ],
+  );
+  for (const k of device.one_time_prekeys) {
+    await db.query(
+      `INSERT INTO one_time_prekeys (device_id, key_id, public_key) VALUES ($1,$2,$3)`,
+      [deviceId, k.id, requirePublicBytes(k.public, X25519_PUBLIC_LEN, "one_time_prekey")],
+    );
+  }
+}
+
+async function attachAccountKey(db: Db, userId: string, identityEd: Buffer): Promise<void> {
+  await db.query(
+    `UPDATE users SET account_ed25519 = $2 WHERE id = $1 AND account_ed25519 IS NULL`,
+    [userId, identityEd],
+  );
 }
 
 export async function registerAuth(app: FastifyInstance, db: Db): Promise<void> {
@@ -88,6 +157,99 @@ export async function registerAuth(app: FastifyInstance, db: Db): Promise<void> 
       res.dev_otp = otp;
     }
     return reply.send(res);
+  });
+
+  app.post("/v1/auth/challenge", async (req, reply) => {
+    takeAuthSlot("challenge");
+    const challengeId = randomId("ch");
+    const nonce = randomToken(24);
+    const expires = new Date(Date.now() + config.otpTtlSeconds * 1000);
+    await db.query(
+      `INSERT INTO auth_challenges (id, nonce, expires_at) VALUES ($1,$2,$3)`,
+      [challengeId, nonce, expires.toISOString()],
+    );
+    return reply.send({
+      challenge_id: challengeId,
+      nonce,
+      expires_in: config.otpTtlSeconds,
+    });
+  });
+
+  app.post("/v1/auth/register-key", async (req, reply) => {
+    const body = z
+      .object({
+        challenge_id: z.string(),
+        signature: z.string(),
+        registration_lock: z.string().min(4).max(128).nullable().optional(),
+        device: deviceSchema,
+      })
+      .parse(req.body);
+    takeAuthSlot("register-key");
+    const ch = await db.query<{
+      id: string;
+      nonce: string;
+      expires_at: string;
+      consumed_at: string | null;
+    }>("SELECT * FROM auth_challenges WHERE id = $1", [body.challenge_id]);
+    const row = ch.rows[0];
+    if (!row) throw new ApiError("unauthorized", "Invalid or expired challenge", 401);
+    const keys = parseDeviceKeys(body.device);
+    const proof = encodeAuthProof(body.challenge_id, row.nonce);
+    const sig = requirePublicBytes(body.signature, ED25519_SIGNATURE_LEN, "signature");
+    const signatureValid = proof.length > 0 && verify(new Uint8Array(keys.identityEd), proof, new Uint8Array(sig));
+    const decision = planAuthProofAccept({
+      challengeId: body.challenge_id,
+      nonce: row.nonce,
+      signatureValid,
+      expired: new Date(row.expires_at).getTime() < Date.now(),
+      consumed: Boolean(row.consumed_at),
+    });
+    if (decision !== "accept") throw new ApiError("unauthorized", "Invalid or expired challenge", 401);
+    await db.query("DELETE FROM auth_challenges WHERE id = $1", [row.id]);
+
+    const existing = await db.query<{
+      id: string;
+      username: string | null;
+      registration_lock_hash: string | null;
+      deleted_at: string | null;
+    }>(
+      "SELECT id, username, registration_lock_hash, deleted_at FROM users WHERE account_ed25519 = $1",
+      [keys.identityEd],
+    );
+    let userId: string;
+    let isNew = false;
+    if (!existing.rows[0] || existing.rows[0].deleted_at) {
+      userId = randomUuid();
+      isNew = true;
+      await db.query(
+        `INSERT INTO users (id, phone_hmac, display_name, account_ed25519) VALUES ($1,NULL,'',$2)`,
+        [userId, keys.identityEd],
+      );
+    } else {
+      userId = existing.rows[0].id;
+      const lock = existing.rows[0].registration_lock_hash;
+      if (lock) {
+        if (!body.registration_lock) {
+          throw new ApiError("registration_lock", "Registration lock required", 403);
+        }
+        const ok = await kdfVerify(body.registration_lock, config.registrationLockPepper, lock);
+        if (!ok) throw new ApiError("registration_lock", "Registration lock required", 403);
+      }
+    }
+    const deviceId = randomUuid();
+    await insertDevice(db, userId, deviceId, body.device);
+    const session = await issueSession(db, userId, deviceId);
+    const user = await db.query<{ id: string; username: string | null }>(
+      "SELECT id, username FROM users WHERE id = $1",
+      [userId],
+    );
+    return reply.send({
+      user: { id: userId, username: user.rows[0]?.username ?? null, is_new: isNew },
+      device_id: deviceId,
+      access_token: session.access,
+      refresh_token: session.refresh,
+      access_expires_in: ACCESS_TTL_SECONDS,
+    });
   });
 
   app.post("/v1/auth/verify-otp", async (req, reply) => {
@@ -147,31 +309,9 @@ export async function registerAuth(app: FastifyInstance, db: Db): Promise<void> 
     }
 
     const deviceId = randomUuid();
-    await db.query(
-      `INSERT INTO devices (
-         id, user_id, name, platform, registration_id,
-         identity_x25519, identity_ed25519,
-         signed_prekey_id, signed_prekey_public, signed_prekey_sig
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-      [
-        deviceId,
-        userId,
-        body.device.name,
-        body.device.platform,
-        body.device.registration_id,
-        requirePublicBytes(body.device.identity_key_x25519, X25519_PUBLIC_LEN, "identity_key_x25519"),
-        requirePublicBytes(body.device.identity_key_ed25519, ED25519_PUBLIC_LEN, "identity_key_ed25519"),
-        body.device.signed_prekey.id,
-        requirePublicBytes(body.device.signed_prekey.public, X25519_PUBLIC_LEN, "signed_prekey.public"),
-        requirePublicBytes(body.device.signed_prekey.signature, ED25519_SIGNATURE_LEN, "signed_prekey.signature"),
-      ],
-    );
-    for (const k of body.device.one_time_prekeys) {
-      await db.query(
-        `INSERT INTO one_time_prekeys (device_id, key_id, public_key) VALUES ($1,$2,$3)`,
-        [deviceId, k.id, requirePublicBytes(k.public, X25519_PUBLIC_LEN, "one_time_prekey")],
-      );
-    }
+    const keys = parseDeviceKeys(body.device);
+    await insertDevice(db, userId, deviceId, body.device);
+    await attachAccountKey(db, userId, keys.identityEd);
 
     const session = await issueSession(db, userId, deviceId);
     const user = await db.query<{ id: string; username: string | null }>(

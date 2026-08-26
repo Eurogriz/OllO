@@ -25,6 +25,10 @@ export async function expireStale(
      WHERE expires_at < now() OR consumed_at IS NOT NULL
      RETURNING id`,
   );
+  await db.query(
+    `DELETE FROM auth_challenges
+     WHERE expires_at < now() OR consumed_at IS NOT NULL`,
+  );
   const drafts = await db.query<{ thread_id: string }>(
     `DELETE FROM drafts
      WHERE device_id IN (SELECT id FROM devices WHERE revoked_at IS NOT NULL)

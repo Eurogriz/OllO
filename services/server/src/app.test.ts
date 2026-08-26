@@ -3,8 +3,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { beginSession, createLocalDevice, encryptFirstMessage, signMembership } from "@ollo/crypto";
+import { beginSession, createLocalDevice, encryptFirstMessage, sign, signMembership } from "@ollo/crypto";
 import { encodeSealed, paddingBucket } from "@ollo/protocol";
+import { encodeAuthProof, encodeUserUri } from "@ollo/shared";
 
 process.env.OLLO_ENV = "development";
 process.env.OTP_DEV_REVEAL = "true";
@@ -1042,5 +1043,52 @@ describe("API integration", () => {
       device: devicePayload("lock-tablet").json,
     });
     assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  });
+
+  it("registers by Ed25519 possession and finds the public address", async () => {
+    const dev = devicePayload("key-web");
+    const ch = await json("POST", "/v1/auth/challenge", {});
+    assert.equal(ch.status, 200, JSON.stringify(ch.body));
+    const proof = encodeAuthProof(String(ch.body.challenge_id), String(ch.body.nonce));
+    const sig = sign(dev.mat.identity.ed25519Private, proof);
+    const reg = await json("POST", "/v1/auth/register-key", {
+      challenge_id: ch.body.challenge_id,
+      signature: b64(sig),
+      device: dev.json,
+    });
+    assert.equal(reg.status, 200, JSON.stringify(reg.body));
+    const tok = reg.body.access_token as string;
+    const address = encodeUserUri(dev.mat.identity.ed25519Public);
+    const me = await json("GET", "/v1/me", undefined, tok);
+    assert.equal(me.status, 200);
+    assert.equal((me.body.user as { address: string }).address, address);
+
+    const found = await json("POST", "/v1/users/search", { address }, tok);
+    assert.equal(found.status, 200, JSON.stringify(found.body));
+    assert.equal(((found.body.users as { id: string }[])[0]).id, (reg.body.user as { id: string }).id);
+
+    const badAddr = await json("POST", "/v1/users/search", { address: "ollo:user:v1:nope" }, tok);
+    assert.equal(badAddr.status, 400);
+
+    const other = devicePayload("other-key");
+    const ch2 = await json("POST", "/v1/auth/challenge", {});
+    const proof2 = encodeAuthProof(String(ch2.body.challenge_id), String(ch2.body.nonce));
+    const wrong = sign(other.mat.identity.ed25519Private, proof2);
+    const forged = await json("POST", "/v1/auth/register-key", {
+      challenge_id: ch2.body.challenge_id,
+      signature: b64(wrong),
+      device: dev.json,
+    });
+    assert.equal(forged.status, 401);
+
+    const reuse = await json("POST", "/v1/auth/register-key", {
+      challenge_id: ch.body.challenge_id,
+      signature: b64(sig),
+      device: devicePayload("reuse").json,
+    });
+    assert.equal(reuse.status, 401);
+
+    const phoneLookup = await json("POST", "/v1/users/search", { phone_e164: "+79990000999" }, tok);
+    assert.equal(phoneLookup.status, 403);
   });
 });

@@ -14,6 +14,12 @@ import {
   planSessionArchive,
   planArchiveTrim,
   MAX_ARCHIVED_SESSIONS,
+  encodeUserUri,
+  parseUserUri,
+  encodeAuthProof,
+  planAuthProofAccept,
+  USER_URI_PREFIX,
+  AUTH_PROOF_DOMAIN,
 } from "./identity.js";
 
 describe("remote identity guard", () => {
@@ -92,5 +98,20 @@ describe("remote identity guard", () => {
     assert.equal(planArchiveTrim(0), 0);
     assert.equal(planArchiveTrim(-1), 0);
     assert.equal(planArchiveTrim(10, 0), 0);
+    const ik = new Uint8Array(ED25519_PUBLIC_LEN).fill(7);
+    const uri = encodeUserUri(ik);
+    assert.equal(uri.startsWith(USER_URI_PREFIX), true);
+    assert.deepEqual(parseUserUri(uri), ik);
+    assert.deepEqual(parseUserUri(uri.slice(USER_URI_PREFIX.length)), ik);
+    assert.equal(parseUserUri(""), null);
+    assert.equal(parseUserUri("ollo:user:v1:???"), null);
+    assert.equal(encodeUserUri(new Uint8Array(ED25519_PUBLIC_LEN)), "");
+    const proof = encodeAuthProof("ch_1", "nonce-a");
+    assert.equal(new TextDecoder().decode(proof.slice(0, AUTH_PROOF_DOMAIN.length)), AUTH_PROOF_DOMAIN);
+    assert.equal(encodeAuthProof("", "n").length, 0);
+    assert.equal(planAuthProofAccept({ challengeId: "ch_1", nonce: "n", signatureValid: true }), "accept");
+    assert.equal(planAuthProofAccept({ challengeId: "ch_1", nonce: "n", signatureValid: false }), "drop");
+    assert.equal(planAuthProofAccept({ challengeId: "ch_1", nonce: "n", signatureValid: true, expired: true }), "drop");
+    assert.equal(planAuthProofAccept({ challengeId: "", nonce: "n", signatureValid: true }), "drop");
   });
 });

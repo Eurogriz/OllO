@@ -344,10 +344,11 @@ package names are not imported until the 0.58 client API is confirmed.
 
 Native launch (`SessionHost`) constructs `ProtocolStore` + `SessionController`
 and calls `planSessionLaunch`. A wrapped vault session opens the inbox and
-skips OTP. Missing secrets stay on the auth screen. Continue calls
-`deviceRegistrationJson` **before** `request-otp`; `UnboundCryptoEngine`
+skips registration. Missing secrets stay on the auth screen. Continue calls
+`deviceRegistrationJson` **before** `auth/challenge`; `UnboundCryptoEngine`
 throws and the client does not invent `registration_id`, prekey ids, or a
-device JSON body. iOS `AuthRepository.connected` is the twin of Android:
+device JSON body. The identity Ed25519 private key signs
+`ollo-auth-v1 || 0x00 || challenge_id || 0x00 || nonce`. iOS `AuthRepository.connected` is the twin of Android:
 access comes from the vault, a 401 refreshes once, a rejected refresh wipes
 the protocol store. `verifyBody` refuses an incomplete device object instead
 of filling ids. Settings wipe is `SessionController.wipe()`. A failed

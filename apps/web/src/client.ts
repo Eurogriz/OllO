@@ -36,6 +36,9 @@ import {
   planSenderKeySharedDrop,
   planSessionOpen,
   planTrustedMembers,
+  encodeAuthProof,
+  encodeUserUri,
+  parseUserUri,
 } from "@ollo/shared";
 import {
   type LocalDevice,
@@ -81,6 +84,7 @@ import {
   serializeRemoteSenderKey,
   serializeSenderKey,
   serializeSession,
+  sign,
   utf8,
 } from "@ollo/crypto";
 
@@ -703,6 +707,31 @@ export function clearAccount(): void {
 
 export function newDeviceMaterial() {
   return createLocalDevice();
+}
+
+export function accountAddress(acc: Pick<Account, "device">): string {
+  return encodeUserUri(acc.device.identity.ed25519Public);
+}
+
+export { encodeUserUri, parseUserUri };
+
+export async function registerWithIdentity(
+  mat: ReturnType<typeof createLocalDevice>,
+  name: string,
+  lockPin?: string,
+) {
+  const ch = await api("/v1/auth/challenge", null, { method: "POST", body: "{}" });
+  const proof = encodeAuthProof(String(ch.challenge_id), String(ch.nonce));
+  const signature = sign(mat.identity.ed25519Private, proof);
+  return api("/v1/auth/register-key", null, {
+    method: "POST",
+    body: JSON.stringify({
+      challenge_id: ch.challenge_id,
+      signature: b64(signature),
+      registration_lock: lockPin || undefined,
+      device: publicDevicePayload(mat, name, "web"),
+    }),
+  });
 }
 
 export function publicDevicePayload(

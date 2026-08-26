@@ -17,7 +17,7 @@ security audit, a cryptographic review, and operational evidence.
 | Identity private keys | Critical | Device secure storage |
 | Session / ratchet state | Critical | Encrypted local DB |
 | Registration lock PIN | High | Argon2id hash on server; PIN on device |
-| Phone number | High | HMAC at rest; needed for OTP |
+| Phone number | High | Optional HMAC if OTP path is used; not the account identifier |
 | Social graph (who talks to whom) | High | Partially visible to server |
 | Profile display name / avatar | Medium | Server-visible by design (discovery) |
 | Push tokens | Medium | Encrypted at rest |
@@ -42,7 +42,7 @@ Even a fully honest server necessarily sees:
 
 - That an account exists, its user id, username, and profile fields the user
   chose to publish.
-- A keyed hash of the phone number (and, during OTP, a short-lived hashed OTP).
+- The account Ed25519 public key (the address). Optional keyed hash of a phone if the legacy OTP path is used.
 - Device identifiers and **public** identity / signed-prekey material of live
   devices. Consumed one-time prekeys keep only a `key_id` tombstone. Revoked
   devices have their directory bytes wiped.
@@ -83,7 +83,7 @@ A stolen database therefore yields **ciphertext + metadata**, not mail.
 | Group membership | Fan-out | Signed membership list; prior-admin in stored JSON; no silent adds |
 | Online/approximate last-active | Socket / push | Coarse last-active (day); not returned to non-contacts |
 | IP at connection | TCP | Short retention, no sale, no enrichment beyond abuse |
-| Phone hash | Registration / SIM recovery | Peppered HMAC; pepper in secret manager |
+| Account public key | Routing / discovery | Public by design; private key stays on device |
 
 ## 6. Compromise scenarios
 
@@ -93,7 +93,7 @@ Attacker can:
 
 - Deny service, drop or delay mail, add fake devices **if they also steal
   a valid session** (they cannot forge a device identity key).
-- Inject a new device into the account **only** by passing auth (OTP + lock).
+- Inject a new device into the account **only** by proving the account Ed25519 key (and lock, if set).
   Existing devices will show a new-device warning because the identity key
   is new.
 - Read all metadata listed in §3.
@@ -165,14 +165,16 @@ sideloading).
 
 ### 6.10 New device
 
-No history from the server. Other devices warn. Registration lock PIN (if
-set) is required in addition to OTP — this is the primary SIM-swap control.
+No history from the server. Other devices warn. Adding a device requires
+the same identity private key (or a restored backup of it). Registration
+lock PIN (if set) is required in addition.
 
-### 6.11 Phone number change / SIM swap
+### 6.11 Lost device / no backup
 
-OTP to the new SIM is not enough if registration lock is enabled.
-Without a lock, a SIM-swap attacker can register a new device; existing
-devices warn and can revoke. Historical mail is not pulled from the server.
+The account address is the first-device Ed25519 public key. If that
+private key is lost and there is no encrypted backup, the account cannot
+be recovered. A new keypair is a new account. Phone/SIM swap does not
+take over a key-rooted account.
 
 ### 6.12 Compromised client contact
 

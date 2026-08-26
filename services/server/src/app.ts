@@ -61,6 +61,8 @@ export async function buildApp(db: Db): Promise<FastifyInstance> {
   const publicV1 = new Set([
     "POST /v1/auth/request-otp",
     "POST /v1/auth/verify-otp",
+    "POST /v1/auth/challenge",
+    "POST /v1/auth/register-key",
     "POST /v1/auth/refresh",
   ]);
 
