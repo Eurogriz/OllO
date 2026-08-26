@@ -16,12 +16,14 @@ import {
   emptyReplayCache,
   type ReplayCache,
   retainUnexpired,
+  planDroppedDevices,
   planHeldSenderKeyFlush,
   planMembershipApply,
   planMembershipDelta,
   planMembershipSignerNotice,
   planRejectedHashes,
   planSenderKeyIngest,
+  planSenderKeyPrune,
   planTrustedMembers,
 } from "@ollo/shared";
 import {
@@ -148,6 +150,7 @@ export interface Account {
   memberships: Record<string, LocalGroupMembership>;
   pendingMemberships: Record<string, LocalGroupMembership>;
   rejectedMemberships: Record<string, string[]>;
+  droppedDevices: string[];
 }
 
 export interface LocalGroupMembership {
@@ -170,6 +173,8 @@ export function pruneSessionsForUser(acc: Account, userId: string, liveDeviceIds
     delete acc.sessions[k];
     delete acc.knownIdentities[k];
     delete acc.firstSent[k];
+    const deviceId = k.slice(userId.length + 1);
+    if (deviceId) noteDroppedDevice(acc, userId, deviceId);
   }
   return dropped;
 }
@@ -181,7 +186,27 @@ export function dropDeviceSessions(acc: Account, userId: string, deviceId: strin
     delete acc.knownIdentities[k];
     delete acc.firstSent[k];
   }
+  noteDroppedDevice(acc, userId, deviceId);
   return dropped;
+}
+
+function noteDroppedDevice(acc: Account, userId: string, deviceId: string): void {
+  if (!acc.droppedDevices) acc.droppedDevices = [];
+  acc.droppedDevices = planDroppedDevices(acc.droppedDevices, userId, deviceId);
+  pruneSenderKeys(acc, { userId, deviceId });
+}
+
+function pruneSenderKeys(acc: Account, filter: { userId?: string; deviceId?: string }): void {
+  if (acc.remoteSenderKeys) {
+    for (const slot of planSenderKeyPrune(Object.keys(acc.remoteSenderKeys), filter)) {
+      delete acc.remoteSenderKeys[slot];
+    }
+  }
+  if (acc.heldSenderKeys) {
+    for (const slot of planSenderKeyPrune(Object.keys(acc.heldSenderKeys), filter)) {
+      delete acc.heldSenderKeys[slot];
+    }
+  }
 }
 
 /** Record a transport envelope id before decrypting. Drop means skip the body. */
@@ -227,9 +252,11 @@ export function rememberMembership(
     signerDeviceId: next.signerDeviceId,
   });
   if (decision === "accept") {
+    const removed = local ? planMembershipDelta(local.members, next.members).removed : [];
     acc.memberships[next.groupId] = next;
     delete acc.pendingMemberships[next.groupId];
     flushHeldSenderKeys(acc, next.groupId, next.members.map((m) => m.userId));
+    for (const uid of removed) pruneSenderKeys(acc, { userId: uid });
   }
   if (decision === "confirm") acc.pendingMemberships[next.groupId] = next;
   if (decision === "rejected") delete acc.pendingMemberships[next.groupId];
@@ -246,11 +273,12 @@ export function confirmPendingMembership(
   const pending = acc.pendingMemberships[groupId];
   if (!pending) return null;
   const local = acc.memberships[groupId];
-  const added = planMembershipDelta(local?.members ?? [], pending.members).added;
+  const delta = planMembershipDelta(local?.members ?? [], pending.members);
   acc.memberships[groupId] = pending;
   delete acc.pendingMemberships[groupId];
   flushHeldSenderKeys(acc, groupId, pending.members.map((m) => m.userId));
-  return { applied: pending, added };
+  for (const uid of delta.removed) pruneSenderKeys(acc, { userId: uid });
+  return { applied: pending, added: delta.added };
 }
 
 export function rejectPendingMembership(acc: Account, groupId: string): void {
@@ -262,6 +290,17 @@ export function rejectPendingMembership(acc: Account, groupId: string): void {
   if (acc.pendingMemberships) delete acc.pendingMemberships[groupId];
   const local = acc.memberships?.[groupId];
   flushHeldSenderKeys(acc, groupId, (local?.members ?? []).map((m) => m.userId));
+  if (pending) {
+    const notice = planMembershipSignerNotice({
+      localUserId: acc.userId,
+      localDeviceId: acc.deviceId,
+      signerUserId: pending.signerUserId,
+      signerDeviceId: pending.signerDeviceId,
+    });
+    if (notice === "own-other-device") {
+      noteDroppedDevice(acc, pending.signerUserId, pending.signerDeviceId);
+    }
+  }
 }
 
 function senderKeySlot(k: { groupId: string; userId: string; deviceId: string; epoch: number }): string {
@@ -524,6 +563,7 @@ function accountFromStored(j: Stored): Account {
     memberships: j.memberships ?? {},
     pendingMemberships: j.pendingMemberships ?? {},
     rejectedMemberships: j.rejectedMemberships ?? {},
+    droppedDevices: j.droppedDevices ?? [],
   };
 }
 
@@ -569,6 +609,7 @@ export function saveAccount(acc: Account): void {
     memberships: acc.memberships ?? {},
     pendingMemberships: acc.pendingMemberships ?? {},
     rejectedMemberships: acc.rejectedMemberships ?? {},
+    droppedDevices: acc.droppedDevices ?? [],
   };
   const sealed = sealVault(ensureVaultKey(), utf8(JSON.stringify(stored)));
   localStorage.setItem(VAULT_STORE, encodeVault(sealed));
@@ -875,6 +916,8 @@ export function ingestSenderKey(
     trustedUserIds: trusted,
     pendingUserIds: pending,
     senderUserId,
+    senderDeviceId,
+    droppedDevices: acc.droppedDevices,
   });
   if (decision === "drop") return;
   const slot = senderKeySlot(remote);
@@ -1147,6 +1190,7 @@ export function backupPlaintext(acc: Account): Uint8Array {
     memberships: acc.memberships ?? {},
     pendingMemberships: acc.pendingMemberships ?? {},
     rejectedMemberships: acc.rejectedMemberships ?? {},
+    droppedDevices: acc.droppedDevices ?? [],
   };
   return utf8(JSON.stringify(stored));
 }
@@ -1188,6 +1232,12 @@ export function mergeBackupHistory(acc: Account, raw: string, passphrase: string
     rejected[gid] = cur;
   }
   acc.rejectedMemberships = rejected;
+  let dropped = [...(acc.droppedDevices ?? [])];
+  for (const d of stored.droppedDevices ?? []) {
+    const [uid, did] = d.split(":");
+    if (uid && did) dropped = planDroppedDevices(dropped, uid, did);
+  }
+  acc.droppedDevices = dropped;
 }
 
 export function searchLocal(acc: Account, q: string): ChatMessage[] {
@@ -1266,4 +1316,5 @@ interface Stored {
   memberships?: Record<string, LocalGroupMembership>;
   pendingMemberships?: Record<string, LocalGroupMembership>;
   rejectedMemberships?: Record<string, string[]>;
+  droppedDevices?: string[];
 }

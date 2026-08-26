@@ -90,6 +90,7 @@ export function App() {
     if (!next.memberships) next.memberships = {};
     if (!next.pendingMemberships) next.pendingMemberships = {};
     if (!next.rejectedMemberships) next.rejectedMemberships = {};
+    if (!next.droppedDevices) next.droppedDevices = [];
     saveAccount(next);
     setAcc({ ...next, sessions: next.sessions, messages: { ...next.messages }, threads: [...next.threads] });
   }, []);
@@ -247,6 +248,7 @@ function Auth({
         memberships: {},
         pendingMemberships: {},
         rejectedMemberships: {},
+        droppedDevices: [],
       };
       if (restoreRaw) {
         try {

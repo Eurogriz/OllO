@@ -109,6 +109,18 @@ final class SessionVaultTests: XCTestCase {
         )
         XCTAssertEqual(Membership.planSenderKeyIngest(trustedUserIds: ["a", "b"], pendingUserIds: ["a", "b", "eve"], senderUserId: "eve"), "hold")
         XCTAssertEqual(Membership.planSenderKeyIngest(trustedUserIds: ["a", "b"], pendingUserIds: ["a", "b"], senderUserId: "eve"), "drop")
+        let slots = ["g1:alice:phone:1", "g1:alice:laptop:1", "g1:bob:d:1"]
+        XCTAssertEqual(Membership.planSenderKeyPrune(slots: slots), [])
+        XCTAssertEqual(Membership.planSenderKeyPrune(slots: slots, userId: "alice", deviceId: "phone"), ["g1:alice:phone:1"])
+        XCTAssertEqual(Membership.planDroppedDevices(existing: ["a:d1"], userId: "a", deviceId: "stolen"), ["a:d1", "a:stolen"])
+        XCTAssertEqual(
+            Membership.planSenderKeyIngest(trustedUserIds: ["alice"], pendingUserIds: [], senderUserId: "alice", senderDeviceId: "phone", droppedDevices: ["alice:phone"]),
+            "drop"
+        )
+        XCTAssertEqual(
+            Membership.planSenderKeyIngest(trustedUserIds: ["alice"], pendingUserIds: [], senderUserId: "alice", senderDeviceId: "laptop", droppedDevices: ["alice:phone"]),
+            "accept"
+        )
     }
 
     func testDropsAReplayedEnvelopeAndClearsOnWipe() throws {

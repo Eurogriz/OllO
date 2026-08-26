@@ -143,8 +143,54 @@ public enum Membership {
         return .accept
     }
 
-    public static func planSenderKeyIngest(trustedUserIds: [String], pendingUserIds: [String], senderUserId: String) -> String {
+    public static func parseSenderKeySlot(_ slot: String) -> (groupId: String, userId: String, deviceId: String, epoch: String)? {
+        let parts = slot.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count == 4 else { return nil }
+        let groupId = parts[0]
+        let userId = parts[1]
+        let deviceId = parts[2]
+        let epoch = parts[3]
+        if groupId.isEmpty || userId.isEmpty || deviceId.isEmpty || epoch.isEmpty { return nil }
+        return (groupId, userId, deviceId, epoch)
+    }
+
+    public static func planSenderKeyPrune(slots: [String], userId: String? = nil, deviceId: String? = nil) -> [String] {
+        if (userId == nil || userId?.isEmpty == true) && (deviceId == nil || deviceId?.isEmpty == true) { return [] }
+        return slots.filter { slot in
+            guard let p = parseSenderKeySlot(slot) else { return false }
+            if let userId, !userId.isEmpty, p.userId != userId { return false }
+            if let deviceId, !deviceId.isEmpty, p.deviceId != deviceId { return false }
+            return true
+        }
+    }
+
+    public static let maxDroppedDevices = 64
+
+    public static func droppedDeviceKey(userId: String, deviceId: String) -> String {
+        if userId.isEmpty || deviceId.isEmpty { return "" }
+        return "\(userId):\(deviceId)"
+    }
+
+    public static func planDroppedDevices(existing: [String], userId: String, deviceId: String, max: Int = maxDroppedDevices) -> [String] {
+        let next = droppedDeviceKey(userId: userId, deviceId: deviceId)
+        if next.isEmpty { return Array(existing.filter { !$0.isEmpty }.suffix(max)) }
+        var out = existing.filter { !$0.isEmpty && $0 != next }
+        out.append(next)
+        return Array(out.suffix(max))
+    }
+
+    public static func planSenderKeyIngest(
+        trustedUserIds: [String],
+        pendingUserIds: [String],
+        senderUserId: String,
+        senderDeviceId: String? = nil,
+        droppedDevices: [String] = []
+    ) -> String {
         if senderUserId.isEmpty { return "drop" }
+        if let senderDeviceId, !senderDeviceId.isEmpty,
+           droppedDevices.contains(droppedDeviceKey(userId: senderUserId, deviceId: senderDeviceId)) {
+            return "drop"
+        }
         if trustedUserIds.contains(senderUserId) { return "accept" }
         if pendingUserIds.contains(senderUserId) { return "hold" }
         return "drop"

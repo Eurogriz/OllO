@@ -122,8 +122,53 @@ object Membership {
         return Decision.Accept
     }
 
-    fun planSenderKeyIngest(trustedUserIds: List<String>, pendingUserIds: List<String>, senderUserId: String): String {
+    fun parseSenderKeySlot(slot: String): Array<String>? {
+        val parts = slot.split(":")
+        if (parts.size != 4) return null
+        val groupId = parts[0]
+        val userId = parts[1]
+        val deviceId = parts[2]
+        val epoch = parts[3]
+        if (groupId.isEmpty() || userId.isEmpty() || deviceId.isEmpty() || epoch.isEmpty()) return null
+        return arrayOf(groupId, userId, deviceId, epoch)
+    }
+
+    fun planSenderKeyPrune(slots: List<String>, userId: String? = null, deviceId: String? = null): List<String> {
+        if (userId.isNullOrEmpty() && deviceId.isNullOrEmpty()) return emptyList()
+        return slots.filter { slot ->
+            val p = parseSenderKeySlot(slot) ?: return@filter false
+            if (!userId.isNullOrEmpty() && p[1] != userId) return@filter false
+            if (!deviceId.isNullOrEmpty() && p[2] != deviceId) return@filter false
+            true
+        }
+    }
+
+    const val MAX_DROPPED_DEVICES = 64
+
+    fun droppedDeviceKey(userId: String, deviceId: String): String {
+        if (userId.isEmpty() || deviceId.isEmpty()) return ""
+        return "$userId:$deviceId"
+    }
+
+    fun planDroppedDevices(existing: List<String>, userId: String, deviceId: String, max: Int = MAX_DROPPED_DEVICES): List<String> {
+        val next = droppedDeviceKey(userId, deviceId)
+        if (next.isEmpty()) return existing.filter { it.isNotEmpty() }.takeLast(max)
+        val out = existing.filter { it.isNotEmpty() && it != next }.toMutableList()
+        out.add(next)
+        return out.takeLast(max)
+    }
+
+    fun planSenderKeyIngest(
+        trustedUserIds: List<String>,
+        pendingUserIds: List<String>,
+        senderUserId: String,
+        senderDeviceId: String? = null,
+        droppedDevices: List<String> = emptyList(),
+    ): String {
         if (senderUserId.isEmpty()) return "drop"
+        if (!senderDeviceId.isNullOrEmpty() && droppedDeviceKey(senderUserId, senderDeviceId) in droppedDevices) {
+            return "drop"
+        }
         if (senderUserId in trustedUserIds) return "accept"
         if (senderUserId in pendingUserIds) return "hold"
         return "drop"

@@ -5,9 +5,11 @@ import {
   planMembershipApply,
   planMembershipDelta,
   planMembershipSignerNotice,
+  planDroppedDevices,
   planHeldSenderKeyFlush,
   planRejectedHashes,
   planSenderKeyIngest,
+  planSenderKeyPrune,
   planTrustedMembers,
   sameMembership,
 } from "./membership.js";
@@ -245,5 +247,48 @@ describe("membership apply planner", () => {
       ),
       { install: ["g:b:d:1"], discard: ["g:eve:d:1"] },
     );
+    const slots = ["g1:alice:phone:1", "g1:alice:laptop:1", "g1:bob:d:1", "g2:alice:phone:2"];
+    assert.deepEqual(planSenderKeyPrune(slots, { userId: "alice", deviceId: "phone" }).sort(), [
+      "g1:alice:phone:1",
+      "g2:alice:phone:2",
+    ]);
+    assert.deepEqual(planSenderKeyPrune(slots, { userId: "bob" }), ["g1:bob:d:1"]);
+    assert.deepEqual(planDroppedDevices(["a:d1"], "a", "stolen"), ["a:d1", "a:stolen"]);
+    assert.equal(
+      planSenderKeyIngest({
+        trustedUserIds: ["alice"],
+        pendingUserIds: [],
+        senderUserId: "alice",
+        senderDeviceId: "phone",
+        droppedDevices: ["alice:phone"],
+      }),
+      "drop",
+    );
+    assert.equal(
+      planSenderKeyIngest({
+        trustedUserIds: [],
+        pendingUserIds: ["alice"],
+        senderUserId: "alice",
+        senderDeviceId: "phone",
+        droppedDevices: ["alice:phone"],
+      }),
+      "drop",
+    );
+    assert.equal(
+      planSenderKeyIngest({
+        trustedUserIds: ["alice"],
+        pendingUserIds: [],
+        senderUserId: "alice",
+        senderDeviceId: "laptop",
+        droppedDevices: ["alice:phone"],
+      }),
+      "accept",
+    );
+    assert.deepEqual(planSenderKeyPrune(slots, {}), []);
+    const existing = Array.from({ length: 64 }, (_, i) => `u:d${i}`);
+    const bounded = planDroppedDevices(existing, "u", "new");
+    assert.equal(bounded.length, 64);
+    assert.equal(bounded[63], "u:new");
+    assert.equal(bounded.includes("u:d0"), false);
   });
 });

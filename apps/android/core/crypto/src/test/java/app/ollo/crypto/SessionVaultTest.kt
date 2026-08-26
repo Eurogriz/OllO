@@ -110,6 +110,12 @@ class SessionVaultTest {
         )
         assertEquals("hold", Membership.planSenderKeyIngest(listOf("a", "b"), listOf("a", "b", "eve"), "eve"))
         assertEquals("drop", Membership.planSenderKeyIngest(listOf("a", "b"), listOf("a", "b"), "eve"))
+        val slots = listOf("g1:alice:phone:1", "g1:alice:laptop:1", "g1:bob:d:1")
+        assertEquals(emptyList<String>(), Membership.planSenderKeyPrune(slots, null, null))
+        assertEquals(listOf("g1:alice:phone:1"), Membership.planSenderKeyPrune(slots, "alice", "phone"))
+        assertEquals(listOf("a:d1", "a:stolen"), Membership.planDroppedDevices(listOf("a:d1"), "a", "stolen"))
+        assertEquals("drop", Membership.planSenderKeyIngest(listOf("alice"), emptyList(), "alice", "phone", listOf("alice:phone")))
+        assertEquals("accept", Membership.planSenderKeyIngest(listOf("alice"), emptyList(), "alice", "laptop", listOf("alice:phone")))
     }
 
     @Test

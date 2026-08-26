@@ -148,8 +148,14 @@ re-prompt or receive keys. `planMembershipSignerNotice` is
 — revoke that device if it was not you. A first roster signed by another device is `confirm`, not silent TOFU.
 `planSenderKeyIngest` installs keys only for locally trusted members;
 distributions from a pending (unconfirmed) id are held and flushed on
-confirm or discarded on decline. A stolen real admin can still
-distribute **its own** sender keys from the compromised device. `planTrustedMembers` still refuses a server-only extra id.
+confirm or discarded on decline. Identity signature is checked before
+ingest. Revoke, a device leaving the live roster, or decline of an
+own-other-device roster prunes that device's remote/held sender-key
+slots and records `droppedDevices` so the same `userId:deviceId` is
+never re-installed. Member **remove** prunes that user's slots but does
+not pin `droppedDevices` (a later re-add may ingest). A stolen **live**
+admin can still distribute **its own** sender keys until that device is
+revoked. This is not Signal-level security. `planTrustedMembers` still refuses a server-only extra id.
 Invite-join is pending only (`used_by`, no live row, no epoch bump).
 Fan-out uses `planFanoutRecipients` so a server-only extra id does not get
 a mailbox copy. This is not MLS.

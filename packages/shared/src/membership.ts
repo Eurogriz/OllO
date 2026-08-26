@@ -111,8 +111,16 @@ export function planSenderKeyIngest(args: {
   trustedUserIds: string[];
   pendingUserIds: string[];
   senderUserId: string;
+  senderDeviceId?: string;
+  droppedDevices?: string[];
 }): "accept" | "hold" | "drop" {
   if (!args.senderUserId) return "drop";
+  if (
+    args.senderDeviceId &&
+    args.droppedDevices?.includes(droppedDeviceKey(args.senderUserId, args.senderDeviceId))
+  ) {
+    return "drop";
+  }
   if (args.trustedUserIds.includes(args.senderUserId)) return "accept";
   if (args.pendingUserIds.includes(args.senderUserId)) return "hold";
   return "drop";
@@ -131,6 +139,52 @@ export function planHeldSenderKeyFlush(
     else discard.push(h.slot);
   }
   return { install, discard };
+}
+
+/** Slot is `groupId:userId:deviceId:epoch`. UUIDs have no extra colons. */
+export function parseSenderKeySlot(
+  slot: string,
+): { groupId: string; userId: string; deviceId: string; epoch: string } | null {
+  const parts = slot.split(":");
+  if (parts.length !== 4) return null;
+  const [groupId, userId, deviceId, epoch] = parts;
+  if (!groupId || !userId || !deviceId || !epoch) return null;
+  return { groupId, userId, deviceId, epoch };
+}
+
+/** Drop remote/held sender-key slots for a user (leave) or a device (revoke). */
+export function planSenderKeyPrune(
+  slots: string[],
+  filter: { userId?: string; deviceId?: string },
+): string[] {
+  if (!filter.userId && !filter.deviceId) return [];
+  return slots.filter((slot) => {
+    const p = parseSenderKeySlot(slot);
+    if (!p) return false;
+    if (filter.userId && p.userId !== filter.userId) return false;
+    if (filter.deviceId && p.deviceId !== filter.deviceId) return false;
+    return true;
+  });
+}
+
+export const MAX_DROPPED_DEVICES = 64;
+
+export function droppedDeviceKey(userId: string, deviceId: string): string {
+  if (!userId || !deviceId) return "";
+  return `${userId}:${deviceId}`;
+}
+
+export function planDroppedDevices(
+  existing: string[],
+  userId: string,
+  deviceId: string,
+  max = MAX_DROPPED_DEVICES,
+): string[] {
+  const next = droppedDeviceKey(userId, deviceId);
+  if (!next) return existing.filter(Boolean).slice(-max);
+  const out = existing.filter((h) => h && h !== next);
+  out.push(next);
+  return out.slice(-max);
 }
 
 /** Fan-out only to the signed ∩ live intersection. Empty signed roster → nobody. */
