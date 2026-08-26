@@ -1406,11 +1406,20 @@ describe("API integration", () => {
     );
     assert.equal(granted.status, 200, JSON.stringify(granted.body));
     const token = granted.body.grant as string;
-    const peek = await json("GET", `/v1/attachments/${id}?grant=${token}`, undefined, bob.tok);
-    assert.equal(peek.status, 200, JSON.stringify(peek.body));
-    assert.equal(Object.hasOwn(peek.body, "grant"), false);
+    const leaked = await json("GET", `/v1/attachments/${id}?grant=${token}`, undefined, bob.tok);
+    assert.equal(leaked.status, 403);
     const noGrant = await json("GET", `/v1/attachments/${id}`, undefined, bob.tok);
     assert.equal(noGrant.status, 403);
+    const viaHeaderMeta = await app.inject({
+      method: "GET",
+      url: `/v1/attachments/${id}`,
+      headers: {
+        authorization: `Bearer ${bob.tok}`,
+        "x-attachment-grant": token,
+      },
+    });
+    assert.equal(viaHeaderMeta.statusCode, 200, viaHeaderMeta.body);
+    assert.equal(Object.hasOwn(viaHeaderMeta.json() as object, "grant"), false);
     const viaHeader = await app.inject({
       method: "GET",
       url: `/v1/attachments/${id}/data`,
@@ -1645,5 +1654,50 @@ describe("API integration", () => {
 
     const metrics = await app.inject({ method: "GET", url: "/metrics" });
     assert.equal(metrics.statusCode, 200);
+  });
+
+  it("deletes mailbox ciphertext on the same ack path WS uses", async () => {
+    const { ackEnvelopes } = await import("./modules/messaging.js");
+    async function signup(phone: string, username: string) {
+      const otp = await json("POST", "/v1/auth/request-otp", { phone_e164: phone });
+      const verified = await json("POST", "/v1/auth/verify-otp", {
+        challenge_id: otp.body.challenge_id,
+        otp: otp.body.dev_otp,
+        account_ed25519: b64(generateEd25519().publicKey),
+        device: devicePayload(username).json,
+      });
+      assert.equal(verified.status, 200, JSON.stringify(verified.body));
+      return {
+        tok: verified.body.access_token as string,
+        userId: (verified.body.user as { id: string }).id,
+        deviceId: verified.body.device_id as string,
+      };
+    }
+    const alice = await signup("+79990000501", "alicewsack");
+    const bob = await signup("+79990000502", "bobwsack");
+    const sent = await json(
+      "POST",
+      "/v1/envelopes",
+      {
+        envelopes: [
+          {
+            recipient_user_id: bob.userId,
+            recipient_device_id: bob.deviceId,
+            kind: "control",
+            ciphertext: Buffer.from("opaque-ws-ack").toString("base64"),
+            padding_bucket: 256,
+          },
+        ],
+      },
+      alice.tok,
+    );
+    assert.equal(sent.status, 200, JSON.stringify(sent.body));
+    const id = ((sent.body.accepted as Array<{ id: string }>)[0]!).id;
+    await ackEnvelopes(await getDb(), bob.deviceId, [id]);
+    const db = await getDb();
+    const leftover = await db.query<{ id: string }>("SELECT id FROM envelopes WHERE id = $1", [id]);
+    assert.equal(leftover.rows.length, 0);
+    const box = await json("GET", "/v1/envelopes?limit=20", undefined, bob.tok);
+    assert.equal(((box.body.envelopes as Array<{ id: string }>) ?? []).some((e) => e.id === id), false);
   });
 });

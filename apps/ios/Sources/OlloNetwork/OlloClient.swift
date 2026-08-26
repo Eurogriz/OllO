@@ -75,6 +75,28 @@ public actor OlloClient {
         try await get(path: "/v1/presence/\(userId)", auth: true)
     }
 
+    public func mailbox() async throws -> Data {
+        try await get(path: "/v1/envelopes?limit=100", auth: true)
+    }
+
+    public func ack(ids: [String]) async throws -> Data {
+        let data = try JSONSerialization.data(withJSONObject: ["ids": ids])
+        return try await post(path: "/v1/envelopes/ack", data: data, auth: true)
+    }
+
+    /// Ciphertext bytes. Grant travels in `X-Attachment-Grant`, never in the URL.
+    public func downloadAttachment(objectId: String, grant: String?) async throws -> Data {
+        var req = URLRequest(url: url("/v1/attachments/\(objectId)/data"))
+        req.httpMethod = "GET"
+        if let access = token() {
+            req.setValue("Bearer \(access)", forHTTPHeaderField: "Authorization")
+        }
+        if let grant, !grant.isEmpty {
+            req.setValue(grant, forHTTPHeaderField: "X-Attachment-Grant")
+        }
+        return try await send(req, allowRefresh: true)
+    }
+
     private func get(path: String, auth: Bool) async throws -> Data {
         var req = URLRequest(url: url(path))
         req.httpMethod = "GET"

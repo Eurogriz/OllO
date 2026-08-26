@@ -48,6 +48,13 @@ class OlloApi(
 
     fun ack(idsJson: String): String = post("/v1/envelopes/ack", idsJson, auth = true)
 
+    /** Ciphertext bytes. Grant travels in `X-Attachment-Grant`, never in the URL. */
+    fun downloadAttachment(objectId: String, grant: String?): ByteArray {
+        val builder = Request.Builder().url("$baseUrl/v1/attachments/$objectId/data")
+        if (!grant.isNullOrEmpty()) builder.header("X-Attachment-Grant", grant)
+        return executeBytes(builder, auth = true)
+    }
+
     /** Unauthenticated. A 401 here must not recurse into another refresh. */
     fun refreshSession(refreshToken: String): String {
         val body = """{"refresh_token":${JSONString(refreshToken)}}"""
@@ -65,17 +72,21 @@ class OlloApi(
     }
 
     private fun execute(builder: Request.Builder, auth: Boolean, retried: Boolean = false): String {
+        return executeBytes(builder, auth, retried).toString(Charsets.UTF_8)
+    }
+
+    private fun executeBytes(builder: Request.Builder, auth: Boolean, retried: Boolean = false): ByteArray {
         if (auth) token()?.let { builder.header("Authorization", "Bearer $it") }
         http.newCall(builder.build()).execute().use { res ->
-            val t = res.body?.string().orEmpty()
+            val bytes = res.body?.bytes() ?: ByteArray(0)
             if (res.code == 401 && auth) {
                 if (!retried && refresh?.invoke() == true) {
-                    return execute(builder, auth, retried = true)
+                    return executeBytes(builder, auth, retried = true)
                 }
                 onWipe?.invoke()
             }
             if (!res.isSuccessful) error("http ${res.code}")
-            return t
+            return bytes
         }
     }
 }

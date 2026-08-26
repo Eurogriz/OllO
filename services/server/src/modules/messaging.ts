@@ -102,6 +102,15 @@ export async function listMailbox(
   };
 }
 
+export async function ackEnvelopes(db: Db, deviceId: string, ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  await db.query(
+    `DELETE FROM envelopes
+     WHERE recipient_device_id = $1 AND id = ANY($2::uuid[])`,
+    [deviceId, ids],
+  );
+}
+
 export async function registerMessaging(app: FastifyInstance, db: Db): Promise<void> {
   app.post("/v1/envelopes", async (req) => {
     const auth = requireAuth(req);
@@ -205,11 +214,7 @@ export async function registerMessaging(app: FastifyInstance, db: Db): Promise<v
   app.post("/v1/envelopes/ack", async (req) => {
     const auth = requireAuth(req);
     const body = z.object({ ids: z.array(z.string().uuid()).min(1).max(500) }).parse(req.body);
-    await db.query(
-      `DELETE FROM envelopes
-       WHERE recipient_device_id = $1 AND id = ANY($2::uuid[])`,
-      [auth.deviceId, body.ids],
-    );
+    await ackEnvelopes(db, auth.deviceId, body.ids);
     return { ok: true };
   });
 

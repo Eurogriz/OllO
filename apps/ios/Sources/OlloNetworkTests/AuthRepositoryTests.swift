@@ -156,6 +156,25 @@ final class AuthRepositoryTests: XCTestCase {
         XCTAssertTrue(proto.store.isEmpty)
     }
 
+    func testAttachmentDownloadPutsGrantOnHeaderNotQuery() async throws {
+        var seen: URLRequest?
+        MockURLProtocol.handler = { req in
+            seen = req
+            return (200, Data([0x01, 0x02]))
+        }
+        let client = OlloClient(
+            baseURL: URL(string: "https://api.ollo.example")!,
+            session: MockURLProtocol.session(),
+            token: { "acc" }
+        )
+        let body = try await client.downloadAttachment(objectId: "11111111-1111-4111-8111-111111111111", grant: "tok-grant")
+        XCTAssertEqual(body, Data([0x01, 0x02]))
+        XCTAssertEqual(seen?.value(forHTTPHeaderField: "X-Attachment-Grant"), "tok-grant")
+        XCTAssertEqual(seen?.value(forHTTPHeaderField: "Authorization"), "Bearer acc")
+        XCTAssertNil(seen?.url?.query)
+        XCTAssertEqual(seen?.url?.path, "/v1/attachments/11111111-1111-4111-8111-111111111111/data")
+    }
+
     /// Server-shaped fixture as a bound libsignal engine would emit. Not client-invented.
     private func boundEngineFixture() -> String {
         """

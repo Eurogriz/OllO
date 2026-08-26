@@ -17,7 +17,7 @@ import { registerBackups } from "./modules/backups.js";
 import { registerCalls } from "./modules/calls.js";
 import { registerGroups } from "./modules/groups.js";
 import { registerKeys } from "./modules/keys.js";
-import { listMailbox, registerMessaging } from "./modules/messaging.js";
+import { ackEnvelopes, listMailbox, registerMessaging } from "./modules/messaging.js";
 import { registerNotifications } from "./modules/notifications.js";
 import { registerUsers } from "./modules/users.js";
 import { log } from "./observability/logger.js";
@@ -251,11 +251,8 @@ export async function buildApp(db: Db): Promise<FastifyInstance> {
         return;
       }
       if (msg.op === "ack" && client && msg.ids?.length) {
-        void db.query(
-          `UPDATE envelopes SET acked_at = now()
-           WHERE recipient_device_id = $1 AND id = ANY($2::uuid[])`,
-          [client.deviceId, msg.ids],
-        );
+        const ids = msg.ids.filter((id) => typeof id === "string" && zUuid(id)).slice(0, 500);
+        if (ids.length) void ackEnvelopes(db, client.deviceId, ids);
       }
     });
     socket.on("close", () => {

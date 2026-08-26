@@ -179,7 +179,7 @@ Set / change / remove Argon2id lock.
 
 - `POST /v1/envelopes` — submit one or more sealed envelopes
 - `GET /v1/envelopes?cursor=&limit=` — drain mailbox (also used after WS drop)
-- `POST /v1/envelopes/ack` — `{ "ids": ["..."] }`
+- `POST /v1/envelopes/ack` — `{ "ids": ["..."] }` **deletes** those mailbox rows (same as WS `ack`)
 
 Envelope (server-visible schema):
 
@@ -235,11 +235,12 @@ ignore server-only extra members (`planTrustedMembers`).
 
 - `POST /v1/attachments` → `{ upload_path, object_id, headers }` (`upload_path` is `/v1/attachments/{id}/data`)
 - `POST /v1/attachments/{id}/complete` — `{ digest, size }` (must match the SHA-256 and size recorded on PUT)
-- `GET /v1/attachments/{id}` → `{ download_path }` after `complete`. Authorization: Bearer plus `X-Attachment-Grant` (query `grant=` is accepted only as a fallback)
+- `GET /v1/attachments/{id}` → `{ download_path }` after upload. Authorization: Bearer plus `X-Attachment-Grant`. Query `grant=` is ignored.
 
 Authorization for download: the requester must be the uploader or present
-a `grant` issued inside a delivered envelope (HMAC of object_id with a
-server grant key, carried in the E2EE message and shown on pull). Grants
+`X-Attachment-Grant`. The grant is a random 24-byte token; the server
+stores only `SHA-256(token)` and binds it to one object + recipient or
+group. The token travels inside the E2EE message, never in a URL. Grants
 are not guessable and are single-object.
 
 ## Calls
@@ -272,7 +273,7 @@ Client → server:
 
 ```text
 { "op": "hello", "access_token": "...", "resume": "...", "after": "envelope_id" }
-{ "op": "ack", "ids": ["..."] }
+{ "op": "ack", "ids": ["..."] }   // deletes mailbox rows, same as POST /v1/envelopes/ack
 { "op": "ping" }
 ```
 

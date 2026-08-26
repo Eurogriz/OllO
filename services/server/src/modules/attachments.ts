@@ -10,8 +10,6 @@ import { randomToken, randomUuid, sha256Hex } from "../security/crypto-utils.js"
 function readGrant(req: FastifyRequest): string | undefined {
   const header = req.headers["x-attachment-grant"];
   if (typeof header === "string" && header.length > 0) return header;
-  const q = (req.query as { grant?: unknown }).grant;
-  if (typeof q === "string" && q.length > 0) return q;
   return undefined;
 }
 
