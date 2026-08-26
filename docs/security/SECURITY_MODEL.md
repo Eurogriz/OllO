@@ -224,6 +224,9 @@ Full lifecycle: CRYPTOGRAPHY.md.
   user made.
 - We do not promise that web clients are as strong as hardware-backed mobile.
 - We do not promise “military grade” anything.
+- Preview/development may allow iframe embedding from `*.e2b.app` and
+  `*.arena.ai` so the hosted preview can load. Production must keep
+  `X-Frame-Options: DENY` and `frame-ancestors 'none'`.
 
 ## 11. Before production
 

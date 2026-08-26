@@ -9,6 +9,7 @@ import { canSeePresence, hiddenPresence } from "@ollo/shared";
 import { config } from "./config.js";
 import type { Db } from "./db/index.js";
 import { ApiError, assertLiveDevice, authFromAccess, readBearer, requestId, requireAuth, sendError } from "./http.js";
+import { framePolicyHeaders } from "./http/frame-policy.js";
 import { registerAttachments } from "./modules/attachments.js";
 import { registerAuth } from "./modules/auth.js";
 import { registerBackups } from "./modules/backups.js";
@@ -83,10 +84,12 @@ export async function buildApp(db: Db): Promise<FastifyInstance> {
 
   app.addHook("onRequest", async (req, reply) => {
     reply.header("X-Content-Type-Options", "nosniff");
-    reply.header("X-Frame-Options", "DENY");
     reply.header("Referrer-Policy", "no-referrer");
     reply.header("Permissions-Policy", "camera=(self), microphone=(self), geolocation=()");
     reply.header("X-Request-Id", req.id);
+    for (const [name, value] of Object.entries(framePolicyHeaders(config.isProd))) {
+      reply.header(name, value);
+    }
     if (config.isProd) {
       reply.header("strict-transport-security", "max-age=63072000; includeSubDomains");
     }

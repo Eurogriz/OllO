@@ -84,6 +84,15 @@ describe("API integration", () => {
     assert.equal(res.json().ok, true);
   });
 
+  it("does not send X-Frame-Options DENY in development", async () => {
+    const res = await app.inject({ method: "GET", url: "/healthz" });
+    assert.equal(res.headers["x-frame-options"], undefined);
+    const csp = String(res.headers["content-security-policy"] ?? "");
+    assert.match(csp, /frame-ancestors/);
+    assert.equal(csp.includes("'none'"), false);
+    assert.match(csp, /e2b\.app/);
+  });
+
   it("registers two users and delivers an E2EE envelope the server cannot read", async () => {
     const aDev = devicePayload("alice-web");
     const bDev = devicePayload("bob-web");
