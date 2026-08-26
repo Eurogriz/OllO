@@ -19,6 +19,8 @@ import {
   maybeRotateSignedPrekey,
   mergeBackupHistory,
   newDeviceMaterial,
+  dropDeviceSessions,
+  pruneSessionsForUser,
   openEnvelope,
   publicDevicePayload,
   replenishPrekeys,
@@ -170,6 +172,7 @@ function Auth({
   const [phone, setPhone] = useState("+7");
   const [challenge, setChallenge] = useState("");
   const [otp, setOtp] = useState("");
+  const [lockPin, setLockPin] = useState("");
   const [devOtp, setDevOtp] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [username, setUsername] = useState("");
@@ -201,6 +204,7 @@ function Auth({
         body: JSON.stringify({
           challenge_id: challenge,
           otp,
+          registration_lock: lockPin.trim() || undefined,
           device: publicDevicePayload(mat.current, navigator.userAgent.slice(0, 40), "web"),
         }),
       });
@@ -287,6 +291,15 @@ function Auth({
               <input className="otp" value={otp} onChange={(e) => setOtp(e.target.value)} maxLength={6} />
             </div>
             {devOtp && <div className="hint">DEV OTP: {devOtp}</div>}
+            <div className="field">
+              <label>{t(lang, "lock")}</label>
+              <input
+                type="password"
+                value={lockPin}
+                onChange={(e) => setLockPin(e.target.value)}
+                autoComplete="off"
+              />
+            </div>
             <button className="primary" onClick={() => void verify()}>
               {t(lang, "verify")}
             </button>
@@ -1575,15 +1588,21 @@ function Devices({ acc, lang }: { acc: Account; lang: Lang }) {
   const [rosterWarn, setRosterWarn] = useState(false);
   useEffect(() => {
     void api("/v1/devices", acc.access).then((r) => {
-      setRows(r.devices);
+      const devices = (r.devices ?? []) as Array<Record<string, string | boolean>>;
+      setRows(devices);
+      pruneSessionsForUser(
+        acc,
+        acc.userId,
+        devices.map((d) => String(d.id)),
+      );
       const next = String(r.roster_hash ?? "");
       setRosterHash(next);
       if (acc.ownRosterHash && next && next !== acc.ownRosterHash) {
         setRosterWarn(true);
       } else if (next) {
         acc.ownRosterHash = next;
-        saveAccount(acc);
       }
+      saveAccount(acc);
     });
   }, [acc.access]);
   return (
@@ -1604,9 +1623,11 @@ function Devices({ acc, lang }: { acc: Account; lang: Lang }) {
             <button
               className="ghost"
               onClick={() => {
-                void api(`/v1/devices/${d.id}`, acc.access, { method: "DELETE" }).then(() =>
-                  setRows(rows.filter((x) => x.id !== d.id)),
-                );
+                void api(`/v1/devices/${d.id}`, acc.access, { method: "DELETE" }).then(() => {
+                  dropDeviceSessions(acc, acc.userId, String(d.id));
+                  saveAccount(acc);
+                  setRows(rows.filter((x) => x.id !== d.id));
+                });
               }}
             >
               {t(lang, "revoke")}

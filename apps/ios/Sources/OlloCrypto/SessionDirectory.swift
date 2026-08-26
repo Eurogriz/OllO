@@ -59,6 +59,28 @@ public final class SessionDirectory: @unchecked Sendable {
         try persist(.sessions, map)
     }
 
+    public func sessionKeys() throws -> [String] {
+        Array(try sessions().keys)
+    }
+
+    /// Drop ratchet records for devices that left `userId`'s live roster.
+    public func dropStale(userId: String, liveDeviceIds: [String]) throws {
+        let drop = EnvelopePlanner.planRosterPrune(
+            sessionKeys: try sessionKeys(),
+            userId: userId,
+            liveDeviceIds: liveDeviceIds
+        )
+        if drop.isEmpty { return }
+        var sess = try sessions()
+        var known = try identities()
+        for k in drop {
+            sess.removeValue(forKey: k)
+            known.removeValue(forKey: k)
+        }
+        try persist(.sessions, sess)
+        try persist(.knownIdentities, known)
+    }
+
     public func planFetch(targetUserId: String, targetDeviceId: String) throws -> EnvelopePlanner.KeyPlan {
         EnvelopePlanner.planKeyFetch(
             localUserId: localUserId,

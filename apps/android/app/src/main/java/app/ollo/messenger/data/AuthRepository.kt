@@ -16,13 +16,13 @@ class AuthRepository(
         return json.getString("challenge_id") to dev
     }
 
-    fun verify(challengeId: String, otp: String, deviceJson: String): Session {
+    fun verify(challengeId: String, otp: String, deviceJson: String, registrationLock: String? = null): Session {
         val body = JSONObject()
             .put("challenge_id", challengeId)
             .put("otp", otp)
             .put("device", JSONObject(deviceJson))
-            .toString()
-        val raw = api.post("/v1/auth/verify-otp", body, auth = false)
+        if (!registrationLock.isNullOrEmpty()) body.put("registration_lock", registrationLock)
+        val raw = api.post("/v1/auth/verify-otp", body.toString(), auth = false)
         val json = JSONObject(raw)
         val user = json.getJSONObject("user")
         val session = Session(

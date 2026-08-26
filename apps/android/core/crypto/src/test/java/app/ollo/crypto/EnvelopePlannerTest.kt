@@ -47,6 +47,11 @@ class EnvelopePlannerTest {
         assertEquals(listOf(5, 4, 3), EnvelopePlanner.keepSignedPrekeyIds(5, listOf(1, 2, 3, 4, 5)))
         assertEquals(EnvelopePlanner.AuthFailure.Retry, EnvelopePlanner.afterUnauthorized(true))
         assertEquals(EnvelopePlanner.AuthFailure.Wipe, EnvelopePlanner.afterUnauthorized(false))
+        assertEquals(
+            listOf("u1:d2"),
+            EnvelopePlanner.planRosterPrune(listOf("u1:d1", "u1:d2", "u10:d1"), "u1", listOf("d1")),
+        )
+        assertEquals(listOf("u1:d2"), EnvelopePlanner.planDeviceDrop(listOf("u1:d1", "u1:d2"), "u1", "d2"))
     }
 
     @Test

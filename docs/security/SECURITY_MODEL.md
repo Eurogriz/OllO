@@ -148,7 +148,9 @@ passcode, old Android without StrongBox, unpatched lock-screen bugs.
 
 Attacker is the user. They can read chats, send as the user, accept new
 devices. Mitigations: screen lock timeout, locally encrypted backups off by
-default, remote device revoke from another device, disappearing messages.
+default, remote device revoke from another device (access of the revoked
+device fails closed on the next request; live sockets are dropped),
+disappearing messages.
 
 ### 6.9 Rooted Android / jailbroken iOS / malware
 

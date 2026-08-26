@@ -31,6 +31,10 @@ final class SessionDirectoryTests: XCTestCase {
         XCTAssertEqual(try dir.loadSession(peer), Data([1, 2, 3, 4]))
         XCTAssertEqual(try dir.planFetch(targetUserId: "u2", targetDeviceId: "d9"), .useSession)
         XCTAssertEqual(try dir.planFetch(targetUserId: "u1", targetDeviceId: "d1"), .skipSelf)
+        try dir.saveSession(SessionDirectory.Address(userId: "u2", deviceId: "d8"), record: Data([9]))
+        try dir.dropStale(userId: "u2", liveDeviceIds: ["d9"])
+        XCTAssertNil(try dir.loadSession(SessionDirectory.Address(userId: "u2", deviceId: "d8")))
+        XCTAssertTrue(try dir.hasSession(peer))
     }
 
     func testIdentityChangeDoesNotOverwrite() throws {

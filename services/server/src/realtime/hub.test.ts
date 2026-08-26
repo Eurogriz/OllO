@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import type { WebSocket } from "ws";
 import { shouldWake } from "../modules/notifications.js";
-import { attach, detach, isDeviceOnline, isOnline, resetHub } from "./hub.js";
+import { attach, detach, dropDevice, dropUser, isDeviceOnline, isOnline, resetHub } from "./hub.js";
 
 function fakeWs(readyState: number): WebSocket {
-  return { readyState, send() {} } as unknown as WebSocket;
+  return { readyState, send() {}, close() {} } as unknown as WebSocket;
 }
 
 describe("device online and wake kinds", () => {
@@ -35,6 +35,12 @@ describe("device online and wake kinds", () => {
     detach(phone);
     assert.equal(isDeviceOnline("d-phone"), false);
     assert.equal(isOnline("u1"), true);
+    attach(phone);
+    assert.equal(dropDevice("d-phone"), 1);
+    assert.equal(isDeviceOnline("d-phone"), false);
+    assert.equal(isOnline("u1"), true);
+    assert.equal(dropUser("u1"), 1);
+    assert.equal(isOnline("u1"), false);
   });
 
   it("wakes only for messages and calls", () => {

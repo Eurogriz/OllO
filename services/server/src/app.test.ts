@@ -477,6 +477,7 @@ describe("API integration", () => {
       device: devicePayload("bob-tablet").json,
     });
     const bob2Id = bob2.body.device_id as string;
+    const bob2Tok = bob2.body.access_token as string;
     const listed = await json("GET", "/v1/devices", undefined, bob.tok);
     assert.ok(((listed.body.devices as unknown[]) ?? []).length >= 2);
     assert.equal(typeof listed.body.roster_hash, "string");
@@ -520,7 +521,7 @@ describe("API integration", () => {
     const deleted = await json("POST", "/v1/me/delete", {}, alice.tok);
     assert.equal(deleted.status, 200);
     const me = await json("GET", "/v1/me", undefined, alice.tok);
-    assert.equal(me.status, 404);
+    assert.equal(me.status, 401);
     const search = await json("POST", "/v1/users/search", { username: "alicepriv" }, bob.tok);
     assert.equal((search.body.users as unknown[]).length, 0);
   });

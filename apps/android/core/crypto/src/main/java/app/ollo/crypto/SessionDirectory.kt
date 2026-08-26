@@ -33,6 +33,22 @@ class SessionDirectory(
         persist(IdentityStore.Slot.Sessions, map)
     }
 
+    fun sessionKeys(): List<String> = sessions().keys.toList()
+
+    /** Drop ratchet records for devices that left [userId]'s live roster. */
+    fun dropStale(userId: String, liveDeviceIds: Collection<String>) {
+        val drop = EnvelopePlanner.planRosterPrune(sessionKeys(), userId, liveDeviceIds)
+        if (drop.isEmpty()) return
+        val sess = sessions()
+        val known = identities()
+        for (k in drop) {
+            sess.remove(k)
+            known.remove(k)
+        }
+        persist(IdentityStore.Slot.Sessions, sess)
+        persist(IdentityStore.Slot.KnownIdentities, known)
+    }
+
     fun planFetch(targetUserId: String, targetDeviceId: String): EnvelopePlanner.KeyPlan {
         return EnvelopePlanner.planKeyFetch(
             localUserId = localUserId,

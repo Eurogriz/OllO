@@ -64,6 +64,14 @@ final class EnvelopePlannerTests: XCTestCase {
         XCTAssertEqual(EnvelopePlanner.keepSignedPrekeyIds(currentId: 5, storedIds: [1, 2, 3, 4, 5]), [5, 4, 3])
         XCTAssertEqual(EnvelopePlanner.afterUnauthorized(refreshSucceeded: true), .retry)
         XCTAssertEqual(EnvelopePlanner.afterUnauthorized(refreshSucceeded: false), .wipe)
+        XCTAssertEqual(
+            EnvelopePlanner.planRosterPrune(sessionKeys: ["u1:d1", "u1:d2", "u10:d1"], userId: "u1", liveDeviceIds: ["d1"]),
+            ["u1:d2"]
+        )
+        XCTAssertEqual(
+            EnvelopePlanner.planDeviceDrop(sessionKeys: ["u1:d1", "u1:d2"], userId: "u1", deviceId: "d2"),
+            ["u1:d2"]
+        )
     }
 
     func testUnboundEngineDoesNotInventIdentity() {

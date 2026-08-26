@@ -77,6 +77,29 @@ export function connectionCount(): number {
   return n;
 }
 
+/** Close every socket for a revoked device so a stolen JWT cannot stay online. */
+export function dropDevice(deviceId: string): number {
+  const set = byDevice.get(deviceId);
+  if (!set) return 0;
+  const copy = [...set];
+  for (const c of copy) {
+    try {
+      if (c.ws.readyState === 1) c.ws.close();
+    } catch {
+      /* already gone */
+    }
+    detach(c);
+  }
+  return copy.length;
+}
+
+export function dropUser(userId: string): number {
+  const devices = [...(byUser.get(userId) ?? [])];
+  let n = 0;
+  for (const id of devices) n += dropDevice(id);
+  return n;
+}
+
 export function resetHub(): void {
   byDevice.clear();
   byUser.clear();

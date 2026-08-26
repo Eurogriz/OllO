@@ -3,6 +3,7 @@ import { deviceRosterHash } from "@ollo/crypto";
 import { z } from "zod";
 import type { Db } from "../db/index.js";
 import { ApiError, requireAuth } from "../http.js";
+import { dropDevice } from "../realtime/hub.js";
 
 function b64(value: unknown): string {
   if (Buffer.isBuffer(value)) return value.toString("base64");
@@ -54,6 +55,7 @@ export async function registerKeys(app: FastifyInstance, db: Db): Promise<void> 
     await db.query("UPDATE sessions SET revoked_at = now() WHERE device_id = $1 AND revoked_at IS NULL", [id]);
     await db.query("DELETE FROM one_time_prekeys WHERE device_id = $1", [id]);
     await db.query("DELETE FROM envelopes WHERE recipient_device_id = $1", [id]);
+    dropDevice(id);
     return { ok: true };
   });
 

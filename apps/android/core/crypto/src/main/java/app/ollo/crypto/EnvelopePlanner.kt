@@ -95,6 +95,19 @@ object EnvelopePlanner {
 
     data class SignedPrekeyPlan(val nextId: Int)
 
+    fun planRosterPrune(sessionKeys: List<String>, userId: String, liveDeviceIds: Collection<String>): List<String> {
+        if (userId.isEmpty()) return emptyList()
+        val live = liveDeviceIds.toSet()
+        val prefix = "$userId:"
+        return sessionKeys.filter { it.startsWith(prefix) && it.removePrefix(prefix) !in live }
+    }
+
+    fun planDeviceDrop(sessionKeys: List<String>, userId: String, deviceId: String): List<String> {
+        if (userId.isEmpty() || deviceId.isEmpty()) return emptyList()
+        val target = "$userId:$deviceId"
+        return sessionKeys.filter { it == target }
+    }
+
     fun planSignedPrekeyRotation(currentId: Int, createdAtMs: Long?, now: Long): SignedPrekeyPlan? {
         if (currentId < 1) return null
         if (createdAtMs == null) return null

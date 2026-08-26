@@ -106,6 +106,22 @@ public enum EnvelopePlanner {
         public var nextId: Int
     }
 
+    public static func planRosterPrune(sessionKeys: [String], userId: String, liveDeviceIds: [String]) -> [String] {
+        if userId.isEmpty { return [] }
+        let live = Set(liveDeviceIds)
+        let prefix = "\(userId):"
+        return sessionKeys.filter { key in
+            guard key.hasPrefix(prefix) else { return false }
+            return !live.contains(String(key.dropFirst(prefix.count)))
+        }
+    }
+
+    public static func planDeviceDrop(sessionKeys: [String], userId: String, deviceId: String) -> [String] {
+        if userId.isEmpty || deviceId.isEmpty { return [] }
+        let target = "\(userId):\(deviceId)"
+        return sessionKeys.filter { $0 == target }
+    }
+
     public static func planSignedPrekeyRotation(currentId: Int, createdAtMs: Int64?, now: Int64) -> SignedPrekeyPlan? {
         if currentId < 1 { return nil }
         guard let createdAtMs else { return nil }

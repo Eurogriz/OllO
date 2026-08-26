@@ -4,6 +4,7 @@ import { MAX_USERNAME_CHANGES_PER_DAY } from "@ollo/shared";
 import { z } from "zod";
 import type { Db } from "../db/index.js";
 import { ApiError, requireAuth } from "../http.js";
+import { dropUser } from "../realtime/hub.js";
 import { randomUuid } from "../security/crypto-utils.js";
 
 function publicUser(row: {
@@ -293,6 +294,7 @@ export async function registerUsers(app: FastifyInstance, db: Db): Promise<void>
        WHERE id = $1`,
       [auth.userId, `deleted:${auth.userId}`],
     );
+    dropUser(auth.userId);
     return { ok: true };
   });
 

@@ -34,6 +34,10 @@ class SessionDirectoryTest {
         assertArrayEquals(byteArrayOf(1, 2, 3, 4), dir.loadSession(peer))
         assertEquals(EnvelopePlanner.KeyPlan.UseSession, dir.planFetch("u2", "d9"))
         assertEquals(EnvelopePlanner.KeyPlan.SkipSelf, dir.planFetch("u1", "d1"))
+        dir.saveSession(SessionDirectory.Address("u2", "d8"), byteArrayOf(9))
+        dir.dropStale("u2", listOf("d9"))
+        assertNull(dir.loadSession(SessionDirectory.Address("u2", "d8")))
+        assertTrue(dir.hasSession(peer))
     }
 
     @Test

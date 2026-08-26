@@ -4,8 +4,10 @@ import {
   noteRemoteIdentity,
   onRefreshRejected,
   onSendFailure,
+  planDeviceDrop,
   planKeyFetch,
   planPrekeyReplenish,
+  planRosterPrune,
   afterUnauthorized,
   planSignedPrekeyRotation,
   retainUnexpired,
@@ -128,6 +130,27 @@ export interface Account {
 
 export function sessionKey(userId: string, deviceId: string): string {
   return `${userId}:${deviceId}`;
+}
+
+/** Drop local ratchet state for devices that left a user's live roster. */
+export function pruneSessionsForUser(acc: Account, userId: string, liveDeviceIds: string[]): string[] {
+  const dropped = planRosterPrune(Object.keys(acc.sessions), userId, liveDeviceIds);
+  for (const k of dropped) {
+    delete acc.sessions[k];
+    delete acc.knownIdentities[k];
+    delete acc.firstSent[k];
+  }
+  return dropped;
+}
+
+export function dropDeviceSessions(acc: Account, userId: string, deviceId: string): string[] {
+  const dropped = planDeviceDrop(Object.keys(acc.sessions), userId, deviceId);
+  for (const k of dropped) {
+    delete acc.sessions[k];
+    delete acc.knownIdentities[k];
+    delete acc.firstSent[k];
+  }
+  return dropped;
 }
 
 export function vaultPinEnabled(): boolean {
@@ -433,6 +456,11 @@ export async function sendToUser(
 ): Promise<void> {
   const listed = await api(`/v1/keys/${peerUserId}/devices`, acc.access, {}, acc);
   const devices = (listed.devices ?? []) as Array<{ device_id: string }>;
+  pruneSessionsForUser(
+    acc,
+    peerUserId,
+    devices.map((d) => d.device_id),
+  );
   const envelopes = [];
   for (const d of devices) {
     const plan = planKeyFetch({

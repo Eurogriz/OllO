@@ -20,7 +20,7 @@ import { registerUsers } from "./modules/users.js";
 import { log } from "./observability/logger.js";
 import { httpRequests, registry } from "./observability/metrics.js";
 import { attach, detach, type SocketClient, connectionCount, isOnline } from "./realtime/hub.js";
-import { randomToken } from "./security/crypto-utils.js";
+import { randomToken, verifyAccess } from "./security/crypto-utils.js";
 
 function originAllowed(origin: string | undefined): boolean {
   if (!origin) return true;
@@ -54,6 +54,34 @@ export async function buildApp(db: Db): Promise<FastifyInstance> {
 
   app.addContentTypeParser("application/octet-stream", { parseAs: "buffer" }, (_req, body, done) => {
     done(null, body);
+  });
+
+  const publicV1 = new Set([
+    "POST /v1/auth/request-otp",
+    "POST /v1/auth/verify-otp",
+    "POST /v1/auth/refresh",
+  ]);
+
+  app.addHook("preHandler", async (req) => {
+    const path = (req.url ?? "").split("?")[0] ?? "";
+    if (!path.startsWith("/v1/")) return;
+    if (publicV1.has(`${req.method} ${path}`)) return;
+    const header = req.headers.authorization;
+    const q = (req.query as { access_token?: string } | undefined)?.access_token;
+    const token = header?.startsWith("Bearer ") ? header.slice(7) : q;
+    if (!token) return;
+    const claims = verifyAccess(token);
+    if (!claims) return;
+    const row = await db.query<{ revoked_at: string | null; deleted_at: string | null }>(
+      `SELECT d.revoked_at, u.deleted_at
+       FROM devices d JOIN users u ON u.id = d.user_id
+       WHERE d.id = $1 AND d.user_id = $2`,
+      [claims.did, claims.sub],
+    );
+    const live = row.rows[0];
+    if (!live || live.revoked_at || live.deleted_at) {
+      throw new ApiError("unauthorized", "Device revoked", 401);
+    }
   });
 
   app.addHook("onRequest", async (req, reply) => {
