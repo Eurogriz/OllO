@@ -145,6 +145,18 @@ public enum EnvelopePlanner {
         return "drop"
     }
 
+    /// libsignal SessionRecord.ARCHIVED_STATES_MAX_LENGTH
+    public static let maxArchivedSessions = 40
+
+    public static func planSessionArchive(hasCurrent: Bool) -> String {
+        hasCurrent ? "archive" : "skip"
+    }
+
+    public static func planArchiveTrim(count: Int, max: Int = maxArchivedSessions) -> Int {
+        if count < 0 || max < 1 { return 0 }
+        return count > max ? count - max : 0
+    }
+
     public static func planDeviceDropNotice(
         senderUserId: String,
         senderDeviceId: String,

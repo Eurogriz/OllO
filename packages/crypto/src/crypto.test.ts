@@ -12,6 +12,8 @@ import {
   encryptFirstMessage,
   encryptMessage,
   safetyNumber,
+  deserializeSession,
+  serializeSession,
 } from "./engine.js";
 import { acceptSenderKey, createSenderKey, distributeSenderKey, senderDecrypt, senderEncrypt } from "./sender-keys.js";
 import { generateIdentity } from "./keys.js";
@@ -104,19 +106,25 @@ describe("X3DH + Double Ratchet", () => {
     assert.throws(() => beginSession(alice, bundle));
   });
 
-  it("replaces the ratchet when a later PreKey whisper arrives", () => {
+  it("archives the previous ratchet so in-flight mail still opens", () => {
     const alice = device("alice", "a1");
     const bob = device("bob", "b1");
     const init = beginSession(alice, bundleOf(bob));
     const first = encryptFirstMessage(alice, init, text("t", "first"));
     const bobSession = acceptSession(bob, first, "alice", "a1");
     decryptMessage(bobSession, first);
+    const inFlight = encryptMessage(init.session, text("t", "in-flight"));
 
     const again = beginSession(alice, bundleOf(bob));
     const second = encryptFirstMessage(alice, again, text("t", "reset"));
-    const replaced = acceptSession(bob, second, "alice", "a1");
+    const replaced = acceptSession(bob, second, "alice", "a1", bobSession);
     assert.equal(decryptMessage(replaced, second).text, "reset");
-    assert.throws(() => decryptMessage(bobSession, second));
+    assert.equal(decryptMessage(replaced, inFlight).text, "in-flight");
+    const more = encryptMessage(init.session, text("t", "after-promote"));
+    assert.equal(decryptMessage(replaced, more).text, "after-promote");
+    const wire = serializeSession(replaced);
+    const round = deserializeSession(wire);
+    assert.equal((round.previous ?? []).length, 1);
   });
 
   it("accepts a first message after signed-prekey rotation using the retired key", async () => {

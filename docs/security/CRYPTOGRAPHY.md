@@ -116,12 +116,14 @@ After X3DH, Alice and Bob run the Double Ratchet as specified:
 Forward secrecy: old message keys are deleted after use.
 Post-compromise security: DH ratchet heals after a subsequent round-trip.
 
-A later PreKey whisper from the same address replaces the local ratchet
-(`planSessionOpen` → `accept-prekey`, matching libsignal SessionCipher,
-which archives the current SessionRecord then SessionBuilder.process).
-Identity mismatch is still `identity_changed`. We replace rather than
-keep previous SessionRecord states, so in-flight messages on the old
-ratchet fail. This is not Signal-level security.
+A later PreKey whisper from the same address rebuilds the local ratchet
+(`planSessionOpen` → `accept-prekey`, matching libsignal SessionCipher).
+The live SessionRecord is archived first (`planSessionArchive`, cap
+`MAX_ARCHIVED_SESSIONS=40` as in libsignal). `ratchetDecryptOpen` tries
+the current ratchet, then archived states newest-first, on a clone so a
+failed AEAD cannot corrupt the live record. A hit on an archive promotes
+it. Identity mismatch is still `identity_changed`. This is not
+Signal-level security.
 
 ## 6. Groups — Sender Keys
 

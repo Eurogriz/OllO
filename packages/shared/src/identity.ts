@@ -74,6 +74,21 @@ export function planSessionOpen(args: {
   return "drop";
 }
 
+/** libsignal SessionRecord.ARCHIVED_STATES_MAX_LENGTH */
+export const MAX_ARCHIVED_SESSIONS = 40;
+
+/** Archive the live ratchet before a PreKey rebuild. */
+export function planSessionArchive(hasCurrent: boolean): "archive" | "skip" {
+  return hasCurrent ? "archive" : "skip";
+}
+
+/** How many oldest archived states to drop. */
+export function planArchiveTrim(count: number, max = MAX_ARCHIVED_SESSIONS): number {
+  if (!Number.isInteger(count) || count < 0) return 0;
+  if (!Number.isInteger(max) || max < 1) return 0;
+  return count > max ? count - max : 0;
+}
+
 /**
  * Another of this user's still-live devices announced a revoke.
  * Fail closed without a directory snapshot. Refuse if the target is still live

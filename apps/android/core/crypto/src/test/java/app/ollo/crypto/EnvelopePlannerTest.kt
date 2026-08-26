@@ -73,6 +73,12 @@ class EnvelopePlannerTest {
         assertEquals("accept-prekey", EnvelopePlanner.planSessionOpen(false, true))
         assertEquals("use-session", EnvelopePlanner.planSessionOpen(true, false))
         assertEquals("drop", EnvelopePlanner.planSessionOpen(false, false))
+        assertEquals("archive", EnvelopePlanner.planSessionArchive(true))
+        assertEquals("skip", EnvelopePlanner.planSessionArchive(false))
+        assertEquals(40, EnvelopePlanner.MAX_ARCHIVED_SESSIONS)
+        assertEquals(0, EnvelopePlanner.planArchiveTrim(40))
+        assertEquals(1, EnvelopePlanner.planArchiveTrim(41))
+        assertEquals(0, EnvelopePlanner.planArchiveTrim(-1))
     }
 
     @Test

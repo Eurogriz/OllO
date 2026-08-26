@@ -127,6 +127,16 @@ object EnvelopePlanner {
         return "drop"
     }
 
+    /** libsignal SessionRecord.ARCHIVED_STATES_MAX_LENGTH */
+    const val MAX_ARCHIVED_SESSIONS = 40
+
+    fun planSessionArchive(hasCurrent: Boolean): String = if (hasCurrent) "archive" else "skip"
+
+    fun planArchiveTrim(count: Int, max: Int = MAX_ARCHIVED_SESSIONS): Int {
+        if (count < 0 || max < 1) return 0
+        return if (count > max) count - max else 0
+    }
+
     fun planDeviceDropNotice(
         senderUserId: String,
         senderDeviceId: String,

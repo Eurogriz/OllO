@@ -14,6 +14,8 @@ import { kdf } from "./kdf.js";
 import { type DhKeyPair, type IdentityKeyPair, dh, generateDh } from "./keys.js";
 
 export const MAX_SKIP = 256;
+/** libsignal SessionRecord.ARCHIVED_STATES_MAX_LENGTH */
+export const MAX_ARCHIVED_SESSIONS = 40;
 
 export interface SessionState {
   localUserId: string;
@@ -33,6 +35,8 @@ export interface SessionState {
   dhRecvPub: Uint8Array | null;
   skipped: Record<string, string>;
   established: boolean;
+  /** Frozen prior ratchets. Each entry has no nested `previous`. */
+  previous?: SessionState[];
 }
 
 export interface SerializedSession {
@@ -55,6 +59,7 @@ export interface SerializedSession {
   dhRecvPub: string | null;
   skipped: Record<string, string>;
   established: boolean;
+  previous?: SerializedSession[];
 }
 
 function kdfRk(rootKey: Uint8Array, dhOut: Uint8Array): { root: Uint8Array; chain: Uint8Array } {
@@ -179,6 +184,64 @@ export function ratchetEncrypt(state: SessionState, plaintext: Uint8Array): Seal
   };
 }
 
+function cloneFresh(state: SessionState): SessionState {
+  return deserializeSession(serializeSession({ ...state, previous: undefined }));
+}
+
+function copyRatchet(dst: SessionState, src: SessionState): void {
+  dst.rootKey = src.rootKey;
+  dst.sendChainKey = src.sendChainKey;
+  dst.recvChainKey = src.recvChainKey;
+  dst.sendN = src.sendN;
+  dst.recvN = src.recvN;
+  dst.prevChainLength = src.prevChainLength;
+  dst.dhSend = src.dhSend;
+  dst.dhRecvPub = src.dhRecvPub;
+  dst.skipped = src.skipped;
+  dst.established = src.established;
+  dst.remoteIdentityX25519 = src.remoteIdentityX25519;
+  dst.remoteIdentityEd25519 = src.remoteIdentityEd25519;
+}
+
+/** Snapshot the live ratchet, drop nested archives, trim to the libsignal cap. */
+export function archiveSession(current: SessionState): SessionState[] {
+  const prior = (current.previous ?? []).map(cloneFresh);
+  prior.push(cloneFresh(current));
+  const drop = prior.length > MAX_ARCHIVED_SESSIONS ? prior.length - MAX_ARCHIVED_SESSIONS : 0;
+  return drop > 0 ? prior.slice(drop) : prior;
+}
+
+/**
+ * Decrypt against the current ratchet, then archived states (newest first).
+ * A hit on an archive promotes it (libsignal SessionCipher).
+ * Work happens on a clone so a failed attempt cannot corrupt the live record.
+ */
+export function ratchetDecryptOpen(session: SessionState, sealed: SealedPayload): Uint8Array {
+  const live = cloneFresh(session);
+  try {
+    const pt = ratchetDecrypt(live, sealed);
+    copyRatchet(session, live);
+    return pt;
+  } catch (first) {
+    const archived = session.previous ?? [];
+    for (let i = archived.length - 1; i >= 0; i--) {
+      const cand = cloneFresh(archived[i]!);
+      try {
+        const pt = ratchetDecrypt(cand, sealed);
+        const rest = archived.filter((_, j) => j !== i).map(cloneFresh);
+        rest.push(cloneFresh(session));
+        copyRatchet(session, cand);
+        session.previous =
+          rest.length > MAX_ARCHIVED_SESSIONS ? rest.slice(rest.length - MAX_ARCHIVED_SESSIONS) : rest;
+        return pt;
+      } catch {
+        continue;
+      }
+    }
+    throw first;
+  }
+}
+
 export function ratchetDecrypt(state: SessionState, sealed: SealedPayload): Uint8Array {
   const skipped = trySkipped(state, sealed);
   if (skipped) return skipped;
@@ -261,6 +324,9 @@ export function serializeSession(state: SessionState): SerializedSession {
     dhRecvPub: state.dhRecvPub ? toB64(state.dhRecvPub) : null,
     skipped: { ...state.skipped },
     established: state.established,
+    previous: state.previous?.length
+      ? state.previous.map((p) => serializeSession({ ...p, previous: undefined }))
+      : undefined,
   };
 }
 
@@ -289,6 +355,7 @@ export function deserializeSession(s: SerializedSession): SessionState {
     dhRecvPub: s.dhRecvPub ? fromB64(s.dhRecvPub) : null,
     skipped: { ...s.skipped },
     established: s.established,
+    previous: (s.previous ?? []).map((p) => deserializeSession({ ...p, previous: undefined })),
   };
 }
 

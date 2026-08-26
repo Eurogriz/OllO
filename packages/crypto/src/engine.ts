@@ -26,8 +26,9 @@ import {
   type SessionState,
   createInitiatorSession,
   createResponderSession,
+  archiveSession,
   deserializeSession,
-  ratchetDecrypt,
+  ratchetDecryptOpen,
   ratchetEncrypt,
   serializeSession,
 } from "./ratchet.js";
@@ -126,6 +127,7 @@ export function acceptSession(
   sealed: SealedPayload,
   remoteUserId: string,
   remoteDeviceId: string,
+  current?: SessionState,
 ): SessionState {
   if (!sealed.prekey) throw new Error("missing prekey whisper");
   const opk = sealed.prekey.oneTimePrekeyId
@@ -145,7 +147,7 @@ export function acceptSession(
     remoteIdentityX25519: sealed.prekey.identityKeyX25519,
     remoteEphemeralPublic: sealed.prekey.ephemeralPublic,
   });
-  return createResponderSession({
+  const next = createResponderSession({
     localUserId: local.userId,
     localDeviceId: local.deviceId,
     remoteUserId,
@@ -159,6 +161,8 @@ export function acceptSession(
       publicKey: signedPrekey.publicKey,
     },
   });
+  if (current) next.previous = archiveSession(current);
+  return next;
 }
 
 export function encryptMessage(session: SessionState, message: InnerMessage): SealedPayload {
@@ -166,7 +170,7 @@ export function encryptMessage(session: SessionState, message: InnerMessage): Se
 }
 
 export function decryptMessage(session: SessionState, sealed: SealedPayload): InnerMessage {
-  const pt = ratchetDecrypt(session, sealed);
+  const pt = ratchetDecryptOpen(session, sealed);
   return JSON.parse(fromUtf8(pt), jsonReviver) as InnerMessage;
 }
 

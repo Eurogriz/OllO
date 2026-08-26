@@ -971,7 +971,7 @@ export function openEnvelope(
       throw new Error("identity_changed");
     }
     acc.knownIdentities[sk] = fp;
-    acc.sessions[sk] = acceptSession(acc.device, sealed, senderUserId, senderDeviceId);
+    acc.sessions[sk] = acceptSession(acc.device, sealed, senderUserId, senderDeviceId, acc.sessions[sk]);
   }
   return decryptMessage(acc.sessions[sk]!, sealed);
 }

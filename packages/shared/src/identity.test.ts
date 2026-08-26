@@ -11,6 +11,9 @@ import {
   planRosterPrune,
   planSessionAccept,
   planSessionOpen,
+  planSessionArchive,
+  planArchiveTrim,
+  MAX_ARCHIVED_SESSIONS,
 } from "./identity.js";
 
 describe("remote identity guard", () => {
@@ -81,5 +84,13 @@ describe("remote identity guard", () => {
     assert.equal(planSessionOpen({ hasSession: false, hasPrekey: true }), "accept-prekey");
     assert.equal(planSessionOpen({ hasSession: true, hasPrekey: false }), "use-session");
     assert.equal(planSessionOpen({ hasSession: false, hasPrekey: false }), "drop");
+    assert.equal(planSessionArchive(true), "archive");
+    assert.equal(planSessionArchive(false), "skip");
+    assert.equal(MAX_ARCHIVED_SESSIONS, 40);
+    assert.equal(planArchiveTrim(40), 0);
+    assert.equal(planArchiveTrim(41), 1);
+    assert.equal(planArchiveTrim(0), 0);
+    assert.equal(planArchiveTrim(-1), 0);
+    assert.equal(planArchiveTrim(10, 0), 0);
   });
 });
