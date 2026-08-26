@@ -24,6 +24,7 @@ import {
   planMembershipDelta,
   planMembershipSignerNotice,
   planRejectedHashes,
+  planSenderKeyEpochRotate,
   planSenderKeyIngest,
   planSenderKeyPrune,
   planTrustedMembers,
@@ -1001,6 +1002,43 @@ export function ensureOwnSenderKey(acc: Account, groupId: string, epoch: number)
   const created = createSenderKey(groupId, epoch);
   acc.senderKeys[k] = created;
   return created;
+}
+
+export async function rotateSenderKeysAfterDeviceDrop(acc: Account): Promise<void> {
+  const groups = Object.values(acc.memberships ?? {}).map((m) => ({
+    groupId: m.groupId,
+    epoch: m.epoch,
+    role: m.members.find((row) => row.userId === acc.userId)?.role ?? "",
+  }));
+  for (const plan of planSenderKeyEpochRotate(groups)) {
+    const local = acc.memberships[plan.groupId];
+    if (!local) continue;
+    const members = local.members.filter(
+      (m) => m.userId && (m.role === "admin" || m.role === "moderator" || m.role === "member"),
+    ) as { userId: string; role: "admin" | "moderator" | "member" }[];
+    if (!members.length) continue;
+    const signed = signMembership({ groupId: plan.groupId, epoch: plan.nextEpoch, members }, acc.device.identity);
+    await api(
+      `/v1/groups/${plan.groupId}/epoch`,
+      acc.access,
+      { method: "POST", body: JSON.stringify({ membership: wireMembership(signed, acc.userId, acc.deviceId) }) },
+      acc,
+    );
+    rememberMembership(acc, {
+      groupId: plan.groupId,
+      epoch: plan.nextEpoch,
+      hash: signed.hash,
+      members: signed.members,
+      signerUserId: acc.userId,
+      signerDeviceId: acc.deviceId,
+    });
+    await distributeOwnSenderKey(
+      acc,
+      plan.groupId,
+      plan.nextEpoch,
+      signed.members.map((m) => m.userId),
+    );
+  }
 }
 
 export async function distributeOwnSenderKey(

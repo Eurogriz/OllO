@@ -210,6 +210,21 @@ export function planDroppedDevices(
   return out.slice(-max);
 }
 
+/**
+ * After a user-initiated device revoke, remaining admin devices must start
+ * a new sender-key epoch (same roster). Non-admins cannot sign the bump.
+ */
+export function planSenderKeyEpochRotate(
+  groups: { groupId: string; role: string; epoch: number }[],
+): { groupId: string; nextEpoch: number }[] {
+  const out: { groupId: string; nextEpoch: number }[] = [];
+  for (const g of groups) {
+    if (!g.groupId || g.role !== "admin" || g.epoch < 1) continue;
+    out.push({ groupId: g.groupId, nextEpoch: g.epoch + 1 });
+  }
+  return out;
+}
+
 /** Fan-out only to the signed ∩ live intersection. Empty signed roster → nobody. */
 export function planFanoutRecipients(signedUserIds: string[], serverUserIds: string[]): string[] {
   if (!signedUserIds.some(Boolean)) return [];

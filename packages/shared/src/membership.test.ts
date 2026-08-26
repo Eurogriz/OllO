@@ -9,6 +9,7 @@ import {
   planHeldSenderKeyFlush,
   planOwnOtherHoldDevices,
   planRejectedHashes,
+  planSenderKeyEpochRotate,
   planSenderKeyIngest,
   planSenderKeyPrune,
   planTrustedMembers,
@@ -323,6 +324,15 @@ describe("membership apply planner", () => {
         droppedDevices: ["a:stolen"],
       }),
       "drop",
+    );
+    assert.deepEqual(
+      planSenderKeyEpochRotate([
+        { groupId: "g1", role: "admin", epoch: 2 },
+        { groupId: "g2", role: "member", epoch: 4 },
+        { groupId: "", role: "admin", epoch: 1 },
+        { groupId: "g3", role: "admin", epoch: 0 },
+      ]),
+      [{ groupId: "g1", nextEpoch: 3 }],
     );
   });
 });

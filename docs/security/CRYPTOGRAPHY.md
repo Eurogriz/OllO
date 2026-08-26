@@ -123,7 +123,13 @@ Each member, per group, per device, holds a Sender Key:
   signature over `nonce || ciphertext || aad` so other members who know the
   chain key still cannot forge as that sender
 - On member **remove** or device revoke: increment group epoch, all members
-  generate fresh sender keys and redistribute
+  generate fresh sender keys and redistribute. After a user-initiated
+  `DELETE /v1/devices/:id`, a remaining **admin** device signs
+  `POST /v1/groups/:id/epoch` (same roster, next epoch) and redistributes
+  its sender key. `planSenderKeyEpochRotate` skips non-admin groups.
+  Other members pick up the new epoch on the next `sendToGroup`. A
+  non-admin cannot bump the epoch. Past epoch chains remain readable to
+  anyone who already had them.
 - On member **add**: after `confirmPendingMembership`, current members send
   them the current sender keys over 1:1 (they cannot read history before the
   add unless someone forwards it)

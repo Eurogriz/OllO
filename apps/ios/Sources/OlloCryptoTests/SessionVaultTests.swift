@@ -141,6 +141,21 @@ final class SessionVaultTests: XCTestCase {
             Membership.planSenderKeyIngest(trustedUserIds: ["a"], pendingUserIds: [], senderUserId: "a", senderDeviceId: "stolen", droppedDevices: ["a:stolen"], holdDevices: ["a:stolen"]),
             "drop"
         )
+        XCTAssertEqual(
+            Membership.planSenderKeyEpochRotate(groups: [
+                (groupId: "g1", role: "admin", epoch: 2),
+                (groupId: "g2", role: "member", epoch: 4),
+                (groupId: "", role: "admin", epoch: 1),
+                (groupId: "g3", role: "admin", epoch: 0),
+            ]).map { $0.groupId },
+            ["g1"]
+        )
+        XCTAssertEqual(
+            Membership.planSenderKeyEpochRotate(groups: [
+                (groupId: "g1", role: "admin", epoch: 2),
+            ]).first?.nextEpoch,
+            3
+        )
     }
 
     func testDropsAReplayedEnvelopeAndClearsOnWipe() throws {

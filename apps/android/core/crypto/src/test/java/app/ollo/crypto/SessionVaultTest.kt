@@ -122,6 +122,17 @@ class SessionVaultTest {
         )
         assertEquals("hold", Membership.planSenderKeyIngest(listOf("a"), emptyList(), "a", "stolen", emptyList(), listOf("a:stolen")))
         assertEquals("drop", Membership.planSenderKeyIngest(listOf("a"), emptyList(), "a", "stolen", listOf("a:stolen"), listOf("a:stolen")))
+        assertEquals(
+            listOf("g1" to 3),
+            Membership.planSenderKeyEpochRotate(
+                listOf(
+                    Triple("g1", "admin", 2),
+                    Triple("g2", "member", 4),
+                    Triple("", "admin", 1),
+                    Triple("g3", "admin", 0),
+                ),
+            ),
+        )
     }
 
     @Test

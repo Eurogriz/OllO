@@ -24,6 +24,7 @@ import {
   noteEnvelope,
   dropDeviceSessions,
   pruneSessionsForUser,
+  rotateSenderKeysAfterDeviceDrop,
   realtimeHello,
   realtimeUrl,
   openEnvelope,
@@ -1699,6 +1700,7 @@ function Devices({ acc, lang }: { acc: Account; lang: Lang }) {
                   dropDeviceSessions(acc, acc.userId, String(d.id));
                   saveAccount(acc);
                   setRows(rows.filter((x) => x.id !== d.id));
+                  void rotateSenderKeysAfterDeviceDrop(acc).finally(() => saveAccount(acc));
                 });
               }}
             >

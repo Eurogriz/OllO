@@ -240,6 +240,17 @@ public enum Membership {
         )
     }
 
+    public static func planSenderKeyEpochRotate(
+        groups: [(groupId: String, role: String, epoch: Int)]
+    ) -> [(groupId: String, nextEpoch: Int)] {
+        var out: [(groupId: String, nextEpoch: Int)] = []
+        for g in groups {
+            if g.groupId.isEmpty || g.role != "admin" || g.epoch < 1 { continue }
+            out.append((groupId: g.groupId, nextEpoch: g.epoch + 1))
+        }
+        return out
+    }
+
     /// Fan-out only to the signed ∩ live intersection. Empty signed roster → nobody.
     public static func planFanoutRecipients(signedUserIds: [String], serverUserIds: [String]) -> [String] {
         if !signedUserIds.contains(where: { !$0.isEmpty }) { return [] }
