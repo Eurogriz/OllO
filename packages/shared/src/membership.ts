@@ -225,6 +225,18 @@ export function planSenderKeyEpochRotate(
   return out;
 }
 
+/** Non-admin cannot bump epoch; still replace this device's chain at the current epoch. */
+export function planOwnSenderKeyRotate(
+  groups: { groupId: string; role: string; epoch: number }[],
+): { groupId: string; epoch: number }[] {
+  const out: { groupId: string; epoch: number }[] = [];
+  for (const g of groups) {
+    if (!g.groupId || g.role === "admin" || g.epoch < 1) continue;
+    out.push({ groupId: g.groupId, epoch: g.epoch });
+  }
+  return out;
+}
+
 /** Fan-out only to the signed ∩ live intersection. Empty signed roster → nobody. */
 export function planFanoutRecipients(signedUserIds: string[], serverUserIds: string[]): string[] {
   if (!signedUserIds.some(Boolean)) return [];

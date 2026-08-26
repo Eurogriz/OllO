@@ -128,7 +128,11 @@ Each member, per group, per device, holds a Sender Key:
   `POST /v1/groups/:id/epoch` (same roster, next epoch) and redistributes
   its sender key. `planSenderKeyEpochRotate` skips non-admin groups.
   Other members pick up the new epoch on the next `sendToGroup`. A
-  non-admin cannot bump the epoch. Past epoch chains remain readable to
+  non-admin cannot bump the epoch; `planOwnSenderKeyRotate` still
+  replaces this device's chain at the current epoch so new messages
+  from this device are not readable under the old distribution.
+  Decline of an own-other-device roster runs the same rotate after
+  pinning `droppedDevices`. Past epoch chains remain readable to
   anyone who already had them.
 - On member **add**: after `confirmPendingMembership`, current members send
   them the current sender keys over 1:1 (they cannot read history before the

@@ -156,6 +156,15 @@ final class SessionVaultTests: XCTestCase {
             ]).first?.nextEpoch,
             3
         )
+        XCTAssertEqual(
+            Membership.planOwnSenderKeyRotate(groups: [
+                (groupId: "g1", role: "admin", epoch: 2),
+                (groupId: "g2", role: "member", epoch: 4),
+                (groupId: "g3", role: "moderator", epoch: 1),
+                (groupId: "", role: "member", epoch: 1),
+            ]).map { "\($0.groupId):\($0.epoch)" },
+            ["g2:4", "g3:1"]
+        )
     }
 
     func testDropsAReplayedEnvelopeAndClearsOnWipe() throws {

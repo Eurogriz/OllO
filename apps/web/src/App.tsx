@@ -1309,8 +1309,9 @@ function Shell({
                   <button
                     className="ghost"
                     onClick={() => {
-                      rejectPendingMembership(acc, thread.groupId!);
+                      const hostile = rejectPendingMembership(acc, thread.groupId!);
                       persist(acc);
+                      if (hostile) void rotateSenderKeysAfterDeviceDrop(acc).finally(() => persist(acc));
                     }}
                   >
                     {t(lang, "decline")}

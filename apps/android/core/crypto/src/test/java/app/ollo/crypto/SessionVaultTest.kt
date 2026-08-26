@@ -133,6 +133,17 @@ class SessionVaultTest {
                 ),
             ),
         )
+        assertEquals(
+            listOf("g2" to 4, "g3" to 1),
+            Membership.planOwnSenderKeyRotate(
+                listOf(
+                    Triple("g1", "admin", 2),
+                    Triple("g2", "member", 4),
+                    Triple("g3", "moderator", 1),
+                    Triple("", "member", 1),
+                ),
+            ),
+        )
     }
 
     @Test

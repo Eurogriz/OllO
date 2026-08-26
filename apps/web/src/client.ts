@@ -24,6 +24,7 @@ import {
   planMembershipDelta,
   planMembershipSignerNotice,
   planRejectedHashes,
+  planOwnSenderKeyRotate,
   planSenderKeyEpochRotate,
   planSenderKeyIngest,
   planSenderKeyPrune,
@@ -316,13 +317,14 @@ export function confirmPendingMembership(
   return { applied: pending, added: delta.added };
 }
 
-export function rejectPendingMembership(acc: Account, groupId: string): void {
+export function rejectPendingMembership(acc: Account, groupId: string): boolean {
   if (!acc.rejectedMemberships) acc.rejectedMemberships = {};
   const pending = acc.pendingMemberships?.[groupId];
   if (pending?.hash) {
     acc.rejectedMemberships[groupId] = planRejectedHashes(acc.rejectedMemberships[groupId] ?? [], pending.hash);
   }
   if (acc.pendingMemberships) delete acc.pendingMemberships[groupId];
+  let hostile = false;
   if (pending) {
     const notice = planMembershipSignerNotice({
       localUserId: acc.userId,
@@ -332,10 +334,12 @@ export function rejectPendingMembership(acc: Account, groupId: string): void {
     });
     if (notice === "own-other-device") {
       noteDroppedDevice(acc, pending.signerUserId, pending.signerDeviceId);
+      hostile = true;
     }
   }
   const local = acc.memberships?.[groupId];
   flushHeldSenderKeys(acc, groupId, (local?.members ?? []).map((m) => m.userId));
+  return hostile;
 }
 
 function senderKeySlot(k: { groupId: string; userId: string; deviceId: string; epoch: number }): string {
@@ -1037,6 +1041,17 @@ export async function rotateSenderKeysAfterDeviceDrop(acc: Account): Promise<voi
       plan.groupId,
       plan.nextEpoch,
       signed.members.map((m) => m.userId),
+    );
+  }
+  for (const plan of planOwnSenderKeyRotate(groups)) {
+    const local = acc.memberships[plan.groupId];
+    if (!local) continue;
+    if (acc.senderKeys) delete acc.senderKeys[`${plan.groupId}:${plan.epoch}`];
+    await distributeOwnSenderKey(
+      acc,
+      plan.groupId,
+      plan.epoch,
+      local.members.map((m) => m.userId),
     );
   }
 }

@@ -216,6 +216,15 @@ object Membership {
         return out
     }
 
+    fun planOwnSenderKeyRotate(groups: List<Triple<String, String, Int>>): List<Pair<String, Int>> {
+        val out = ArrayList<Pair<String, Int>>()
+        for ((groupId, role, epoch) in groups) {
+            if (groupId.isEmpty() || role == "admin" || epoch < 1) continue
+            out.add(Pair(groupId, epoch))
+        }
+        return out
+    }
+
     /** Fan-out only to the signed ∩ live intersection. Empty signed roster → nobody. */
     fun planFanoutRecipients(signedUserIds: List<String>, serverUserIds: List<String>): List<String> {
         if (signedUserIds.none { it.isNotEmpty() }) return emptyList()
