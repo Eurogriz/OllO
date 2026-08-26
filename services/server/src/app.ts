@@ -5,9 +5,10 @@ import websocket from "@fastify/websocket";
 import { ZodError } from "zod";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { canSeePresence, hiddenPresence } from "@ollo/shared";
 import { config } from "./config.js";
 import type { Db } from "./db/index.js";
-import { ApiError, requestId, sendError, requireAuth } from "./http.js";
+import { ApiError, assertLiveDevice, authFromAccess, readBearer, requestId, requireAuth, sendError } from "./http.js";
 import { registerAttachments } from "./modules/attachments.js";
 import { registerAuth } from "./modules/auth.js";
 import { registerBackups } from "./modules/backups.js";
@@ -19,8 +20,9 @@ import { registerNotifications } from "./modules/notifications.js";
 import { registerUsers } from "./modules/users.js";
 import { log } from "./observability/logger.js";
 import { httpRequests, registry } from "./observability/metrics.js";
+import { helloAccessToken } from "./realtime/hello.js";
 import { attach, detach, type SocketClient, connectionCount, isOnline } from "./realtime/hub.js";
-import { randomToken, verifyAccess } from "./security/crypto-utils.js";
+import { randomToken } from "./security/crypto-utils.js";
 
 function originAllowed(origin: string | undefined): boolean {
   if (!origin) return true;
@@ -66,22 +68,15 @@ export async function buildApp(db: Db): Promise<FastifyInstance> {
     const path = (req.url ?? "").split("?")[0] ?? "";
     if (!path.startsWith("/v1/")) return;
     if (publicV1.has(`${req.method} ${path}`)) return;
-    const header = req.headers.authorization;
-    const q = (req.query as { access_token?: string } | undefined)?.access_token;
-    const token = header?.startsWith("Bearer ") ? header.slice(7) : q;
+    const token = readBearer(req);
     if (!token) return;
-    const claims = verifyAccess(token);
-    if (!claims) return;
-    const row = await db.query<{ revoked_at: string | null; deleted_at: string | null }>(
-      `SELECT d.revoked_at, u.deleted_at
-       FROM devices d JOIN users u ON u.id = d.user_id
-       WHERE d.id = $1 AND d.user_id = $2`,
-      [claims.did, claims.sub],
-    );
-    const live = row.rows[0];
-    if (!live || live.revoked_at || live.deleted_at) {
-      throw new ApiError("unauthorized", "Device revoked", 401);
+    let auth;
+    try {
+      auth = authFromAccess(token);
+    } catch {
+      return;
     }
+    await assertLiveDevice(db, auth);
   });
 
   app.addHook("onRequest", async (req, reply) => {
@@ -139,8 +134,17 @@ export async function buildApp(db: Db): Promise<FastifyInstance> {
   await registerBackups(app, db);
 
   app.get("/v1/presence/:userId", async (req) => {
-    requireAuth(req);
+    const auth = requireAuth(req);
     const userId = (req.params as { userId: string }).userId;
+    let isContact = false;
+    if (auth.userId !== userId) {
+      const contact = await db.query(
+        "SELECT 1 FROM contacts WHERE user_id = $1 AND contact_user_id = $2",
+        [auth.userId, userId],
+      );
+      isContact = Boolean(contact.rows[0]);
+    }
+    if (!canSeePresence(auth.userId, userId, isContact)) return hiddenPresence(userId);
     const row = await db.query<{ last_seen_at: string }>(
       `SELECT last_seen_at FROM devices WHERE user_id = $1 AND revoked_at IS NULL
        ORDER BY last_seen_at DESC LIMIT 1`,
@@ -157,7 +161,7 @@ export async function buildApp(db: Db): Promise<FastifyInstance> {
   app.get("/v1/realtime", { websocket: true }, (socket, req) => {
     let client: SocketClient | null = null;
     socket.on("message", (raw) => {
-      let msg: { op?: string; resume?: string; after?: string; ids?: string[] };
+      let msg: { op?: string; resume?: string; after?: string; ids?: string[]; access_token?: string };
       try {
         msg = JSON.parse(String(raw));
       } catch {
@@ -165,28 +169,33 @@ export async function buildApp(db: Db): Promise<FastifyInstance> {
         return;
       }
       if (msg.op === "hello") {
-        try {
-          const auth = requireAuth(req);
-          client = {
-            deviceId: auth.deviceId,
-            userId: auth.userId,
-            ws: socket,
-            resume: msg.resume ?? randomToken(12),
-          };
-          attach(client);
-          void db.query("UPDATE devices SET last_seen_at = now() WHERE id = $1", [auth.deviceId]);
-          socket.send(
-            JSON.stringify({
-              op: "welcome",
-              resume: client.resume,
-              server_time: new Date().toISOString(),
-              connections: connectionCount(),
-            }),
-          );
-        } catch {
-          socket.send(JSON.stringify({ op: "error", code: "unauthorized" }));
-          socket.close();
-        }
+        const token = helloAccessToken(msg.access_token, readBearer(req));
+        void (async () => {
+          try {
+            if (!token) throw new ApiError("unauthorized", "Missing bearer token", 401);
+            const auth = authFromAccess(token);
+            await assertLiveDevice(db, auth);
+            client = {
+              deviceId: auth.deviceId,
+              userId: auth.userId,
+              ws: socket,
+              resume: msg.resume ?? randomToken(12),
+            };
+            attach(client);
+            await db.query("UPDATE devices SET last_seen_at = now() WHERE id = $1", [auth.deviceId]);
+            socket.send(
+              JSON.stringify({
+                op: "welcome",
+                resume: client.resume,
+                server_time: new Date().toISOString(),
+                connections: connectionCount(),
+              }),
+            );
+          } catch {
+            socket.send(JSON.stringify({ op: "error", code: "unauthorized" }));
+            socket.close();
+          }
+        })();
         return;
       }
       if (msg.op === "ping") {

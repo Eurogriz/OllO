@@ -189,6 +189,18 @@ describe("API integration", () => {
     const depthAfter = await json("GET", "/v1/me/prekey-depth", undefined, bobTok);
     assert.equal(depthAfter.body.remaining, depthBefore.body.remaining);
 
+    const leaked = await app.inject({ method: "GET", url: `/v1/me?access_token=${encodeURIComponent(aliceTok)}` });
+    assert.equal(leaked.statusCode, 401);
+    const me = await json("GET", "/v1/me", undefined, aliceTok);
+    assert.equal(me.status, 200);
+
+    const stranger = await json("GET", `/v1/presence/${bobUser}`, undefined, aliceTok);
+    assert.equal(stranger.status, 200);
+    assert.equal(stranger.body.state, "offline");
+    assert.equal(stranger.body.last_seen_day, null);
+
+    const added = await json("POST", "/v1/contacts", { user_id: bobUser }, aliceTok);
+    assert.equal(added.status, 200, JSON.stringify(added.body));
     const presence = await json("GET", `/v1/presence/${bobUser}`, undefined, aliceTok);
     assert.equal(presence.status, 200);
     assert.ok(presence.body.state === "online" || presence.body.state === "offline");
@@ -458,6 +470,20 @@ describe("API integration", () => {
     }
     const alice = await signup("+79990000041", "alicepriv");
     const bob = await signup("+79990000042", "bobpriv");
+
+    const { attach, detach, resetHub } = await import("./realtime/hub.js");
+    const onlineWs = { readyState: 1, send() {}, close() {} } as unknown as import("ws").WebSocket;
+    const socket = { deviceId: bob.deviceId, userId: bob.userId, ws: onlineWs, resume: "r" };
+    attach(socket);
+    const hidden = await json("GET", `/v1/presence/${bob.userId}`, undefined, alice.tok);
+    assert.equal(hidden.status, 200);
+    assert.equal(hidden.body.state, "offline");
+    assert.equal(hidden.body.last_seen_day, null);
+    await json("POST", "/v1/contacts", { user_id: bob.userId }, alice.tok);
+    const visible = await json("GET", `/v1/presence/${bob.userId}`, undefined, alice.tok);
+    assert.equal(visible.body.state, "online");
+    detach(socket);
+    resetHub();
 
     const phoneLookup = await json(
       "POST",

@@ -21,6 +21,8 @@ import {
   newDeviceMaterial,
   dropDeviceSessions,
   pruneSessionsForUser,
+  realtimeHello,
+  realtimeUrl,
   openEnvelope,
   publicDevicePayload,
   replenishPrekeys,
@@ -447,9 +449,10 @@ function Shell({
     const connect = () => {
       if (stopped) return;
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
-      ws = new WebSocket(`${proto}//${location.host}/v1/realtime?access_token=${acc.access}`);
+      ws = new WebSocket(realtimeUrl(`${proto}//${location.host}`));
       ws.onopen = () => {
-        ws?.send(JSON.stringify({ op: "hello" }));
+        ws?.send(JSON.stringify(realtimeHello(acc.access)));
+        void maybeRotateSignedPrekey(acc).then(() => persist(acc)).catch(() => undefined);
         void flushOutbox(acc).then(() => persist(acc));
         void replenishPrekeys(acc).catch(() => undefined);
       };

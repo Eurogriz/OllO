@@ -10,6 +10,8 @@ import {
   planRosterPrune,
   afterUnauthorized,
   planSignedPrekeyRotation,
+  realtimeHello,
+  realtimeUrl,
   retainUnexpired,
 } from "@ollo/shared";
 import {
@@ -55,6 +57,8 @@ import {
   serializeSession,
   utf8,
 } from "@ollo/crypto";
+
+export { realtimeHello, realtimeUrl };
 
 const STORE_KEY = "ollo.account.v1";
 const VAULT_STORE = "ollo.vault.v1";

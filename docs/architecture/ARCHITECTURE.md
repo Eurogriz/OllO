@@ -261,8 +261,8 @@ against casual object-store misconfiguration, not against us.
 
 ## 9. Realtime contract
 
-- Client opens `WSS /v1/realtime` with `Authorization: Bearer <access>`
-- First frame: `hello` with `resume_token?` and `last_envelope_id?`
+- Client opens `WSS /v1/realtime` with **no token in the URL**
+- First frame: `hello` with `access_token` (browser) **or** `Authorization: Bearer` on the upgrade (native), plus `resume?` and `after?`
 - Server streams `envelope` frames
 - Client ACKs with `ack {id}`
 - Heartbeat every 25s; missed 2 → drop

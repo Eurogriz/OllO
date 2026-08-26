@@ -6,7 +6,7 @@ Versioning: the prefix is the compatibility version. Additive changes stay
 in `/v1`. Breaking changes go to `/v2`.
 
 Auth: `Authorization: Bearer <access_token>` except for the auth bootstrap
-endpoints.
+endpoints. Tokens must never appear in URLs or query strings.
 
 Idempotency: mutating endpoints accept `Idempotency-Key: <uuid>`. Replays
 return the original result for 24 hours.
@@ -116,7 +116,10 @@ Set / change / remove Argon2id lock.
 - `POST /v1/keys/one-time` — replenish
 - `GET /v1/me/prekey-depth`
 - `GET /v1/safety/{user_id}` — public identity material for verification
-- `GET /v1/presence/{user_id}` — coarse online / last-seen day
+- `GET /v1/presence/{user_id}` — coarse online / last-seen **day**. Only the
+  subject or a contact of the subject. Anyone else gets a uniform
+  `{ state: "offline", last_seen_day: null }` (no existence oracle beyond
+  that the id is well-formed).
 - `GET /v1/notifications/pending` — sealed wakeup count, no bodies
 
 ## Messaging
@@ -203,10 +206,15 @@ The server never receives the passphrase. Keep at most 3 blobs per user.
 
 ## WebSocket `/v1/realtime`
 
+Open `WSS /v1/realtime` with **no** query parameters. Browsers cannot set
+`Authorization` on WebSocket; they send the access token in the first
+`hello` frame. Native clients may instead send `Authorization: Bearer`
+on the upgrade. Query `access_token` is ignored.
+
 Client → server:
 
 ```text
-{ "op": "hello", "resume": "...", "after": "envelope_id" }
+{ "op": "hello", "access_token": "...", "resume": "...", "after": "envelope_id" }
 { "op": "ack", "ids": ["..."] }
 { "op": "ping" }
 ```

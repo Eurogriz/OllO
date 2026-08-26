@@ -4,6 +4,7 @@ export { E164_RE, USERNAME_RE, normalizeUsername };
 export * from "./outbox.js";
 export * from "./identity.js";
 export * from "./history.js";
+export * from "./realtime.js";
 
 export const ACCESS_TTL_SECONDS = 15 * 60;
 export const REFRESH_TTL_SECONDS = 30 * 24 * 60 * 60;

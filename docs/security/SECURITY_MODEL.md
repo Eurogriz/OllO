@@ -77,7 +77,7 @@ A stolen database therefore yields **ciphertext + metadata**, not mail.
 | Sender → recipient at time T | Routing | Drop after delivery + TTL; no long-term analytics warehouse |
 | Envelope size | Transport | Padding buckets on the client (256/512/1k/4k/16k/64k) |
 | Group membership | Fan-out | Signed membership list; no silent adds |
-| Online/approximate last-active | Socket / push | Coarse last-active (day), optional hide |
+| Online/approximate last-active | Socket / push | Coarse last-active (day); not returned to non-contacts |
 | IP at connection | TCP | Short retention, no sale, no enrichment beyond abuse |
 | Phone hash | Registration / SIM recovery | Peppered HMAC; pepper in secret manager |
 

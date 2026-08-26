@@ -20,6 +20,10 @@ operator-facing privacy specification.
 | Reports | Safety | 180 days |
 | Metrics (no ids) | SLO | 13 months |
 
+Coarse presence (`online` / last-seen **day**) is returned only to the
+user themselves or to a contact they added. Strangers receive a uniform
+offline answer so presence is not a public probe.
+
 We do **not** collect: precise location, address book (except on-device
 hashed match the user initiates), message plaintext, analytics of content,
 advertising ids.

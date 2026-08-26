@@ -1,5 +1,6 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { ApiErrorCode } from "@ollo/protocol";
+import type { Db } from "./db/index.js";
 import type { AccessClaims } from "./security/crypto-utils.js";
 import { verifyAccess } from "./security/crypto-utils.js";
 
@@ -25,16 +26,38 @@ export interface Authed {
   claims: AccessClaims;
 }
 
-export function requireAuth(req: FastifyRequest): Authed {
+/** Bearer header only. Query-string tokens leak into logs and referrers. */
+export function readBearer(req: FastifyRequest): string | undefined {
   const header = req.headers.authorization;
-  const q = (req.query as { access_token?: string } | undefined)?.access_token;
-  const token = header?.startsWith("Bearer ") ? header.slice(7) : q;
-  if (!token) {
-    throw new ApiError("unauthorized", "Missing bearer token", 401);
-  }
+  if (header?.startsWith("Bearer ")) return header.slice(7);
+  return undefined;
+}
+
+export function authFromAccess(token: string): Authed {
   const claims = verifyAccess(token);
   if (!claims) throw new ApiError("unauthorized", "Invalid or expired token", 401);
   return { userId: claims.sub, deviceId: claims.did, claims };
+}
+
+export function requireAuth(req: FastifyRequest): Authed {
+  const token = readBearer(req);
+  if (!token) {
+    throw new ApiError("unauthorized", "Missing bearer token", 401);
+  }
+  return authFromAccess(token);
+}
+
+export async function assertLiveDevice(db: Db, auth: Authed): Promise<void> {
+  const row = await db.query<{ revoked_at: string | null; deleted_at: string | null }>(
+    `SELECT d.revoked_at, u.deleted_at
+     FROM devices d JOIN users u ON u.id = d.user_id
+     WHERE d.id = $1 AND d.user_id = $2`,
+    [auth.deviceId, auth.userId],
+  );
+  const live = row.rows[0];
+  if (!live || live.revoked_at || live.deleted_at) {
+    throw new ApiError("unauthorized", "Device revoked", 401);
+  }
 }
 
 export function requestId(req: FastifyRequest): string {
