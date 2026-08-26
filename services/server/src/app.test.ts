@@ -1247,6 +1247,71 @@ describe("API integration", () => {
     assert.equal(((two.body.devices as unknown[]) ?? []).length, 2);
   });
 
+  it("echoes opaque libsignal XEdDSA and does not noble-verify it", async () => {
+    const account = generateEd25519();
+    const dev = devicePayload("xeddsa-phone");
+    const xeddsa = Buffer.alloc(64, 7);
+    dev.json.signed_prekey = {
+      ...dev.json.signed_prekey,
+      xeddsa: xeddsa.toString("base64"),
+    };
+    const otp = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000201" });
+    const reg = await json("POST", "/v1/auth/verify-otp", {
+      challenge_id: otp.body.challenge_id,
+      otp: otp.body.dev_otp,
+      account_ed25519: b64(account.publicKey),
+      device: dev.json,
+    });
+    assert.equal(reg.status, 200, JSON.stringify(reg.body));
+    const tok = reg.body.access_token as string;
+    const userId = (reg.body.user as { id: string }).id;
+    const deviceId = reg.body.device_id as string;
+    const keys = await json("GET", `/v1/keys/${userId}/${deviceId}?consume=0`, undefined, tok);
+    assert.equal(keys.status, 200, JSON.stringify(keys.body));
+    const bundle = keys.body.bundle as { signed_prekey: { signature: string; xeddsa?: string } };
+    assert.equal(bundle.signed_prekey.xeddsa, xeddsa.toString("base64"));
+    assert.notEqual(bundle.signed_prekey.xeddsa, bundle.signed_prekey.signature);
+
+    const rotated = Buffer.alloc(64, 9);
+    const put = await json(
+      "PUT",
+      "/v1/keys/signed-prekey",
+      {
+        id: 2,
+        public: dev.json.signed_prekey.public,
+        signature: dev.json.signed_prekey.signature,
+        xeddsa: rotated.toString("base64"),
+      },
+      tok,
+    );
+    assert.equal(put.status, 200, JSON.stringify(put.body));
+    const after = await json("GET", `/v1/keys/${userId}/${deviceId}?consume=0`, undefined, tok);
+    const next = (after.body.bundle as { signed_prekey: { xeddsa?: string } }).signed_prekey;
+    assert.equal(next.xeddsa, rotated.toString("base64"));
+
+    const listed = await json("GET", `/v1/keys/${userId}/devices`, undefined, tok);
+    const row = (listed.body.devices as Array<{ signed_prekey: { xeddsa?: string } }>)[0];
+    assert.equal(row?.signed_prekey.xeddsa, rotated.toString("base64"));
+
+    const web = devicePayload("no-xeddsa");
+    const otpWeb = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000202" });
+    const webReg = await json("POST", "/v1/auth/verify-otp", {
+      challenge_id: otpWeb.body.challenge_id,
+      otp: otpWeb.body.dev_otp,
+      account_ed25519: b64(generateEd25519().publicKey),
+      device: web.json,
+    });
+    assert.equal(webReg.status, 200, JSON.stringify(webReg.body));
+    const webKeys = await json(
+      "GET",
+      `/v1/keys/${(webReg.body.user as { id: string }).id}/${webReg.body.device_id as string}?consume=0`,
+      undefined,
+      webReg.body.access_token as string,
+    );
+    const webSpk = (webKeys.body.bundle as { signed_prekey: { xeddsa?: string } }).signed_prekey;
+    assert.equal(webSpk.xeddsa, undefined);
+  });
+
   it("rate-limits auth challenges per client address", async () => {
     const { AUTH_CHALLENGE_PER_IP } = await import("./modules/auth.js");
     const ip = "203.0.113.77";

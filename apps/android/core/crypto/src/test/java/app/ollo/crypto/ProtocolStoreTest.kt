@@ -99,6 +99,40 @@ class ProtocolStoreTest {
     }
 
     @Test
+    fun accountKeySurvivesRestartAndIsNotReminted() {
+        val dir = File(System.getProperty("java.io.tmpdir"), "ollo-account-${System.nanoTime()}")
+        try {
+            val first = ProtocolStore(IdentityStore(directory = dir), wrap)
+            val a = first.accountVault.getOrCreate()
+            val again = ProtocolStore(IdentityStore(directory = dir), wrap)
+            val b = again.accountVault.getOrCreate()
+            assertArrayEquals(a.publicKey, b.publicKey)
+            assertArrayEquals(a.privateSeed, b.privateSeed)
+            again.wipe()
+            val third = ProtocolStore(IdentityStore(directory = dir), wrap)
+            val c = third.accountVault.getOrCreate()
+            assertTrue(!a.publicKey.contentEquals(c.publicKey))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun identityExtrasAndPrekeyIdsRoundTrip() {
+        val proto = ProtocolStore(IdentityStore(), wrap)
+        proto.storeLocalIdentity(
+            byteArrayOf(1, 2, 3),
+            7,
+            linkedMapOf("device_ed25519_seed" to byteArrayOf(9)),
+        )
+        proto.storePreKey(4, byteArrayOf(4))
+        proto.storeSignedPreKey(2, byteArrayOf(2))
+        assertArrayEquals(byteArrayOf(9), proto.loadIdentityField("device_ed25519_seed"))
+        assertEquals(listOf(4), proto.preKeyIds())
+        assertEquals(listOf(2), proto.signedPreKeyIds())
+    }
+
+    @Test
     fun rejectsPathTraversalKeys() {
         val store = IdentityStore()
         try {

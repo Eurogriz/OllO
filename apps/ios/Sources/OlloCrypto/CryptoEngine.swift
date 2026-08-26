@@ -10,6 +10,7 @@ public protocol CryptoEngine: Sendable {
     func generateIdentity() throws -> IdentityMaterial
     func deviceRegistrationJson(name: String, platform: String) throws -> String
     func processPrekeyBundle(_ remote: Data) throws -> String
+    func existingSession(userId: String, deviceId: String) -> String?
     func encrypt(sessionId: String, plaintext: Data) throws -> Data
     func decrypt(sessionId: String, payload: Data) throws -> Data
     func safetyNumber(local: Data, remote: Data) -> String
@@ -53,6 +54,10 @@ public struct UnboundCryptoEngine: CryptoEngine {
 
     public func processPrekeyBundle(_ remote: Data) throws -> String {
         throw CryptoEngineError.unbound
+    }
+
+    public func existingSession(userId: String, deviceId: String) -> String? {
+        nil
     }
 
     public func encrypt(sessionId: String, plaintext: Data) throws -> Data {

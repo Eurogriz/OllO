@@ -25,18 +25,39 @@ public final class ProtocolStore: @unchecked Sendable {
         )
         self.messages = MessageLog(store: store, wrapKey: wrapKey)
         self.sessionVault = SessionVault(store: store, wrapKey: wrapKey)
+        self.accountVault = AccountVault(store: store, wrapKey: wrapKey)
     }
 
-    public func storeLocalIdentity(record: Data, registrationId: Int) throws {
+    public let accountVault: AccountVault
+
+    public func storeLocalIdentity(
+        record: Data,
+        registrationId: Int,
+        extras: [String: Data] = [:]
+    ) throws {
         guard (1...0x3FFF).contains(registrationId) else { throw StoreError.registrationId }
-        try persist(.identity, [
+        var map: [String: Data] = [
             "record": record,
             "registration_id": be32(UInt32(registrationId)),
-        ])
+        ]
+        for (k, v) in extras { map[k] = v }
+        try persist(.identity, map)
     }
 
     public func loadLocalIdentity() throws -> Data? {
         try loadMap(.identity)["record"]
+    }
+
+    public func loadIdentityField(_ name: String) throws -> Data? {
+        try loadMap(.identity)[name]
+    }
+
+    public func preKeyIds() throws -> [Int] {
+        try loadMap(.preKeys).keys.compactMap { Int($0) }.sorted()
+    }
+
+    public func signedPreKeyIds() throws -> [Int] {
+        try loadMap(.signedPreKeys).keys.compactMap { Int($0) }.sorted()
     }
 
     public func registrationId() throws -> Int? {

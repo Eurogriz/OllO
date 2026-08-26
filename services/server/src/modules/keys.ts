@@ -63,7 +63,8 @@ export async function registerKeys(app: FastifyInstance, db: Db): Promise<void> 
          identity_x25519 = $2,
          identity_ed25519 = $2,
          signed_prekey_public = $2,
-         signed_prekey_sig = $2
+         signed_prekey_sig = $2,
+         signed_prekey_xeddsa = $2
        WHERE id = $1`,
       [id, Buffer.alloc(0)],
     );
@@ -131,11 +132,7 @@ export async function registerKeys(app: FastifyInstance, db: Db): Promise<void> 
         registration_id: d.registration_id,
         identity_key_x25519: b64(d.identity_x25519),
         identity_key_ed25519: b64(d.identity_ed25519),
-        signed_prekey: {
-          id: d.signed_prekey_id,
-          public: b64(d.signed_prekey_public),
-          signature: b64(d.signed_prekey_sig),
-        },
+        signed_prekey: signedPrekeyJson(d),
       })),
     };
   });
@@ -165,16 +162,25 @@ export async function registerKeys(app: FastifyInstance, db: Db): Promise<void> 
   app.put("/v1/keys/signed-prekey", async (req) => {
     const auth = requireAuth(req);
     const body = z
-      .object({ id: z.number().int().positive(), public: z.string(), signature: z.string() })
+      .object({
+        id: z.number().int().positive(),
+        public: z.string(),
+        signature: z.string(),
+        xeddsa: z.string().optional(),
+      })
       .parse(req.body);
     await db.query(
-      `UPDATE devices SET signed_prekey_id = $2, signed_prekey_public = $3, signed_prekey_sig = $4
+      `UPDATE devices SET signed_prekey_id = $2, signed_prekey_public = $3, signed_prekey_sig = $4,
+         signed_prekey_xeddsa = $5
        WHERE id = $1`,
       [
         auth.deviceId,
         body.id,
         requirePublicBytes(body.public, X25519_PUBLIC_LEN, "signed_prekey.public"),
         requirePublicBytes(body.signature, ED25519_SIGNATURE_LEN, "signed_prekey.signature"),
+        body.xeddsa
+          ? requirePublicBytes(body.xeddsa, ED25519_SIGNATURE_LEN, "signed_prekey.xeddsa")
+          : null,
       ],
     );
     return { ok: true };
@@ -205,18 +211,38 @@ function rosterHash(rows: { id: string; identity_x25519: Buffer }[]): string {
   );
 }
 
+type DeviceKeyRow = {
+  id: string;
+  registration_id: number;
+  identity_x25519: Buffer;
+  identity_ed25519: Buffer;
+  signed_prekey_id: number;
+  signed_prekey_public: Buffer;
+  signed_prekey_sig: Buffer;
+  signed_prekey_xeddsa: Buffer | null;
+};
+
+function signedPrekeyJson(d: {
+  signed_prekey_id: number;
+  signed_prekey_public: Buffer;
+  signed_prekey_sig: Buffer;
+  signed_prekey_xeddsa?: Buffer | null;
+}) {
+  const out: { id: number; public: string; signature: string; xeddsa?: string } = {
+    id: d.signed_prekey_id,
+    public: b64(d.signed_prekey_public),
+    signature: b64(d.signed_prekey_sig),
+  };
+  if (d.signed_prekey_xeddsa && d.signed_prekey_xeddsa.length > 0) {
+    out.xeddsa = b64(d.signed_prekey_xeddsa);
+  }
+  return out;
+}
+
 async function listDeviceRows(db: Db, userId: string) {
-  const devices = await db.query<{
-    id: string;
-    registration_id: number;
-    identity_x25519: Buffer;
-    identity_ed25519: Buffer;
-    signed_prekey_id: number;
-    signed_prekey_public: Buffer;
-    signed_prekey_sig: Buffer;
-  }>(
+  const devices = await db.query<DeviceKeyRow>(
     `SELECT id, registration_id, identity_x25519, identity_ed25519,
-            signed_prekey_id, signed_prekey_public, signed_prekey_sig
+            signed_prekey_id, signed_prekey_public, signed_prekey_sig, signed_prekey_xeddsa
      FROM devices WHERE user_id = $1 AND revoked_at IS NULL`,
     [userId],
   );
@@ -224,17 +250,9 @@ async function listDeviceRows(db: Db, userId: string) {
 }
 
 async function takeBundle(db: Db, userId: string, deviceId: string, consume: boolean) {
-  const devices = await db.query<{
-    id: string;
-    registration_id: number;
-    identity_x25519: Buffer;
-    identity_ed25519: Buffer;
-    signed_prekey_id: number;
-    signed_prekey_public: Buffer;
-    signed_prekey_sig: Buffer;
-  }>(
+  const devices = await db.query<DeviceKeyRow>(
     `SELECT id, registration_id, identity_x25519, identity_ed25519,
-            signed_prekey_id, signed_prekey_public, signed_prekey_sig
+            signed_prekey_id, signed_prekey_public, signed_prekey_sig, signed_prekey_xeddsa
      FROM devices WHERE user_id = $1 AND id = $2 AND revoked_at IS NULL`,
     [userId, deviceId],
   );
@@ -262,11 +280,7 @@ async function takeBundle(db: Db, userId: string, deviceId: string, consume: boo
     registration_id: d.registration_id,
     identity_key_x25519: b64(d.identity_x25519),
     identity_key_ed25519: b64(d.identity_ed25519),
-    signed_prekey: {
-      id: d.signed_prekey_id,
-      public: b64(d.signed_prekey_public),
-      signature: b64(d.signed_prekey_sig),
-    },
+    signed_prekey: signedPrekeyJson(d),
     one_time_prekey: oneTime,
   };
 }

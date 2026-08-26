@@ -22,7 +22,15 @@ import { registerUsers } from "./modules/users.js";
 import { log } from "./observability/logger.js";
 import { httpRequests, registry } from "./observability/metrics.js";
 import { helloAccessToken } from "./realtime/hello.js";
-import { attach, detach, type SocketClient, connectionCount, isOnline } from "./realtime/hub.js";
+import { RedisWindowStore } from "./redis.js";
+import {
+  attach,
+  detach,
+  type SocketClient,
+  connectionCount,
+  presenceSeen,
+  touchPresence,
+} from "./realtime/hub.js";
 import { randomToken } from "./security/crypto-utils.js";
 
 function originAllowed(origin: string | undefined): boolean {
@@ -51,6 +59,7 @@ export async function buildApp(db: Db): Promise<FastifyInstance> {
     max: config.rateLimitMax,
     timeWindow: config.rateLimitWindowMs,
     allowList: (req) => req.url.startsWith("/healthz") || req.url.startsWith("/readyz"),
+    store: RedisWindowStore,
   });
 
   await app.register(websocket, { options: { maxPayload: 256 * 1024 } });
@@ -158,7 +167,7 @@ export async function buildApp(db: Db): Promise<FastifyInstance> {
     const last = row.rows[0]?.last_seen_at;
     return {
       user_id: userId,
-      state: isOnline(userId) ? "online" : "offline",
+      state: (await presenceSeen(userId)) ? "online" : "offline",
       last_seen_day: last ? String(last).slice(0, 10) : null,
     };
   });
@@ -204,6 +213,7 @@ export async function buildApp(db: Db): Promise<FastifyInstance> {
         return;
       }
       if (msg.op === "ping") {
+        if (client) void touchPresence(client.userId, client.deviceId);
         socket.send(JSON.stringify({ op: "pong", t: Date.now() }));
         return;
       }

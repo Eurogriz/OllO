@@ -56,7 +56,6 @@ struct ContentView: View {
                         }
                     }
                     .buttonStyle(.borderedProminent)
-                    Text(engineUnbound).foregroundStyle(.secondary).font(.footnote)
                 }.padding(28)
             case .chats:
                 VStack(alignment: .leading) {

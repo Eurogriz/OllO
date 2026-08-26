@@ -1,14 +1,15 @@
 package app.ollo.messenger
 
 import android.content.Context
+import app.ollo.crypto.AccountKey
 import app.ollo.crypto.CryptoEngine
 import app.ollo.crypto.DevicePayload
 import app.ollo.crypto.EnvelopePlanner
 import app.ollo.crypto.IdentityStore
+import app.ollo.crypto.LibsignalEngine
 import app.ollo.crypto.ProtocolStore
 import app.ollo.crypto.SessionController
 import app.ollo.crypto.ThreadIndex
-import app.ollo.crypto.UnboundCryptoEngine
 import app.ollo.messenger.crypto.DbKeyProvider
 import app.ollo.messenger.data.AuthRepository
 import java.io.File
@@ -16,8 +17,9 @@ import java.io.File
 /**
  * Process-lifetime session host. Protocol blobs live under [Context.noBackupFilesDir]
  * and are wrapped by Android Keystore. Tokens restore from [SessionController].
- * Registration still requires a bound libsignal engine — this host never
- * invents `registration_id` or prekey ids.
+ * Default engine is store-backed [LibsignalEngine]. Tests may inject
+ * [app.ollo.crypto.UnboundCryptoEngine]. This host never invents
+ * `registration_id` or prekey ids.
  */
 class SessionHost(
     val proto: ProtocolStore,
@@ -28,6 +30,8 @@ class SessionHost(
     fun launch(): EnvelopePlanner.SessionLaunch = sessions.launch()
 
     fun loadInbox(): ThreadIndex = proto.loadThreads()
+
+    fun account(): AccountKey = proto.accountVault.getOrCreate()
 
     fun wipe() {
         sessions.wipe()
@@ -46,7 +50,7 @@ class SessionHost(
         fun open(
             store: IdentityStore,
             wrapKey: ByteArray,
-            engine: CryptoEngine = UnboundCryptoEngine(),
+            engine: CryptoEngine? = null,
             baseUrl: String,
         ): SessionHost {
             require(wrapKey.size == 32) { "protocol wrap unavailable" }
@@ -56,11 +60,11 @@ class SessionHost(
                 proto = proto,
                 sessions = sessions,
                 auth = AuthRepository.connected(baseUrl, sessions),
-                engine = engine,
+                engine = engine ?: LibsignalEngine.create(proto),
             )
         }
 
-        fun open(context: Context, engine: CryptoEngine = UnboundCryptoEngine()): SessionHost {
+        fun open(context: Context, engine: CryptoEngine? = null): SessionHost {
             val dir = File(context.noBackupFilesDir, STORE_DIR)
             if (!dir.exists() && !dir.mkdirs()) {
                 throw IllegalStateException("protocol store directory unavailable")

@@ -48,6 +48,7 @@ export const config = {
   pgliteDir: req("PGLITE_DATA_DIR", "./data/pglite"),
   redisUrl: process.env.REDIS_URL ?? "",
   redisRequired: bool("REDIS_REQUIRED", false),
+  redisTls: bool("REDIS_TLS", false),
   localObjectDir: req("LOCAL_OBJECT_DIR", "./data/objects"),
   s3Endpoint: process.env.S3_ENDPOINT ?? "",
   s3Region: req("S3_REGION", "us-east-1"),

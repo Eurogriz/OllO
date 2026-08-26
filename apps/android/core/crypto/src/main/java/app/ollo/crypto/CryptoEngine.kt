@@ -12,6 +12,7 @@ interface CryptoEngine {
     fun generateIdentity(): IdentityMaterial
     fun deviceRegistrationJson(name: String, platform: String): String
     fun processPrekeyBundle(remote: ByteArray): SessionHandle
+    fun existingSession(userId: String, deviceId: String): SessionHandle? = null
     fun encrypt(session: SessionHandle, plaintext: ByteArray): ByteArray
     fun decrypt(session: SessionHandle, payload: ByteArray): ByteArray
     fun safetyNumber(localIdentity: ByteArray, remoteIdentity: ByteArray): String

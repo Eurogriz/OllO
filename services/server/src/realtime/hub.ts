@@ -1,5 +1,9 @@
 import type { WebSocket } from "ws";
 import { log } from "../observability/logger.js";
+import { getRedis } from "../redis.js";
+
+/** Cross-process presence TTL. Local maps still drive this-process WS push. */
+export const PRESENCE_TTL_SECONDS = 90;
 
 export interface SocketClient {
   deviceId: string;
@@ -18,6 +22,27 @@ export function attach(client: SocketClient): void {
   const devices = byUser.get(client.userId) ?? new Set();
   devices.add(client.deviceId);
   byUser.set(client.userId, devices);
+  void touchPresence(client.userId, client.deviceId);
+}
+
+export async function touchPresence(userId: string, deviceId: string): Promise<void> {
+  try {
+    const r = await getRedis();
+    await r.setEx(`presence:user:${userId}`, PRESENCE_TTL_SECONDS, deviceId);
+    await r.setEx(`presence:device:${deviceId}`, PRESENCE_TTL_SECONDS, userId);
+  } catch {
+    /* local maps still apply */
+  }
+}
+
+export async function presenceSeen(userId: string): Promise<boolean> {
+  if (isOnline(userId)) return true;
+  try {
+    const r = await getRedis();
+    return (await r.get(`presence:user:${userId}`)) != null;
+  } catch {
+    return false;
+  }
 }
 
 export function detach(client: SocketClient): void {

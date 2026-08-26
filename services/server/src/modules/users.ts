@@ -318,7 +318,8 @@ export async function registerUsers(app: FastifyInstance, db: Db): Promise<void>
          identity_x25519 = $2,
          identity_ed25519 = $2,
          signed_prekey_public = $2,
-         signed_prekey_sig = $2
+         signed_prekey_sig = $2,
+         signed_prekey_xeddsa = $2
        WHERE user_id = $1`,
       [auth.userId, Buffer.alloc(0)],
     );

@@ -2,7 +2,17 @@ import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import type { WebSocket } from "ws";
 import { shouldWake } from "../modules/notifications.js";
-import { attach, detach, dropDevice, dropUser, isDeviceOnline, isOnline, resetHub } from "./hub.js";
+import { memoryRedis, resetRedisForTests } from "../redis.js";
+import {
+  attach,
+  detach,
+  dropDevice,
+  dropUser,
+  isDeviceOnline,
+  isOnline,
+  presenceSeen,
+  resetHub,
+} from "./hub.js";
 
 function fakeWs(readyState: number): WebSocket {
   return { readyState, send() {}, close() {} } as unknown as WebSocket;
@@ -41,6 +51,17 @@ describe("device online and wake kinds", () => {
     assert.equal(isOnline("u1"), true);
     assert.equal(dropUser("u1"), 1);
     assert.equal(isOnline("u1"), false);
+  });
+
+  it("sees a remote presence key when this process has no socket", async () => {
+    resetRedisForTests(memoryRedis());
+    assert.equal(await presenceSeen("u-remote"), false);
+    const { getRedis } = await import("../redis.js");
+    const r = await getRedis();
+    await r.setEx("presence:user:u-remote", 90, "d-remote");
+    assert.equal(isOnline("u-remote"), false);
+    assert.equal(await presenceSeen("u-remote"), true);
+    resetRedisForTests();
   });
 
   it("wakes only for messages and calls", () => {

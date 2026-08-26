@@ -5,8 +5,9 @@ import OlloStorage
 
 /// Process-lifetime session host. Protocol blobs live under Application Support
 /// and are wrapped by a Keychain key (`ollo.vault.wrap.v1`). Tokens restore
-/// from `SessionController`. Registration still requires a bound libsignal
-/// engine — this host never invents `registration_id` or prekey ids.
+/// from `SessionController`. Default engine is store-backed `LibsignalEngine`.
+/// Tests may inject `UnboundCryptoEngine`. This host never invents
+/// `registration_id` or prekey ids.
 final class SessionHost {
     let proto: ProtocolStore
     let sessions: SessionController
@@ -33,6 +34,10 @@ final class SessionHost {
         try proto.loadThreads()
     }
 
+    func account() throws -> AccountKey {
+        try proto.accountVault.getOrCreate()
+    }
+
     func wipe() {
         auth.logout()
     }
@@ -45,13 +50,13 @@ final class SessionHost {
 
     func signIn() async throws {
         if try launch() == .signedIn { return }
-        _ = try await auth.signInWithKey(engine: engine, account: AccountKey(), name: "iPhone", platform: "ios")
+        _ = try await auth.signInWithKey(engine: engine, account: try account(), name: "iPhone", platform: "ios")
     }
 
     static func open(
         store: IdentityStore,
         wrapKey: Data,
-        engine: CryptoEngine = UnboundCryptoEngine(),
+        engine: CryptoEngine? = nil,
         baseURL: URL = OlloAPI.baseURL,
         urlSession: URLSession = .shared
     ) throws -> SessionHost {
@@ -61,12 +66,12 @@ final class SessionHost {
         return SessionHost(
             proto: proto,
             sessions: sessions,
-            engine: engine,
+            engine: try engine ?? LibsignalEngine(store: proto),
             auth: AuthRepository.connected(baseURL: baseURL, sessions: sessions, urlSession: urlSession)
         )
     }
 
-    static func open(engine: CryptoEngine = UnboundCryptoEngine()) throws -> SessionHost {
+    static func open(engine: CryptoEngine? = nil) throws -> SessionHost {
         let root = try FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,

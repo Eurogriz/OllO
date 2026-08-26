@@ -22,8 +22,10 @@ A green CI in this repository is **not** an audit.
 |---|---|
 | Protocol | `docs/security/CRYPTOGRAPHY.md`, `packages/protocol` |
 | Account vs device keys | `planOtpAccountBind`, `AccountKey` (Tink / CryptoKit), `register-key` |
-| Native engine | `LibsignalEngine` + official `libsignal-client:0.58.1` |
-| Fail-closed default | `UnboundCryptoEngine` is still `SessionHost` default |
+| Native engine | `LibsignalEngine` + official `libsignal-client:0.58.1` (store-backed; SessionHost binds it) |
+| Directory XEdDSA | `signed_prekey.xeddsa` persisted and echoed; server does not noble-verify it |
+| Account key | `AccountVault` slot `account.v1`; not reminted on each launch |
+| Redis | Serialized RESP, atomic `INCR`+`EXPIRE` via EVAL, TLS for `rediss://` |
 | OTP | First OTP requires dedicated `account_ed25519`; 2nd device is `register-key` |
 | Compact link | `sealLinkCompact` + QR v6-L only (136 data cw, 1 RS block) |
 | SMS / S3 / Redis | Adapters in `sms.ts`, `s3.ts`, `redis.ts`; prod config refuses `none` |

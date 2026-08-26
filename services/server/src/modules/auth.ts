@@ -48,6 +48,7 @@ const deviceSchema = z.object({
     id: z.number().int().positive(),
     public: z.string(),
     signature: z.string(),
+    xeddsa: z.string().optional(),
   }),
   one_time_prekeys: z
     .array(z.object({ id: z.number().int().positive(), public: z.string() }))
@@ -123,7 +124,12 @@ function parseDeviceKeys(device: DeviceBody) {
   if (!verifySignedPrekey(new Uint8Array(identityEd), new Uint8Array(spkPub), new Uint8Array(spkSig))) {
     throw new ApiError("validation", "signed_prekey.signature is not valid");
   }
-  return { identityX, identityEd, spkPub, spkSig };
+  // XEdDSA is opaque: same 64-byte length as Ed25519, different scheme. Do not
+  // run noble verify on it. Native SessionBuilder checks it on the device.
+  const spkXeddsa = device.signed_prekey.xeddsa
+    ? requirePublicBytes(device.signed_prekey.xeddsa, ED25519_SIGNATURE_LEN, "signed_prekey.xeddsa")
+    : null;
+  return { identityX, identityEd, spkPub, spkSig, spkXeddsa };
 }
 
 async function insertDevice(db: Db, userId: string, deviceId: string, device: DeviceBody): Promise<void> {
@@ -132,8 +138,8 @@ async function insertDevice(db: Db, userId: string, deviceId: string, device: De
     `INSERT INTO devices (
        id, user_id, name, platform, registration_id,
        identity_x25519, identity_ed25519,
-       signed_prekey_id, signed_prekey_public, signed_prekey_sig
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+       signed_prekey_id, signed_prekey_public, signed_prekey_sig, signed_prekey_xeddsa
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
     [
       deviceId,
       userId,
@@ -145,6 +151,7 @@ async function insertDevice(db: Db, userId: string, deviceId: string, device: De
       device.signed_prekey.id,
       keys.spkPub,
       keys.spkSig,
+      keys.spkXeddsa,
     ],
   );
   for (const k of device.one_time_prekeys) {

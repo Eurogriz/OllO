@@ -10,7 +10,7 @@ let package = Package(
         .library(name: "OlloStorage", targets: ["OlloStorage"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/signalapp/libsignal-client", from: "0.58.1"),
+        .package(url: "https://github.com/signalapp/libsignal-client", exact: "0.58.1"),
     ],
     targets: [
         .target(

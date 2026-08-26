@@ -17,19 +17,31 @@ class ProtocolStore(
     val sessions = SessionDirectory(store, wrapKey, localUserId, localDeviceId)
     val messages = MessageLog(store, wrapKey)
     val sessionVault = SessionVault(store, wrapKey)
+    val accountVault = AccountVault(store, wrapKey)
 
-    fun storeLocalIdentity(record: ByteArray, registrationId: Int) {
+    fun storeLocalIdentity(
+        record: ByteArray,
+        registrationId: Int,
+        extras: Map<String, ByteArray> = emptyMap(),
+    ) {
         require(registrationId in 1..0x3FFF) { "registration id out of range" }
-        persist(
-            IdentityStore.Slot.Identity,
-            linkedMapOf(
-                "record" to record.copyOf(),
-                "registration_id" to be32(registrationId),
-            ),
+        val map = linkedMapOf(
+            "record" to record.copyOf(),
+            "registration_id" to be32(registrationId),
         )
+        for ((k, v) in extras) map[k] = v.copyOf()
+        persist(IdentityStore.Slot.Identity, map)
     }
 
     fun loadLocalIdentity(): ByteArray? = loadMap(IdentityStore.Slot.Identity)["record"]
+
+    fun loadIdentityField(name: String): ByteArray? = loadMap(IdentityStore.Slot.Identity)[name]
+
+    fun preKeyIds(): List<Int> =
+        loadMap(IdentityStore.Slot.PreKeys).keys.mapNotNull { it.toIntOrNull() }.sorted()
+
+    fun signedPreKeyIds(): List<Int> =
+        loadMap(IdentityStore.Slot.SignedPreKeys).keys.mapNotNull { it.toIntOrNull() }.sorted()
 
     fun registrationId(): Int? {
         val raw = loadMap(IdentityStore.Slot.Identity)["registration_id"] ?: return null

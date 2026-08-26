@@ -90,6 +90,31 @@ final class ProtocolStoreTests: XCTestCase {
         XCTAssertEqual(try proto.loadSignedPreKey(id: 5), Data([5]))
     }
 
+    func testAccountKeySurvivesRestartAndIsNotReminted() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ollo-account-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let first = ProtocolStore(store: IdentityStore(directory: dir), wrapKey: wrap)
+        let a = try first.accountVault.getOrCreate()
+        let again = ProtocolStore(store: IdentityStore(directory: dir), wrapKey: wrap)
+        let b = try again.accountVault.getOrCreate()
+        XCTAssertEqual(a.publicKey, b.publicKey)
+        XCTAssertEqual(a.privateKey.rawRepresentation, b.privateKey.rawRepresentation)
+        again.wipe()
+        let third = ProtocolStore(store: IdentityStore(directory: dir), wrapKey: wrap)
+        let c = try third.accountVault.getOrCreate()
+        XCTAssertNotEqual(a.publicKey, c.publicKey)
+    }
+
+    func testIdentityExtrasAndPrekeyIdsRoundTrip() throws {
+        let proto = ProtocolStore(store: IdentityStore(), wrapKey: wrap)
+        try proto.storeLocalIdentity(record: Data([1, 2, 3]), registrationId: 7, extras: ["device_ed25519_seed": Data([9])])
+        try proto.storePreKey(id: 4, record: Data([4]))
+        try proto.storeSignedPreKey(id: 2, record: Data([2]))
+        XCTAssertEqual(try proto.loadIdentityField("device_ed25519_seed"), Data([9]))
+        XCTAssertEqual(try proto.preKeyIds(), [4])
+        XCTAssertEqual(try proto.signedPreKeyIds(), [2])
+    }
+
     func testRejectsPathTraversalKeys() {
         let store = IdentityStore()
         XCTAssertThrowsError(try store.put(wrapKey: wrap, key: "../etc", plaintext: Data([1])))

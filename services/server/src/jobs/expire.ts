@@ -46,6 +46,7 @@ export async function expireStale(
        identity_ed25519 = $1,
        signed_prekey_public = $1,
        signed_prekey_sig = $1,
+       signed_prekey_xeddsa = $1,
        push_token_enc = NULL
      WHERE revoked_at IS NOT NULL
        AND (
@@ -53,6 +54,7 @@ export async function expireStale(
          OR octet_length(identity_ed25519) > 0
          OR octet_length(signed_prekey_public) > 0
          OR octet_length(signed_prekey_sig) > 0
+         OR (signed_prekey_xeddsa IS NOT NULL AND octet_length(signed_prekey_xeddsa) > 0)
          OR push_token_enc IS NOT NULL
        )
      RETURNING id`,
