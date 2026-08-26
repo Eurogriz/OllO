@@ -41,4 +41,23 @@ class SessionVaultTest {
         assertEquals(100, plan.count)
         assertEquals(11, plan.startId)
     }
+
+    @Test
+    fun controllerRotatesTokensAndWipesOnFailedRefresh() {
+        val store = IdentityStore()
+        val proto = ProtocolStore(store, wrap, "u1", "d1")
+        proto.sessions.saveSession(SessionDirectory.Address("u2", "d9"), byteArrayOf(1, 2, 3))
+        val ctl = SessionController(proto)
+        ctl.save(SessionSecrets("u1", "d1", "access-1", "refresh-1"))
+        assertEquals("access-1", ctl.restore()!!.access)
+        assertTrue(ctl.applyRefresh("access-2", "refresh-2"))
+        assertEquals("refresh-2", proto.sessionVault.load()!!.refresh)
+        assertEquals(EnvelopePlanner.AuthFailure.Retry, ctl.onUnauthorized(true))
+        assertEquals("access-2", ctl.access())
+        assertEquals(EnvelopePlanner.AuthFailure.Wipe, ctl.onUnauthorized(false))
+        assertNull(ctl.access())
+        assertNull(proto.sessionVault.load())
+        assertNull(proto.sessions.loadSession(SessionDirectory.Address("u2", "d9")))
+        assertTrue(store.isEmpty())
+    }
 }

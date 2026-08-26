@@ -610,4 +610,50 @@ describe("API integration", () => {
     assert.ok(recentWakes().length >= 1);
     assert.equal(recentWakes()[recentWakes().length - 1]!.payload.t, "msg");
   });
+
+  it("rotates refresh, kills the family on reuse, and requires registration lock", async () => {
+    const otp = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000061" });
+    const first = await json("POST", "/v1/auth/verify-otp", {
+      challenge_id: otp.body.challenge_id,
+      otp: otp.body.dev_otp,
+      device: devicePayload("lock-phone").json,
+    });
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    const access = first.body.access_token as string;
+    const refresh = first.body.refresh_token as string;
+
+    const rotated = await json("POST", "/v1/auth/refresh", { refresh_token: refresh });
+    assert.equal(rotated.status, 200, JSON.stringify(rotated.body));
+    const nextRefresh = rotated.body.refresh_token as string;
+    const nextAccess = rotated.body.access_token as string;
+    assert.notEqual(nextRefresh, refresh);
+
+    const reused = await json("POST", "/v1/auth/refresh", { refresh_token: refresh });
+    assert.equal(reused.status, 401);
+    const familyDead = await json("POST", "/v1/auth/refresh", { refresh_token: nextRefresh });
+    assert.equal(familyDead.status, 401);
+    const me = await json("GET", "/v1/me", undefined, nextAccess);
+    assert.equal(me.status, 200);
+
+    const lock = await json("POST", "/v1/auth/registration-lock", { pin: "lock-pin-ok" }, access);
+    assert.equal(lock.status, 200, JSON.stringify(lock.body));
+
+    // OTP window is 3/min per phone. Signup used one slot; keep two for lock.
+    const otp2 = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000061" });
+    const missing = await json("POST", "/v1/auth/verify-otp", {
+      challenge_id: otp2.body.challenge_id,
+      otp: otp2.body.dev_otp,
+      device: devicePayload("lock-tablet").json,
+    });
+    assert.equal(missing.status, 403);
+
+    const otp3 = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000061" });
+    const ok = await json("POST", "/v1/auth/verify-otp", {
+      challenge_id: otp3.body.challenge_id,
+      otp: otp3.body.dev_otp,
+      registration_lock: "lock-pin-ok",
+      device: devicePayload("lock-tablet").json,
+    });
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  });
 });

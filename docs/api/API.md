@@ -81,7 +81,9 @@ Response:
 
 ### POST /v1/auth/refresh
 
-Rotates the refresh token. Reuse of an old refresh revokes the family.
+Rotates the refresh token. Reuse of an old refresh revokes the family
+(every live refresh in that family returns 401). Clients must wipe local
+session secrets (`onRefreshRejected`).
 
 ### POST /v1/auth/logout
 

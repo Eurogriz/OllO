@@ -41,6 +41,12 @@ class OlloApi(
 
     fun ack(idsJson: String): String = post("/v1/envelopes/ack", idsJson, auth = true)
 
+    /** Unauthenticated. A 401 here must not recurse into another refresh. */
+    fun refreshSession(refreshToken: String): String {
+        val body = """{"refresh_token":${JSONString(refreshToken)}}"""
+        return post("/v1/auth/refresh", body, auth = false)
+    }
+
     fun post(path: String, body: String, auth: Boolean): String {
         val builder = Request.Builder().url(baseUrl + path).post(body.toRequestBody(json))
         return execute(builder, auth)
@@ -55,8 +61,8 @@ class OlloApi(
         if (auth) token()?.let { builder.header("Authorization", "Bearer $it") }
         http.newCall(builder.build()).execute().use { res ->
             val t = res.body?.string().orEmpty()
-            if (res.code == 401 && auth && !retried) {
-                if (refresh?.invoke() == true) {
+            if (res.code == 401 && auth) {
+                if (!retried && refresh?.invoke() == true) {
                     return execute(builder, auth, retried = true)
                 }
                 onWipe?.invoke()

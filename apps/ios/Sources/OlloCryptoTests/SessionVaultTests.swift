@@ -33,4 +33,25 @@ final class SessionVaultTests: XCTestCase {
         XCTAssertEqual(plan?.count, 100)
         XCTAssertEqual(plan?.startId, 11)
     }
+
+    func testControllerRotatesTokensAndWipesOnFailedRefresh() throws {
+        let store = IdentityStore()
+        let proto = ProtocolStore(store: store, wrapKey: wrap, localUserId: "u1", localDeviceId: "d1")
+        try proto.sessions.saveSession(
+            SessionDirectory.Address(userId: "u2", deviceId: "d9"),
+            record: Data([1, 2, 3])
+        )
+        let ctl = SessionController(proto: proto)
+        try ctl.save(SessionSecrets(userId: "u1", deviceId: "d1", access: "access-1", refresh: "refresh-1"))
+        XCTAssertEqual(try ctl.restore()?.access, "access-1")
+        XCTAssertTrue(try ctl.applyRefresh(access: "access-2", refresh: "refresh-2"))
+        XCTAssertEqual(try proto.sessionVault.load()?.refresh, "refresh-2")
+        XCTAssertEqual(ctl.onUnauthorized(refreshSucceeded: true), .retry)
+        XCTAssertEqual(ctl.access(), "access-2")
+        XCTAssertEqual(ctl.onUnauthorized(refreshSucceeded: false), .wipe)
+        XCTAssertNil(ctl.access())
+        XCTAssertNil(try proto.sessionVault.load())
+        XCTAssertNil(try proto.sessions.loadSession(SessionDirectory.Address(userId: "u2", deviceId: "d9")))
+        XCTAssertTrue(store.isEmpty)
+    }
 }

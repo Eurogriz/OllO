@@ -175,8 +175,9 @@ was restored with the same identity keys.
 `GET /v1/keys/:user/:device?consume=0` inspects a bundle without burning
 a one-time prekey. Clients must only consume when `planKeyFetch` says so.
 
-A rejected refresh token wipes local session secrets. Refresh tokens are
-never written into backups.
+A rejected refresh token wipes local session secrets (`SessionController`,
+`afterUnauthorized`). Refresh tokens are never written into backups.
+Reuse of a rotated refresh revokes the whole session family on the server.
 
 Signed prekeys rotate about every 7 days (`planSignedPrekeyRotation`).
 Unknown age is left alone until the client stamps `createdAt`. The server
