@@ -7,6 +7,7 @@ import {
   encodeAuthProof,
   planAccountProofKey,
   planAuthProofAccept,
+  planOtpAccountBind,
 } from "@ollo/shared";
 import { z } from "zod";
 import { config } from "../config.js";
@@ -55,6 +56,7 @@ const deviceSchema = z.object({
 const verifySchema = z.object({
   challenge_id: z.string(),
   otp: z.string().min(4).max(10),
+  account_ed25519: z.string().optional(),
   registration_lock: z.string().min(4).max(128).nullable().optional(),
   device: deviceSchema,
 });
@@ -141,11 +143,11 @@ async function insertDevice(db: Db, userId: string, deviceId: string, device: De
   }
 }
 
-async function attachAccountKey(db: Db, userId: string, identityEd: Buffer): Promise<void> {
-  await db.query(
-    `UPDATE users SET account_ed25519 = $2 WHERE id = $1 AND account_ed25519 IS NULL`,
-    [userId, identityEd],
-  );
+async function setAccountKey(db: Db, userId: string, accountEd: Buffer): Promise<void> {
+  await db.query(`UPDATE users SET account_ed25519 = $2 WHERE id = $1 AND account_ed25519 IS NULL`, [
+    userId,
+    accountEd,
+  ]);
 }
 
 export async function registerAuth(app: FastifyInstance, db: Db): Promise<void> {
@@ -309,9 +311,24 @@ export async function registerAuth(app: FastifyInstance, db: Db): Promise<void> 
       username: string | null;
       registration_lock_hash: string | null;
       deleted_at: string | null;
-    }>("SELECT id, username, registration_lock_hash, deleted_at FROM users WHERE phone_hmac = $1", [
-      row.phone_hmac,
-    ]);
+      account_ed25519: Buffer | null;
+    }>(
+      "SELECT id, username, registration_lock_hash, deleted_at, account_ed25519 FROM users WHERE phone_hmac = $1",
+      [row.phone_hmac],
+    );
+
+    const keys = parseDeviceKeys(body.device);
+    const incomingAccount = body.account_ed25519
+      ? requirePublicBytes(body.account_ed25519, ED25519_PUBLIC_LEN, "account_ed25519")
+      : null;
+    const storedAccount = existing.rows[0]?.deleted_at ? null : existing.rows[0]?.account_ed25519 ?? null;
+    const bind = planOtpAccountBind({
+      incomingAccount: incomingAccount ? new Uint8Array(incomingAccount) : null,
+      storedAccount: storedAccount ? new Uint8Array(storedAccount) : null,
+      deviceEd25519: new Uint8Array(keys.identityEd),
+    });
+    if (bind === "drop") throw new ApiError("validation", "Account key must be distinct from the device identity");
+    if (bind === "mismatch") throw new ApiError("validation", "Account key does not match this user");
 
     let userId: string;
     let isNew = false;
@@ -319,8 +336,8 @@ export async function registerAuth(app: FastifyInstance, db: Db): Promise<void> 
       userId = randomUuid();
       isNew = true;
       await db.query(
-        `INSERT INTO users (id, phone_hmac, display_name) VALUES ($1,$2,'')`,
-        [userId, row.phone_hmac],
+        `INSERT INTO users (id, phone_hmac, display_name, account_ed25519) VALUES ($1,$2,'',$3)`,
+        [userId, row.phone_hmac, bind === "set" && incomingAccount ? incomingAccount : null],
       );
     } else {
       userId = existing.rows[0].id;
@@ -332,12 +349,13 @@ export async function registerAuth(app: FastifyInstance, db: Db): Promise<void> 
         const ok = await kdfVerify(body.registration_lock, config.registrationLockPepper, lock);
         if (!ok) throw new ApiError("registration_lock", "Registration lock required", 403);
       }
+      if (bind === "set" && incomingAccount) {
+        await setAccountKey(db, userId, incomingAccount);
+      }
     }
 
     const deviceId = randomUuid();
-    const keys = parseDeviceKeys(body.device);
     await insertDevice(db, userId, deviceId, body.device);
-    await attachAccountKey(db, userId, keys.identityEd);
 
     const session = await issueSession(db, userId, deviceId);
     const user = await db.query<{ id: string; username: string | null }>(

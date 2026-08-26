@@ -176,6 +176,72 @@ export function planAccountKeySource(args: {
   return "drop";
 }
 
+function bytesEq(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= a[i]! ^ b[i]!;
+  return d === 0;
+}
+
+/**
+ * OTP must never copy the device IK onto the account.
+ * A dedicated incoming account key may be set once; a mismatch is refused.
+ */
+export function planOtpAccountBind(args: {
+  incomingAccount: Uint8Array | null;
+  storedAccount: Uint8Array | null;
+  deviceEd25519: Uint8Array;
+}): "set" | "keep" | "mismatch" | "drop" {
+  const incoming = args.incomingAccount;
+  if (incoming) {
+    if (planPublicKeyAccept(incoming, ED25519_PUBLIC_LEN) !== "accept") return "drop";
+    if (planPublicKeyAccept(args.deviceEd25519, ED25519_PUBLIC_LEN) !== "accept") return "drop";
+    if (bytesEq(incoming, args.deviceEd25519)) return "drop";
+    if (!args.storedAccount) return "set";
+    if (planPublicKeyAccept(args.storedAccount, ED25519_PUBLIC_LEN) !== "accept") return "set";
+    return bytesEq(incoming, args.storedAccount) ? "keep" : "mismatch";
+  }
+  return "keep";
+}
+
+/** Account-only link blob: add a device without history, tokens, or a device IK. */
+export const LINK_URI_PREFIX = "ollo:link:v1:";
+
+export function planLinkExport(args: { hasAccountIdentity: boolean }): "accept" | "drop" {
+  return args.hasAccountIdentity ? "accept" : "drop";
+}
+
+export function planLinkAccept(args: {
+  hasAccountIdentity: boolean;
+  hasDeviceIdentity: boolean;
+  access: string;
+  refresh: string;
+}): "accept" | "drop" {
+  if (!args.hasAccountIdentity) return "drop";
+  if (args.hasDeviceIdentity) return "drop";
+  if (args.access || args.refresh) return "drop";
+  return "accept";
+}
+
+export function encodeLinkUri(sealedJson: string): string {
+  if (!sealedJson) return "";
+  const bytes = new TextEncoder().encode(sealedJson);
+  return `${LINK_URI_PREFIX}${b64urlEncode(bytes)}`;
+}
+
+export function parseLinkUri(raw: string): string | null {
+  if (!raw) return null;
+  const s = raw.trim();
+  const payload = s.startsWith(LINK_URI_PREFIX) ? s.slice(LINK_URI_PREFIX.length) : s;
+  const bytes = b64urlDecode(payload);
+  if (!bytes || bytes.length === 0) return null;
+  try {
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
 /** Restore always mints a fresh device identity. The account key is the recovery root. */
 export function planRestoreDevice(args: {
   hasAccountIdentity: boolean;

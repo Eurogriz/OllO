@@ -21,8 +21,14 @@ import {
   planAccountProofKey,
   planAccountKeySource,
   planRestoreDevice,
+  planOtpAccountBind,
+  planLinkExport,
+  planLinkAccept,
+  encodeLinkUri,
+  parseLinkUri,
   USER_URI_PREFIX,
   AUTH_PROOF_DOMAIN,
+  LINK_URI_PREFIX,
 } from "./identity.js";
 
 describe("remote identity guard", () => {
@@ -124,5 +130,28 @@ describe("remote identity guard", () => {
     assert.equal(planAccountKeySource({ hasAccountIdentity: false, hasDeviceIdentity: false }), "drop");
     assert.equal(planRestoreDevice({ hasAccountIdentity: true, hasDeviceIdentity: false }), "new-device");
     assert.equal(planRestoreDevice({ hasAccountIdentity: false, hasDeviceIdentity: false }), "drop");
+    const account = new Uint8Array(ED25519_PUBLIC_LEN).fill(5);
+    const device = new Uint8Array(ED25519_PUBLIC_LEN).fill(6);
+    assert.equal(planOtpAccountBind({ incomingAccount: account, storedAccount: null, deviceEd25519: device }), "set");
+    assert.equal(planOtpAccountBind({ incomingAccount: device, storedAccount: null, deviceEd25519: device }), "drop");
+    assert.equal(planOtpAccountBind({ incomingAccount: null, storedAccount: null, deviceEd25519: device }), "keep");
+    assert.equal(planOtpAccountBind({ incomingAccount: account, storedAccount: account, deviceEd25519: device }), "keep");
+    assert.equal(
+      planOtpAccountBind({
+        incomingAccount: new Uint8Array(ED25519_PUBLIC_LEN).fill(9),
+        storedAccount: account,
+        deviceEd25519: device,
+      }),
+      "mismatch",
+    );
+    assert.equal(planLinkExport({ hasAccountIdentity: true }), "accept");
+    assert.equal(planLinkExport({ hasAccountIdentity: false }), "drop");
+    assert.equal(planLinkAccept({ hasAccountIdentity: true, hasDeviceIdentity: false, access: "", refresh: "" }), "accept");
+    assert.equal(planLinkAccept({ hasAccountIdentity: true, hasDeviceIdentity: true, access: "", refresh: "" }), "drop");
+    assert.equal(planLinkAccept({ hasAccountIdentity: true, hasDeviceIdentity: false, access: "tok", refresh: "" }), "drop");
+    const linkUri = encodeLinkUri("{\"v\":1}");
+    assert.equal(linkUri.startsWith(LINK_URI_PREFIX), true);
+    assert.equal(parseLinkUri(linkUri), "{\"v\":1}");
+    assert.equal(parseLinkUri(""), null);
   });
 });

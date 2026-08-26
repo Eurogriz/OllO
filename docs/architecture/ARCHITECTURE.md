@@ -302,8 +302,9 @@ A new device:
 2. Publishes a new identity key
 3. Other devices show a “new device” warning
 4. History is **not** automatically available (no plaintext on server)
-5. Optional: user-initiated transfer over a QR-authenticated local channel
-   or an encrypted backup key the user holds
+5. Optional: user-initiated transfer of the **account** Ed25519 over a
+   passphrase-sealed link file (`ollo:link:v1:`) or a full encrypted
+   backup. The new device always publishes a fresh identity key.
 
 ## 11. Deployment architecture
 

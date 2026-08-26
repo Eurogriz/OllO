@@ -1161,6 +1161,59 @@ describe("API integration", () => {
     assert.equal(eds.includes(b64(account.publicKey)), false);
   });
 
+  it("does not attach the OTP device identity as the account key", async () => {
+    const bare = devicePayload("otp-bare");
+    const otp = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000101" });
+    const first = await json("POST", "/v1/auth/verify-otp", {
+      challenge_id: otp.body.challenge_id,
+      otp: otp.body.dev_otp,
+      device: bare.json,
+    });
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    const me = await json("GET", "/v1/me", undefined, first.body.access_token as string);
+    assert.equal((me.body.user as { address: string | null }).address, null);
+    const db = await getDb();
+    const row = await db.query<{ missing: boolean }>(
+      "SELECT account_ed25519 IS NULL AS missing FROM users WHERE id = $1",
+      [(first.body.user as { id: string }).id],
+    );
+    assert.equal(row.rows[0]?.missing, true);
+
+    const clone = devicePayload("otp-clone");
+    const otpClone = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000102" });
+    const rejected = await json("POST", "/v1/auth/verify-otp", {
+      challenge_id: otpClone.body.challenge_id,
+      otp: otpClone.body.dev_otp,
+      account_ed25519: clone.json.identity_key_ed25519,
+      device: clone.json,
+    });
+    assert.equal(rejected.status, 400);
+
+    const account = generateEd25519();
+    const dedicated = devicePayload("otp-dedicated");
+    const otpOk = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000103" });
+    const ok = await json("POST", "/v1/auth/verify-otp", {
+      challenge_id: otpOk.body.challenge_id,
+      otp: otpOk.body.dev_otp,
+      account_ed25519: b64(account.publicKey),
+      device: dedicated.json,
+    });
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    const addressed = await json("GET", "/v1/me", undefined, ok.body.access_token as string);
+    assert.equal((addressed.body.user as { address: string }).address, encodeUserUri(account.publicKey));
+    assert.notEqual((addressed.body.user as { address: string }).address, encodeUserUri(dedicated.mat.identity.ed25519Public));
+
+    const other = generateEd25519();
+    const otp2 = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000103" });
+    const mismatch = await json("POST", "/v1/auth/verify-otp", {
+      challenge_id: otp2.body.challenge_id,
+      otp: otp2.body.dev_otp,
+      account_ed25519: b64(other.publicKey),
+      device: devicePayload("otp-mismatch").json,
+    });
+    assert.equal(mismatch.status, 400);
+  });
+
   it("rate-limits auth challenges per client address", async () => {
     const { AUTH_CHALLENGE_PER_IP } = await import("./modules/auth.js");
     const ip = "203.0.113.77";

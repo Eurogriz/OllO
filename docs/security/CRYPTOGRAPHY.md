@@ -308,6 +308,12 @@ identity is still minted). History is merged from the file. 1:1 ratchets
 with peers start over against the new device identity. A lost account
 key without this file is unrecoverable.
 
+An **account-only link** (`createLinkPayload` / `ollo:link:v1:`) carries
+just the account Ed25519. No device identity, history, or session tokens.
+The new device still mints a fresh X3DH identity. OTP never copies the
+device Ed25519 onto `account_ed25519`; a dedicated incoming account key
+may be set once (`planOtpAccountBind`).
+
 A wrong passphrase or a flipped ciphertext bit fails closed.
 
 ## 8c. Local-at-rest vault

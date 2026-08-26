@@ -91,7 +91,8 @@ Response 200 (always, to reduce enumeration):
 ```
 
 `dev_otp` is present **only** when `OTP_DEV_REVEAL=true`. Production images
-compile this branch out.
+compile this branch out. OTP is not the account root: the first device
+identity is never copied onto `account_ed25519`.
 
 ### POST /v1/auth/verify-otp
 
@@ -99,6 +100,7 @@ compile this branch out.
 {
   "challenge_id": "ch_...",
   "otp": "123456",
+  "account_ed25519": "b64",
   "registration_lock": null,
   "device": {
     "name": "Pixel 8",
@@ -110,6 +112,11 @@ compile this branch out.
   }
 }
 ```
+
+`account_ed25519` is optional. If present it must be distinct from the
+device Ed25519 (`planOtpAccountBind` → `drop` otherwise) and is written
+only when the user has none (`set`). A mismatch with the stored account
+is 400. OTP never copies the device identity onto the account.
 
 Response:
 

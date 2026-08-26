@@ -12,6 +12,8 @@ import {
   computeSafety,
   accountFromSession,
   createBackupFile,
+  createLinkPayload,
+  createLinkUri,
   confirmPendingMembership,
   createSignedGroup,
   distributeOwnSenderKey,
@@ -38,6 +40,7 @@ import {
   registerWithIdentity,
   rejectPendingMembership,
   restoreFromBackup,
+  linkFromPayload,
   replenishPrekeys,
   resolveSenderEd25519,
   saveAccount,
@@ -101,9 +104,6 @@ export function App() {
     if (!next.rejectedMemberships) next.rejectedMemberships = {};
     if (!next.droppedDevices) next.droppedDevices = [];
     if (!next.senderKeyShared) next.senderKeyShared = {};
-    if (!next.accountIdentity) next.accountIdentity = next.device.identity
-      ? { privateKey: next.device.identity.ed25519Private, publicKey: next.device.identity.ed25519Public }
-      : next.accountIdentity;
     saveAccount(next);
     setAcc({ ...next, sessions: next.sessions, messages: { ...next.messages }, threads: [...next.threads] });
   }, []);
@@ -195,7 +195,7 @@ function Auth({
   setLang: (l: Lang) => void;
   onReady: (a: Account) => void;
 }) {
-  const [step, setStep] = useState<"choose" | "create" | "restore" | "save-backup" | "profile">("choose");
+  const [step, setStep] = useState<"choose" | "create" | "restore" | "link" | "save-backup" | "profile">("choose");
   const [lockPin, setLockPin] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [username, setUsername] = useState("");
@@ -206,6 +206,7 @@ function Auth({
   const [address, setAddress] = useState("");
   const [draft, setDraft] = useState<Account | null>(null);
   const [restoreNotice, setRestoreNotice] = useState(false);
+  const [linkPaste, setLinkPaste] = useState("");
   const accountKey = useRef(newAccountKey());
   const mat = useRef(newDeviceMaterial());
 
@@ -296,6 +297,9 @@ function Auth({
             <button className="ghost" style={{ marginTop: 8 }} onClick={() => setStep("restore")}>
               {t(lang, "restore")}
             </button>
+            <button className="ghost" style={{ marginTop: 8 }} onClick={() => setStep("link")}>
+              {t(lang, "linkDevice")}
+            </button>
           </>
         )}
         {step === "create" && (
@@ -313,6 +317,97 @@ function Auth({
             </div>
             <button className="primary" onClick={() => void createAccount()}>
               {t(lang, "createAccount")}
+            </button>
+            <button className="ghost" style={{ marginTop: 8 }} onClick={() => setStep("choose")}>
+              ←
+            </button>
+          </>
+        )}
+        {step === "link" && (
+          <>
+            <p className="hint">{t(lang, "linkHint")}</p>
+            <div className="field">
+              <label>{t(lang, "linkPassphrase")}</label>
+              <input
+                type="password"
+                value={restorePass}
+                onChange={(e) => setRestorePass(e.target.value)}
+                placeholder="passphrase"
+              />
+            </div>
+            <div className="field">
+              <label>{t(lang, "lock")}</label>
+              <input
+                type="password"
+                value={lockPin}
+                onChange={(e) => setLockPin(e.target.value)}
+                autoComplete="off"
+                placeholder="PIN"
+              />
+            </div>
+            <input
+              type="file"
+              accept="application/json,.ollo"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (!f) return;
+                void f.text().then(async (txt) => {
+                  setErr("");
+                  try {
+                    const { account, isNew } = await linkFromPayload(
+                      txt,
+                      restorePass,
+                      navigator.userAgent.slice(0, 40),
+                      lockPin.trim() || undefined,
+                    );
+                    setRestoreNotice(true);
+                    if (isNew || !account.username) {
+                      setDraft(account);
+                      setAddress(accountAddress(account));
+                      setStep("profile");
+                    } else {
+                      onReady(account);
+                    }
+                  } catch (err) {
+                    setErr((err as Error).message);
+                  }
+                });
+              }}
+            />
+            <div className="field">
+              <label>{t(lang, "pasteLink")}</label>
+              <textarea
+                rows={3}
+                value={linkPaste}
+                onChange={(e) => setLinkPaste(e.target.value)}
+                placeholder="ollo:link:v1:…"
+              />
+            </div>
+            <button
+              className="primary"
+              onClick={() => {
+                if (!linkPaste.trim()) return;
+                setErr("");
+                void linkFromPayload(
+                  linkPaste,
+                  restorePass,
+                  navigator.userAgent.slice(0, 40),
+                  lockPin.trim() || undefined,
+                )
+                  .then(({ account, isNew }) => {
+                    setRestoreNotice(true);
+                    if (isNew || !account.username) {
+                      setDraft(account);
+                      setAddress(accountAddress(account));
+                      setStep("profile");
+                    } else {
+                      onReady(account);
+                    }
+                  })
+                  .catch((err) => setErr((err as Error).message));
+              }}
+            >
+              {t(lang, "linkDevice")}
             </button>
             <button className="ghost" style={{ marginTop: 8 }} onClick={() => setStep("choose")}>
               ←
@@ -1553,6 +1648,43 @@ function Shell({
               </button>
             </div>
             <p className="hint">{t(lang, "backupHint")}</p>
+            <p className="hint">{t(lang, "linkHint")}</p>
+            <div className="list-row">
+              <span>{t(lang, "linkDevice")}</span>
+              <input
+                type="password"
+                value={backupPass}
+                onChange={(e) => setBackupPass(e.target.value)}
+                placeholder="min 8"
+                style={{ width: 90 }}
+              />
+              <button
+                className="ghost"
+                onClick={() => {
+                  try {
+                    const file = createLinkPayload(acc, backupPass);
+                    downloadBackupFile("ollo-link.ollo", file);
+                  } catch (e) {
+                    alert((e as Error).message);
+                  }
+                }}
+              >
+                {t(lang, "downloadLink")}
+              </button>
+              <button
+                className="ghost"
+                onClick={() => {
+                  try {
+                    void navigator.clipboard.writeText(createLinkUri(acc, backupPass));
+                    setBackupPass("");
+                  } catch (e) {
+                    alert((e as Error).message);
+                  }
+                }}
+              >
+                {t(lang, "copyLink")}
+              </button>
+            </div>
             <div className="list-row">
               <span>{t(lang, "backup")}</span>
               <input

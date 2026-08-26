@@ -42,7 +42,11 @@ import {
   planAccountKeySource,
   planBackupAccept,
   planBackupExport,
+  planLinkAccept,
+  planLinkExport,
   planRestoreDevice,
+  encodeLinkUri,
+  parseLinkUri,
 } from "@ollo/shared";
 import {
   type LocalDevice,
@@ -726,7 +730,7 @@ export function accountAddress(acc: Pick<Account, "accountIdentity">): string {
   return encodeUserUri(acc.accountIdentity.publicKey);
 }
 
-export { encodeUserUri, parseUserUri };
+export { encodeUserUri, parseUserUri, encodeLinkUri, parseLinkUri };
 
 export async function registerWithIdentity(
   account: SignKeyPair,
@@ -1681,6 +1685,63 @@ export async function restoreFromBackup(
   const acc = accountFromSession(res, mat, accountKey);
   mergeBackupHistoryInto(acc, stored);
   return { account: acc, isNew: Boolean(res.user.is_new) };
+}
+
+function linkPlaintext(account: SignKeyPair): Uint8Array {
+  return utf8(JSON.stringify({ accountIdentity: serAccount(account), access: "", refresh: "" }));
+}
+
+export function createLinkPayload(acc: Pick<Account, "accountIdentity">, passphrase: string): string {
+  if (planLinkExport({ hasAccountIdentity: Boolean(acc.accountIdentity?.publicKey) }) !== "accept") {
+    throw new Error("invalid link");
+  }
+  return encodeBackup(sealBackup(passphrase, linkPlaintext(acc.accountIdentity)));
+}
+
+export function createLinkUri(acc: Pick<Account, "accountIdentity">, passphrase: string): string {
+  return encodeLinkUri(createLinkPayload(acc, passphrase));
+}
+
+function openLinkStore(raw: string, passphrase: string): { accountIdentity: { privateKey: string; publicKey: string } } {
+  const sealed = raw.trim().startsWith("ollo:link:v1:") ? parseLinkUri(raw) : raw;
+  if (!sealed) throw new Error("invalid link");
+  const stored = JSON.parse(fromUtf8(openBackup(passphrase, decodeBackup(sealed)))) as {
+    accountIdentity?: { privateKey: string; publicKey: string };
+    identity?: string;
+    access?: string;
+    refresh?: string;
+  };
+  if (
+    planLinkAccept({
+      hasAccountIdentity: Boolean(stored.accountIdentity?.privateKey && stored.accountIdentity?.publicKey),
+      hasDeviceIdentity: Boolean(stored.identity),
+      access: stored.access ?? "",
+      refresh: stored.refresh ?? "",
+    }) !== "accept"
+  ) {
+    throw new Error("invalid link");
+  }
+  return { accountIdentity: stored.accountIdentity! };
+}
+
+export function accountKeyFromLink(raw: string, passphrase: string): SignKeyPair {
+  const stored = openLinkStore(raw, passphrase);
+  return {
+    privateKey: b64u(stored.accountIdentity.privateKey),
+    publicKey: b64u(stored.accountIdentity.publicKey),
+  };
+}
+
+export async function linkFromPayload(
+  raw: string,
+  passphrase: string,
+  name: string,
+  lockPin?: string,
+): Promise<{ account: Account; isNew: boolean }> {
+  const accountKey = accountKeyFromLink(raw, passphrase);
+  const mat = createLocalDevice();
+  const res = await registerWithIdentity(accountKey, mat, name, lockPin);
+  return { account: accountFromSession(res, mat, accountKey), isNew: Boolean(res.user.is_new) };
 }
 
 export async function uploadSealedBackup(acc: Account, passphrase: string): Promise<void> {

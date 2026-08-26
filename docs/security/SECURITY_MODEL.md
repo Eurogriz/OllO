@@ -166,8 +166,9 @@ sideloading).
 ### 6.10 New device
 
 No history from the server. Other devices warn. Adding a device requires
-the account Ed25519 private key (or a restored backup of it) and mints a
-new device identity. Registration lock PIN (if set) is required in addition.
+the account Ed25519 private key (backup file or account-only link) and
+mints a new device identity. OTP cannot mint the account from a device
+IK. Registration lock PIN (if set) is required in addition.
 
 ### 6.11 Lost device / no backup
 

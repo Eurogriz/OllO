@@ -56,9 +56,25 @@ paths:
           description: Always 200 to reduce enumeration
   /auth/verify-otp:
     post:
-      summary: Verify OTP and register a device
+      summary: Verify OTP and register a device. Never copies the device IK onto account_ed25519.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challenge_id, otp, device]
+              properties:
+                challenge_id: { type: string }
+                otp: { type: string }
+                account_ed25519:
+                  type: string
+                  description: Optional dedicated account Ed25519 public. Must not equal the device identity. Set once.
+                registration_lock: { type: string, nullable: true }
+                device: { type: object }
       responses:
         "200": { description: Session issued }
+        "400": { description: Device IK used as account, or account mismatch }
   /auth/refresh:
     post:
       summary: Rotate refresh token

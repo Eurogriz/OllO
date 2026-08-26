@@ -81,6 +81,13 @@ const dict = {
     lostKeyWarning: "Потерянный ключ без копии не восстанавливается. Это не номер телефона.",
     uploadBackup: "Сохранить копию на сервер (зашифрованную)",
     newDeviceOnRestore: "Это новое устройство на том же аккаунте. Отключите старое, если телефон потерян.",
+    linkDevice: "Добавить устройство",
+    linkHint: "Только ключ аккаунта. История и ключ устройства в файл не входят. Пароль на сервер не уходит.",
+    linkPassphrase: "Пароль для привязки",
+    downloadLink: "Скачать файл привязки",
+    copyLink: "Скопировать URI",
+    pasteLink: "Вставить ollo:link:v1:…",
+    linkSaved: "Передайте файл на новое устройство отдельно от телефона.",
   },
   en: {
     tagline: "Private messages. The server cannot read them.",
@@ -162,6 +169,13 @@ const dict = {
     lostKeyWarning: "A lost key without a backup cannot be recovered. This is not a phone number.",
     uploadBackup: "Store encrypted copy on the server",
     newDeviceOnRestore: "This is a new device on the same account. Revoke the old one if the phone is gone.",
+    linkDevice: "Add device",
+    linkHint: "Account key only. History and the device identity stay off this file. The passphrase never goes to the server.",
+    linkPassphrase: "Link passphrase",
+    downloadLink: "Download link file",
+    copyLink: "Copy URI",
+    pasteLink: "Paste ollo:link:v1:…",
+    linkSaved: "Move the file to the new device separately from this phone.",
   },
 } as const;
 

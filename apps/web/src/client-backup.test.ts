@@ -6,8 +6,11 @@ import {
   accountAddress,
   accountFromSession,
   accountKeyFromBackup,
+  accountKeyFromLink,
   backupPlaintext,
   createBackupFile,
+  createLinkPayload,
+  createLinkUri,
   materialFromBackup,
 } from "./client.ts";
 
@@ -95,5 +98,21 @@ describe("account backup file", () => {
     pt.access = "stolen-access";
     const poisoned = encodeBackup(sealBackup("correct-horse", utf8(JSON.stringify(pt))));
     assert.throws(() => materialFromBackup(poisoned, "correct-horse"));
+  });
+
+  it("exports an account-only link without device identity or tokens", () => {
+    const { acc, mat, account } = fakeAccount();
+    const file = createLinkPayload(acc, "correct-horse");
+    const opened = JSON.parse(fromUtf8(openBackup("correct-horse", decodeBackup(file)))) as Record<string, unknown>;
+    assert.equal(opened.access, "");
+    assert.equal(opened.refresh, "");
+    assert.equal("identity" in opened, false);
+    const recovered = accountKeyFromLink(file, "correct-horse");
+    assert.deepEqual(recovered.publicKey, account.publicKey);
+    assert.notDeepEqual(recovered.publicKey, mat.identity.ed25519Public);
+    const uri = createLinkUri(acc, "correct-horse");
+    const fromUri = accountKeyFromLink(uri, "correct-horse");
+    assert.deepEqual(fromUri.privateKey, account.privateKey);
+    assert.throws(() => accountKeyFromLink(createBackupFile(acc, "correct-horse"), "correct-horse"));
   });
 });
