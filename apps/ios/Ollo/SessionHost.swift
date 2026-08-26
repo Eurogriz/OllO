@@ -1,5 +1,6 @@
 import Foundation
 import OlloCrypto
+import OlloNetwork
 import OlloStorage
 
 /// Process-lifetime session host. Protocol blobs live under Application Support
@@ -10,11 +11,18 @@ final class SessionHost {
     let proto: ProtocolStore
     let sessions: SessionController
     let engine: CryptoEngine
+    let auth: AuthRepository
 
-    init(proto: ProtocolStore, sessions: SessionController, engine: CryptoEngine) {
+    init(
+        proto: ProtocolStore,
+        sessions: SessionController,
+        engine: CryptoEngine,
+        auth: AuthRepository
+    ) {
         self.proto = proto
         self.sessions = sessions
         self.engine = engine
+        self.auth = auth
     }
 
     func launch() throws -> EnvelopePlanner.SessionLaunch {
@@ -26,7 +34,7 @@ final class SessionHost {
     }
 
     func wipe() {
-        sessions.wipe()
+        auth.logout()
     }
 
     /// Fail closed before burning an OTP. A bound engine emits the official
@@ -35,14 +43,33 @@ final class SessionHost {
         try engine.deviceRegistrationJson(name: name, platform: platform)
     }
 
+    func signIn(phone: String, otp: String) async throws {
+        if try launch() == .signedIn { return }
+        _ = try await auth.signIn(
+            engine: engine,
+            phone: phone,
+            otp: otp,
+            name: "iPhone",
+            platform: "ios"
+        )
+    }
+
     static func open(
         store: IdentityStore,
         wrapKey: Data,
-        engine: CryptoEngine = UnboundCryptoEngine()
+        engine: CryptoEngine = UnboundCryptoEngine(),
+        baseURL: URL = OlloAPI.baseURL,
+        urlSession: URLSession = .shared
     ) throws -> SessionHost {
         guard wrapKey.count == 32 else { throw SessionHostError.wrapUnavailable }
         let proto = ProtocolStore(store: store, wrapKey: wrapKey)
-        return SessionHost(proto: proto, sessions: SessionController(proto: proto), engine: engine)
+        let sessions = SessionController(proto: proto)
+        return SessionHost(
+            proto: proto,
+            sessions: sessions,
+            engine: engine,
+            auth: AuthRepository.connected(baseURL: baseURL, sessions: sessions, urlSession: urlSession)
+        )
     }
 
     static func open(engine: CryptoEngine = UnboundCryptoEngine()) throws -> SessionHost {

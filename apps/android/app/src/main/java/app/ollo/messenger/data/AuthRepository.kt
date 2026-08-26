@@ -17,10 +17,17 @@ class AuthRepository(
     }
 
     fun verify(challengeId: String, otp: String, deviceJson: String, registrationLock: String? = null): Session {
+        val device = JSONObject(deviceJson)
+        require(device.has("identity_key_x25519") && device.has("identity_key_ed25519")) {
+            "libsignal engine is not bound"
+        }
+        require(device.has("registration_id") && device.has("signed_prekey") && device.has("one_time_prekeys")) {
+            "libsignal engine is not bound"
+        }
         val body = JSONObject()
             .put("challenge_id", challengeId)
             .put("otp", otp)
-            .put("device", JSONObject(deviceJson))
+            .put("device", device)
         if (!registrationLock.isNullOrEmpty()) body.put("registration_lock", registrationLock)
         val raw = api.post("/v1/auth/verify-otp", body.toString(), auth = false)
         val json = JSONObject(raw)

@@ -274,7 +274,10 @@ and calls `planSessionLaunch`. A wrapped vault session opens the inbox and
 skips OTP. Missing secrets stay on the auth screen. Continue calls
 `deviceRegistrationJson` **before** `request-otp`; `UnboundCryptoEngine`
 throws and the client does not invent `registration_id`, prekey ids, or a
-device JSON body. Settings wipe is `SessionController.wipe()`. A failed
+device JSON body. iOS `AuthRepository.connected` is the twin of Android:
+access comes from the vault, a 401 refreshes once, a rejected refresh wipes
+the protocol store. `verifyBody` refuses an incomplete device object instead
+of filling ids. Settings wipe is `SessionController.wipe()`. A failed
 Keystore / Keychain unwrap fails closed (no zero wrap key).
 
 ## 9. Sealed push and call signaling

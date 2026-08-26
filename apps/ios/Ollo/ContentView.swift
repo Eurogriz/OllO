@@ -46,16 +46,16 @@ struct ContentView: View {
                         Text(authError).foregroundStyle(.red)
                     }
                     Button(continueLabel) {
-                        do {
-                            if try host.launch() == .signedIn {
+                        Task {
+                            do {
+                                try await host.signIn(phone: phone, otp: otp)
                                 reloadInbox()
                                 dest = .chats
-                                return
+                            } catch is UnboundCryptoEngine.EngineError {
+                                authError = engineUnbound
+                            } catch {
+                                authError = signInFailed
                             }
-                            _ = try host.requireRegistration(name: "iPhone", platform: "ios")
-                            authError = signInFailed
-                        } catch {
-                            authError = engineUnbound
                         }
                     }
                     .buttonStyle(.borderedProminent)

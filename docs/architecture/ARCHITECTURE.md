@@ -167,9 +167,11 @@ Without a PIN, web localStorage is not a seizure-resistant store.
 
 `SessionHost` (Android `MainActivity`, iOS `OlloApp`) owns `ProtocolStore`
 under `noBackupFilesDir` / Application Support and `AuthRepository.connected`
-(401 → refresh → wipe). `planSessionLaunch` restores a vault session into
-the inbox. Registration is blocked until a bound libsignal engine emits
-`deviceRegistrationJson`. The UI never fabricates a device payload.
+(401 → refresh → wipe). iOS `OlloClient` reads access from `SessionController`
+and never keeps a second copy of the refresh token. `planSessionLaunch`
+restores a vault session into the inbox. Registration is blocked until a
+bound libsignal engine emits `deviceRegistrationJson`. The UI never
+fabricates a device payload.
 
 ## 7. Backend modules
 

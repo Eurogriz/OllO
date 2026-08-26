@@ -3,7 +3,9 @@
 SwiftUI client. Production crypto: official libsignal Swift package.
 Local DB: SQLCipher via GRDB, file protection `.completeUntilFirstUserAuthentication`.
 Keys: Keychain (`kSecAttrAccessibleWhenUnlockedThisDeviceOnly`), Secure Enclave
-for the wrapping key when the device supports it.
+for the wrapping key when the device supports it. `SessionHost` restores
+`SessionVault` and signs in through `AuthRepository.connected`. An unbound
+engine cannot request OTP or invent a device payload.
 
 Apple does not provide a universal sideload IPA analogous to an Android APK.
 

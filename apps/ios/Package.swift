@@ -11,8 +11,17 @@ let package = Package(
     ],
     targets: [
         .target(name: "OlloCrypto"),
-        .target(name: "OlloNetwork"),
+        .target(name: "OlloNetwork", dependencies: ["OlloCrypto"]),
         .target(name: "OlloStorage", dependencies: ["OlloCrypto"]),
-        .testTarget(name: "OlloCryptoTests", dependencies: ["OlloCrypto"]),
+        .testTarget(
+            name: "OlloCryptoTests",
+            dependencies: ["OlloCrypto"],
+            path: "Sources/OlloCryptoTests"
+        ),
+        .testTarget(
+            name: "OlloNetworkTests",
+            dependencies: ["OlloNetwork", "OlloCrypto"],
+            path: "Sources/OlloNetworkTests"
+        ),
     ]
 )

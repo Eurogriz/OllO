@@ -69,5 +69,6 @@ iOS needs macOS + Xcode. This Linux environment cannot produce a signed IPA.
 
 Native launch restores `SessionVault` via `SessionHost`. A stored session
 opens the inbox. OTP is not requested until a bound libsignal engine can
-emit `deviceRegistrationJson`. This environment cannot run `./gradlew test`
-or Xcode tests.
+emit `deviceRegistrationJson`. iOS `AuthRepository.connected` persists
+verify-otp tokens into the vault and wipes on a rejected refresh. This
+environment cannot run `./gradlew test` or Xcode tests.
