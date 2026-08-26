@@ -91,6 +91,7 @@ class IdentityStore(
         PreKeys("prekeys.v1"),
         SignedPreKeys("signedprekeys.v1"),
         Threads("threads.v1"),
+        Replay("replay.v1"),
     }
 }
 

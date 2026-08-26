@@ -94,6 +94,7 @@ public final class IdentityStore: @unchecked Sendable {
         case preKeys = "prekeys.v1"
         case signedPreKeys = "signedprekeys.v1"
         case threads = "threads.v1"
+        case replay = "replay.v1"
     }
 
     private func writeFile(key: String, sealed: Data) throws {

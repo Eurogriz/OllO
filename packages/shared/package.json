@@ -10,7 +10,7 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test src/redact.test.ts src/outbox.test.ts src/identity.test.ts src/history.test.ts src/realtime.test.ts",
+    "test": "node --import tsx --test src/redact.test.ts src/outbox.test.ts src/identity.test.ts src/history.test.ts src/realtime.test.ts src/replay.test.ts",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

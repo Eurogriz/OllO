@@ -103,6 +103,23 @@ class ProtocolStore(
     fun planFetch(targetUserId: String, targetDeviceId: String): EnvelopePlanner.KeyPlan =
         sessions.planFetch(targetUserId, targetDeviceId)
 
+    fun rememberEnvelope(envelopeId: String): EnvelopePlanner.ReplayDecision {
+        val map = loadMap(IdentityStore.Slot.Replay)
+        val ids = ArrayList<String>()
+        val raw = map["ids"]
+        if (raw != null && raw.isNotEmpty()) {
+            ids.addAll(String(raw, Charsets.UTF_8).split('\n').filter { it.isNotEmpty() })
+        }
+        val decision = EnvelopePlanner.rememberEnvelope(ids, envelopeId)
+        if (decision == EnvelopePlanner.ReplayDecision.Accept) {
+            persist(
+                IdentityStore.Slot.Replay,
+                linkedMapOf("ids" to ids.joinToString("\n").toByteArray(Charsets.UTF_8)),
+            )
+        }
+        return decision
+    }
+
     fun wipe() {
         store.wipe()
     }

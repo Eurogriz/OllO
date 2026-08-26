@@ -19,6 +19,7 @@ import {
   maybeRotateSignedPrekey,
   mergeBackupHistory,
   newDeviceMaterial,
+  noteEnvelope,
   dropDeviceSessions,
   pruneSessionsForUser,
   realtimeHello,
@@ -79,6 +80,7 @@ export function App() {
     if (!next.knownIdentities) next.knownIdentities = {};
     if (!next.senderKeys) next.senderKeys = {};
     if (!next.remoteSenderKeys) next.remoteSenderKeys = {};
+    if (!next.replay) next.replay = { ids: [] };
     saveAccount(next);
     setAcc({ ...next, sessions: next.sessions, messages: { ...next.messages }, threads: [...next.threads] });
   }, []);
@@ -231,6 +233,7 @@ function Auth({
         senderKeys: {},
         remoteSenderKeys: {},
         signedPrekeyAt: Date.now(),
+        replay: { ids: [] },
       };
       if (restoreRaw) {
         try {
@@ -500,6 +503,10 @@ function Shell({
 
   async function handleIncoming(env: Record<string, string>) {
     try {
+      if (noteEnvelope(acc, env.id) === "drop") {
+        persist(acc);
+        return;
+      }
       const inner = openEnvelope(acc, env.sender_user_id, env.sender_device_id, env.ciphertext, env.group_id);
       if (inner.type === "sender_key_distribute") {
         const ed = await resolveSenderEd25519(acc, env.sender_user_id, env.sender_device_id);

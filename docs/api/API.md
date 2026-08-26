@@ -229,4 +229,7 @@ Server → client:
 { "op": "error", "code": "..." }
 ```
 
-Delivery is at-least-once. Clients de-duplicate by envelope id.
+Delivery is at-least-once. Clients de-duplicate by envelope id
+(`rememberEnvelope`, 4096 most-recent ids in the device vault). A duplicate
+is still ACKed so the mailbox drains. Replay ids are not written into
+backups.

@@ -128,4 +128,23 @@ public enum EnvelopePlanner {
         if now - createdAtMs < signedPrekeyMaxAgeMs { return nil }
         return SignedPrekeyPlan(nextId: currentId + 1)
     }
+
+    public static let replayCacheMax = 4096
+
+    public enum ReplayDecision: String, Sendable {
+        case accept
+        case drop
+    }
+
+    /// Bounded FIFO of seen envelope ids. Duplicates must not re-apply.
+    @discardableResult
+    public static func rememberEnvelope(_ ids: inout [String], envelopeId: String, max: Int = replayCacheMax) -> ReplayDecision {
+        if envelopeId.isEmpty || max < 1 { return .drop }
+        if ids.contains(envelopeId) { return .drop }
+        ids.append(envelopeId)
+        if ids.count > max {
+            ids.removeFirst(ids.count - max)
+        }
+        return .accept
+    }
 }

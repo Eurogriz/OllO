@@ -267,7 +267,7 @@ against casual object-store misconfiguration, not against us.
 - Client ACKs with `ack {id}`
 - Heartbeat every 25s; missed 2 → drop
 - Resume: server replays un-ACKed + mailbox since cursor
-- At-least-once delivery; clients de-dupe by envelope id
+- At-least-once delivery; clients de-dupe by envelope id (`rememberEnvelope`)
 
 Messages must not be lost across: network blip, app restart, server rolling
 deploy, device sleep. Durability is the PG mailbox, not the socket.

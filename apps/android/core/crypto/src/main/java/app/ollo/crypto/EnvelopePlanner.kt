@@ -114,4 +114,17 @@ object EnvelopePlanner {
         if (now - createdAtMs < SIGNED_PREKEY_MAX_AGE_MS) return null
         return SignedPrekeyPlan(nextId = currentId + 1)
     }
+
+    const val REPLAY_CACHE_MAX = 4096
+
+    enum class ReplayDecision { Accept, Drop }
+
+    /** Bounded FIFO of seen envelope ids. Duplicates must not re-apply. */
+    fun rememberEnvelope(ids: MutableList<String>, envelopeId: String, max: Int = REPLAY_CACHE_MAX): ReplayDecision {
+        if (envelopeId.isEmpty() || max < 1) return ReplayDecision.Drop
+        if (ids.contains(envelopeId)) return ReplayDecision.Drop
+        ids.add(envelopeId)
+        while (ids.size > max) ids.removeAt(0)
+        return ReplayDecision.Accept
+    }
 }

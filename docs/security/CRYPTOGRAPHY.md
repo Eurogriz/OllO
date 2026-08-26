@@ -190,6 +190,14 @@ private key plus the previous two (`retainSignedPrekeys` /
 `pruneSignedPreKeys`) so a PreKey whisper that named a just-retired SPK
 still opens. An unknown SPK id fails closed.
 
+Envelope delivery is at-least-once (WebSocket plus mailbox drain). Clients
+keep a bounded FIFO of seen envelope ids (`rememberEnvelope`, max 4096)
+in the local vault (`replay.v1`). A duplicate is ACKed but not decrypted
+again, so a replay cannot re-apply a delete, receipt, or reaction. The
+cache is omitted from encrypted backups (a restored device starts empty).
+After eviction, a malicious server could replay an old id; ACK plus TTL
+on the mailbox is the remaining control.
+
 Push wakeup is **per recipient device**. Another online device of the same
 user must not suppress a wake. Typing, receipts, and control envelopes do
 not wake. Sealed payload remains `{v:1,t:msg|call}` with no preview.

@@ -116,6 +116,20 @@ public final class ProtocolStore: @unchecked Sendable {
         try sessions.planFetch(targetUserId: targetUserId, targetDeviceId: targetDeviceId)
     }
 
+    public func rememberEnvelope(_ envelopeId: String) throws -> EnvelopePlanner.ReplayDecision {
+        var map = try loadMap(.replay)
+        var ids: [String] = []
+        if let raw = map["ids"], let text = String(data: raw, encoding: .utf8) {
+            ids = text.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+        }
+        let decision = EnvelopePlanner.rememberEnvelope(&ids, envelopeId: envelopeId)
+        if decision == .accept {
+            map["ids"] = Data(ids.joined(separator: "\n").utf8)
+            try persist(.replay, map)
+        }
+        return decision
+    }
+
     public func wipe() {
         store.wipe()
     }

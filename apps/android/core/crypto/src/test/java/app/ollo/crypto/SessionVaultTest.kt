@@ -43,6 +43,20 @@ class SessionVaultTest {
     }
 
     @Test
+    fun dropsAReplayedEnvelopeAndClearsOnWipe() {
+        val store = IdentityStore()
+        val proto = ProtocolStore(store, wrap)
+        assertEquals(EnvelopePlanner.ReplayDecision.Accept, proto.rememberEnvelope("e1"))
+        assertEquals(EnvelopePlanner.ReplayDecision.Drop, proto.rememberEnvelope("e1"))
+        assertEquals(EnvelopePlanner.ReplayDecision.Accept, proto.rememberEnvelope("e2"))
+        val ids = arrayListOf("a", "b")
+        assertEquals(EnvelopePlanner.ReplayDecision.Accept, EnvelopePlanner.rememberEnvelope(ids, "c", 2))
+        assertEquals(listOf("b", "c"), ids)
+        proto.wipe()
+        assertEquals(EnvelopePlanner.ReplayDecision.Accept, ProtocolStore(store, wrap).rememberEnvelope("e1"))
+    }
+
+    @Test
     fun controllerRotatesTokensAndWipesOnFailedRefresh() {
         val store = IdentityStore()
         val proto = ProtocolStore(store, wrap, "u1", "d1")

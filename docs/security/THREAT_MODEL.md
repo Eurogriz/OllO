@@ -106,8 +106,10 @@ TLS + pin. Sealed envelopes still useless to MITM even if TLS dies (they
 can drop or delay). Residual: first-launch pin trust, web.
 
 ### Replay
-Envelope ids are UUIDv7; devices keep a replay cache. OTP is single-use.
-Refresh tokens rotate. Call signaling nonces.
+Envelope ids are UUIDv7; devices keep a bounded replay cache (4096 ids,
+vault slot `replay.v1`, omitted from backups). OTP is single-use.
+Refresh tokens rotate. Call signaling nonces. Residual: after eviction a
+hostile mailbox can re-deliver an old envelope.
 
 ### Credential / token theft
 See spoofing. Tokens never in logs, never in push, never in URLs.

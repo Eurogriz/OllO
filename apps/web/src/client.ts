@@ -12,6 +12,9 @@ import {
   planSignedPrekeyRotation,
   realtimeHello,
   realtimeUrl,
+  rememberEnvelope,
+  emptyReplayCache,
+  type ReplayCache,
   retainUnexpired,
 } from "@ollo/shared";
 import {
@@ -130,6 +133,7 @@ export interface Account {
   remoteSenderKeys: Record<string, RemoteSenderKey>;
   ownRosterHash?: string;
   signedPrekeyAt?: number;
+  replay: ReplayCache;
 }
 
 export function sessionKey(userId: string, deviceId: string): string {
@@ -155,6 +159,12 @@ export function dropDeviceSessions(acc: Account, userId: string, deviceId: strin
     delete acc.firstSent[k];
   }
   return dropped;
+}
+
+/** Record a transport envelope id before decrypting. Drop means skip the body. */
+export function noteEnvelope(acc: Account, envelopeId: string): "accept" | "drop" {
+  if (!acc.replay) acc.replay = emptyReplayCache();
+  return rememberEnvelope(acc.replay, envelopeId);
 }
 
 export function vaultPinEnabled(): boolean {
@@ -274,6 +284,7 @@ function accountFromStored(j: Stored): Account {
     ),
     ownRosterHash: j.ownRosterHash,
     signedPrekeyAt: j.signedPrekeyAt,
+    replay: j.replay?.ids ? { ids: [...j.replay.ids] } : emptyReplayCache(),
   };
 }
 
@@ -312,6 +323,7 @@ export function saveAccount(acc: Account): void {
     ),
     ownRosterHash: acc.ownRosterHash,
     signedPrekeyAt: acc.signedPrekeyAt,
+    replay: acc.replay ?? emptyReplayCache(),
   };
   const sealed = sealVault(ensureVaultKey(), utf8(JSON.stringify(stored)));
   localStorage.setItem(VAULT_STORE, encodeVault(sealed));
@@ -855,6 +867,7 @@ export function backupPlaintext(acc: Account): Uint8Array {
     remoteSenderKeys: Object.fromEntries(
       Object.entries(acc.remoteSenderKeys ?? {}).map(([k, v]) => [k, serializeRemoteSenderKey(v)]),
     ),
+    replay: emptyReplayCache(),
   };
   return utf8(JSON.stringify(stored));
 }
@@ -960,4 +973,5 @@ interface Stored {
   remoteSenderKeys?: Record<string, string>;
   ownRosterHash?: string;
   signedPrekeyAt?: number;
+  replay?: ReplayCache;
 }

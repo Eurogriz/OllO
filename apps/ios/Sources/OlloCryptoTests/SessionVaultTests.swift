@@ -34,6 +34,19 @@ final class SessionVaultTests: XCTestCase {
         XCTAssertEqual(plan?.startId, 11)
     }
 
+    func testDropsAReplayedEnvelopeAndClearsOnWipe() throws {
+        let store = IdentityStore()
+        let proto = ProtocolStore(store: store, wrapKey: wrap)
+        XCTAssertEqual(try proto.rememberEnvelope("e1"), .accept)
+        XCTAssertEqual(try proto.rememberEnvelope("e1"), .drop)
+        XCTAssertEqual(try proto.rememberEnvelope("e2"), .accept)
+        var ids = ["a", "b"]
+        XCTAssertEqual(EnvelopePlanner.rememberEnvelope(&ids, envelopeId: "c", max: 2), .accept)
+        XCTAssertEqual(ids, ["b", "c"])
+        proto.wipe()
+        XCTAssertEqual(try ProtocolStore(store: store, wrapKey: wrap).rememberEnvelope("e1"), .accept)
+    }
+
     func testControllerRotatesTokensAndWipesOnFailedRefresh() throws {
         let store = IdentityStore()
         let proto = ProtocolStore(store: store, wrapKey: wrap, localUserId: "u1", localDeviceId: "d1")
