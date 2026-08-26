@@ -65,6 +65,10 @@ class EnvelopePlannerTest {
         )
         assertEquals("drop", EnvelopePlanner.planDeviceDropNotice("eve", "d9", "u1", "phone", listOf("phone")))
         assertEquals("drop", EnvelopePlanner.planDeviceDropNotice("u1", "phone", "u1", "stolen", null))
+        val pub = ByteArray(EnvelopePlanner.X25519_PUBLIC_LEN) { 7 }
+        assertEquals("accept", EnvelopePlanner.planPublicKeyAccept(pub, EnvelopePlanner.X25519_PUBLIC_LEN))
+        assertEquals("drop", EnvelopePlanner.planPublicKeyAccept(ByteArray(3) { 1 }, EnvelopePlanner.X25519_PUBLIC_LEN))
+        assertEquals("drop", EnvelopePlanner.planPublicKeyAccept(ByteArray(EnvelopePlanner.X25519_PUBLIC_LEN), EnvelopePlanner.X25519_PUBLIC_LEN))
     }
 
     @Test

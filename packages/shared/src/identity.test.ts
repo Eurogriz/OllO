@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  ED25519_PUBLIC_LEN,
+  ED25519_SIGNATURE_LEN,
+  X25519_PUBLIC_LEN,
   noteRemoteIdentity,
   planDeviceDrop,
   planDeviceDropNotice,
+  planPublicKeyAccept,
   planRosterPrune,
   planSessionAccept,
 } from "./identity.js";
@@ -64,5 +68,13 @@ describe("remote identity guard", () => {
       }),
       "drop",
     );
+    const pub = new Uint8Array(X25519_PUBLIC_LEN).fill(7);
+    assert.equal(planPublicKeyAccept(pub, X25519_PUBLIC_LEN), "accept");
+    assert.equal(planPublicKeyAccept(pub, ED25519_PUBLIC_LEN), "accept");
+    assert.equal(planPublicKeyAccept(new Uint8Array(3).fill(1), X25519_PUBLIC_LEN), "drop");
+    assert.equal(planPublicKeyAccept(new Uint8Array(64).fill(1), X25519_PUBLIC_LEN), "drop");
+    assert.equal(planPublicKeyAccept(new Uint8Array(X25519_PUBLIC_LEN), X25519_PUBLIC_LEN), "drop");
+    assert.equal(planPublicKeyAccept(new Uint8Array(ED25519_SIGNATURE_LEN).fill(1), ED25519_SIGNATURE_LEN), "accept");
+    assert.equal(planPublicKeyAccept(new Uint8Array(32).fill(1), 0), "drop");
   });
 });

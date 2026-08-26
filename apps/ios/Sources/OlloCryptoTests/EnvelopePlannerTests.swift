@@ -115,6 +115,19 @@ final class EnvelopePlannerTests: XCTestCase {
             ),
             "drop"
         )
+        let pub = [UInt8](repeating: 7, count: EnvelopePlanner.x25519PublicLen)
+        XCTAssertEqual(EnvelopePlanner.planPublicKeyAccept(bytes: pub, expected: EnvelopePlanner.x25519PublicLen), "accept")
+        XCTAssertEqual(
+            EnvelopePlanner.planPublicKeyAccept(bytes: [1, 2, 3], expected: EnvelopePlanner.x25519PublicLen),
+            "drop"
+        )
+        XCTAssertEqual(
+            EnvelopePlanner.planPublicKeyAccept(
+                bytes: [UInt8](repeating: 0, count: EnvelopePlanner.x25519PublicLen),
+                expected: EnvelopePlanner.x25519PublicLen
+            ),
+            "drop"
+        )
     }
 
     func testLaunchSkipsOtpWhenVaultHasSession() {

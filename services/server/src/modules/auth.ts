@@ -16,6 +16,12 @@ import {
   sha256Hex,
   signAccess,
 } from "../security/crypto-utils.js";
+import {
+  ED25519_PUBLIC_LEN,
+  ED25519_SIGNATURE_LEN,
+  X25519_PUBLIC_LEN,
+  requirePublicBytes,
+} from "../security/public-keys.js";
 
 const requestOtpSchema = z.object({
   phone_e164: z.string(),
@@ -153,17 +159,17 @@ export async function registerAuth(app: FastifyInstance, db: Db): Promise<void> 
         body.device.name,
         body.device.platform,
         body.device.registration_id,
-        Buffer.from(body.device.identity_key_x25519, "base64"),
-        Buffer.from(body.device.identity_key_ed25519, "base64"),
+        requirePublicBytes(body.device.identity_key_x25519, X25519_PUBLIC_LEN, "identity_key_x25519"),
+        requirePublicBytes(body.device.identity_key_ed25519, ED25519_PUBLIC_LEN, "identity_key_ed25519"),
         body.device.signed_prekey.id,
-        Buffer.from(body.device.signed_prekey.public, "base64"),
-        Buffer.from(body.device.signed_prekey.signature, "base64"),
+        requirePublicBytes(body.device.signed_prekey.public, X25519_PUBLIC_LEN, "signed_prekey.public"),
+        requirePublicBytes(body.device.signed_prekey.signature, ED25519_SIGNATURE_LEN, "signed_prekey.signature"),
       ],
     );
     for (const k of body.device.one_time_prekeys) {
       await db.query(
         `INSERT INTO one_time_prekeys (device_id, key_id, public_key) VALUES ($1,$2,$3)`,
-        [deviceId, k.id, Buffer.from(k.public, "base64")],
+        [deviceId, k.id, requirePublicBytes(k.public, X25519_PUBLIC_LEN, "one_time_prekey")],
       );
     }
 

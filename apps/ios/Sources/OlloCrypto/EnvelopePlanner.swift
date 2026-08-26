@@ -155,6 +155,16 @@ public enum EnvelopePlanner {
         return "apply"
     }
 
+    public static let x25519PublicLen = 32
+    public static let ed25519PublicLen = 32
+    public static let ed25519SignatureLen = 64
+
+    public static func planPublicKeyAccept(bytes: [UInt8], expected: Int) -> String {
+        if expected < 1 || bytes.count != expected { return "drop" }
+        if bytes.allSatisfy({ $0 == 0 }) { return "drop" }
+        return "accept"
+    }
+
     public static func planSignedPrekeyRotation(currentId: Int, createdAtMs: Int64?, now: Int64) -> SignedPrekeyPlan? {
         if currentId < 1 { return nil }
         guard let createdAtMs else { return nil }

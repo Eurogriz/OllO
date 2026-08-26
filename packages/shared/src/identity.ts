@@ -13,6 +13,20 @@ export function sessionAddress(userId: string, deviceId: string): string {
   return `${userId}:${deviceId}`;
 }
 
+export const X25519_PUBLIC_LEN = 32;
+export const ED25519_PUBLIC_LEN = 32;
+export const ED25519_SIGNATURE_LEN = 64;
+
+/** Directory material only: exact public length, not empty or all-zero. */
+export function planPublicKeyAccept(bytes: Uint8Array, expected: number): "accept" | "drop" {
+  if (!Number.isInteger(expected) || expected < 1) return "drop";
+  if (bytes.length !== expected) return "drop";
+  for (const b of bytes) {
+    if (b !== 0) return "accept";
+  }
+  return "drop";
+}
+
 /**
  * Sessions whose device is no longer on that user's live roster.
  * Prefix is `userId:` so `u1` cannot match `u10`.

@@ -72,10 +72,21 @@ describe("TTL expiry job", () => {
       [did, key],
     );
 
+    const revokedDid = crypto.randomUUID();
+    await db.query(
+      `INSERT INTO devices (
+         id, user_id, name, platform, registration_id,
+         identity_x25519, identity_ed25519,
+         signed_prekey_id, signed_prekey_public, signed_prekey_sig, revoked_at
+       ) VALUES ($1,$2,'revoked','web',1,$3,$3,1,$3,$3, now() - interval '1 day')`,
+      [revokedDid, uid, key],
+    );
+
     const result = await expireStale(db);
     assert.equal(result.envelopes, 1);
     assert.equal(result.attachments, 1);
     assert.equal(result.prekeys, 1);
+    assert.equal(result.revoked_keys, 1);
 
     const envs = await db.query<{ id: string }>("SELECT id FROM envelopes");
     assert.deepEqual(envs.rows.map((r) => r.id), [liveEnv]);
@@ -88,5 +99,15 @@ describe("TTL expiry job", () => {
       opks.rows.map((r) => r.key_id),
       [2, 3],
     );
+    const live = await db.query<{ n: string }>(
+      "SELECT octet_length(identity_x25519)::text AS n FROM devices WHERE id = $1",
+      [did],
+    );
+    assert.equal(Number(live.rows[0]?.n), 4);
+    const wiped = await db.query<{ n: string }>(
+      "SELECT octet_length(identity_x25519)::text AS n FROM devices WHERE id = $1",
+      [revokedDid],
+    );
+    assert.equal(Number(wiped.rows[0]?.n), 0);
   });
 });

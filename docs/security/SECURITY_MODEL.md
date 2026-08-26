@@ -43,7 +43,9 @@ Even a fully honest server necessarily sees:
 - That an account exists, its user id, username, and profile fields the user
   chose to publish.
 - A keyed hash of the phone number (and, during OTP, a short-lived hashed OTP).
-- Device identifiers, public identity keys, signed prekeys, one-time prekeys.
+- Device identifiers and **public** identity / signed-prekey material of live
+  devices. Consumed one-time prekeys keep only a `key_id` tombstone. Revoked
+  devices have their directory bytes wiped.
 - That device A sent an envelope of size N at time T to device B.
 - Group membership and roles (required for fan-out).
 - Ciphertext attachment sizes and ciphertext digests.

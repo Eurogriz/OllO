@@ -59,7 +59,7 @@ could repeat across processes.
 | Device identity X25519 | Device registration | Keystore / Keychain / web: wrapped in local DB key | Never (change = new device) | Device revoke / app uninstall / remote wipe |
 | Device identity Ed25519 | Same | Same | Same | Same |
 | Signed prekey | Registration + every ~7d | Public on server; private on device | 7 days, keep previous 2 | After grace |
-| One-time prekeys | Batches of 100 | Public on server; private on device | Consumed once | After use or stale |
+| One-time prekeys | Batches of 100 | Public on server until consumed; private on device | Consumed once | Public wiped on consume; tombstone `key_id` 14d |
 | Root / chain / message keys | X3DH + ratchet | Encrypted local DB only | Every message (message key) | After decrypt + skip-key window |
 | Attachment key | Per file, 32 random bytes | Inside E2EE message, not on server | N/A | With message delete |
 | Local DB key | First launch | Android Keystore / iOS Keychain | Rare (rekey) | Uninstall |
@@ -67,7 +67,13 @@ could repeat across processes.
 | Native DB wrap key | First launch | Android Keystore / iOS Keychain (this-device, when-unlocked) | Rare | Wipe / uninstall |
 | Session access / refresh | Login | Memory + Keychain (refresh) | Access 15m; refresh rotate | Logout / reuse detected |
 
-Server holds **only public** identity / prekeys.
+Server holds **only public** identity / prekeys of **live** devices.
+Consumed one-time prekey bytes are wiped immediately (the `key_id` tombstone
+blocks reuse). Revoke and account delete wipe identity and signed-prekey
+columns. Private keys, sender keys, and ratchet state never leave the device.
+This is the Signal directory model, not Signal-level security.
+Uploads that are not the exact public length (or are all-zero) are rejected
+(`planPublicKeyAccept`).
 
 ## 4. X3DH (initial agreement)
 

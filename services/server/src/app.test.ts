@@ -777,10 +777,37 @@ describe("API integration", () => {
     const depthAfterPeek = await json("GET", "/v1/me/prekey-depth", undefined, bob.tok);
     assert.equal(depthAfterPeek.body.remaining, depthBeforePeek.body.remaining);
 
+    const consumed = await json("GET", `/v1/keys/${bob.userId}/${bob.deviceId}`, undefined, alice.tok);
+    assert.equal(consumed.status, 200, JSON.stringify(consumed.body));
+    const usedOpk = (consumed.body.bundle as { one_time_prekey: { id: number } | null }).one_time_prekey;
+    assert.ok(usedOpk);
+    const db = await getDb();
+    const tomb = await db.query<{ n: string }>(
+      "SELECT octet_length(public_key)::text AS n FROM one_time_prekeys WHERE device_id = $1 AND key_id = $2",
+      [bob.deviceId, usedOpk.id],
+    );
+    assert.equal(Number(tomb.rows[0]?.n ?? -1), 0);
+
+    const shortKey = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000043" });
+    const rejected = await json("POST", "/v1/auth/verify-otp", {
+      challenge_id: shortKey.body.challenge_id,
+      otp: shortKey.body.dev_otp,
+      device: {
+        ...devicePayload("too-short").json,
+        identity_key_x25519: Buffer.from([1, 2, 3]).toString("base64"),
+      },
+    });
+    assert.equal(rejected.status, 400);
+
     const revoked = await json("DELETE", `/v1/devices/${bob2Id}`, {}, bob.tok);
     assert.equal(revoked.status, 200, JSON.stringify(revoked.body));
     const gone = await json("GET", `/v1/keys/${bob.userId}/${bob2Id}`, undefined, alice.tok);
     assert.equal(gone.status, 404);
+    const wiped = await db.query<{ n: string }>(
+      "SELECT octet_length(identity_x25519)::text AS n FROM devices WHERE id = $1",
+      [bob2Id],
+    );
+    assert.equal(Number(wiped.rows[0]?.n ?? -1), 0);
 
     const report = await json(
       "POST",
@@ -807,6 +834,12 @@ describe("API integration", () => {
 
     const deleted = await json("POST", "/v1/me/delete", {}, alice.tok);
     assert.equal(deleted.status, 200);
+    const aliceKeys = await db.query<{ n: string }>(
+      "SELECT octet_length(identity_x25519)::text AS n FROM devices WHERE user_id = $1",
+      [alice.userId],
+    );
+    assert.ok(aliceKeys.rows.length >= 1);
+    assert.ok(aliceKeys.rows.every((r) => Number(r.n) === 0));
     const me = await json("GET", "/v1/me", undefined, alice.tok);
     assert.equal(me.status, 401);
     const search = await json("POST", "/v1/users/search", { username: "alicepriv" }, bob.tok);

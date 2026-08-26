@@ -274,9 +274,17 @@ export async function registerUsers(app: FastifyInstance, db: Db): Promise<void>
     await db.query("UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL", [
       auth.userId,
     ]);
-    await db.query("UPDATE devices SET revoked_at = now(), push_token_enc = NULL WHERE user_id = $1", [
-      auth.userId,
-    ]);
+    await db.query(
+      `UPDATE devices SET
+         revoked_at = now(),
+         push_token_enc = NULL,
+         identity_x25519 = $2,
+         identity_ed25519 = $2,
+         signed_prekey_public = $2,
+         signed_prekey_sig = $2
+       WHERE user_id = $1`,
+      [auth.userId, Buffer.alloc(0)],
+    );
     await db.query("DELETE FROM contacts WHERE user_id = $1 OR contact_user_id = $1", [auth.userId]);
     await db.query("DELETE FROM blocks WHERE user_id = $1 OR blocked_user_id = $1", [auth.userId]);
     await db.query("DELETE FROM mutes WHERE user_id = $1", [auth.userId]);

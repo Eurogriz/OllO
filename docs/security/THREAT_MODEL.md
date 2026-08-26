@@ -54,7 +54,7 @@ Out of scope for this revision: desktop native, federated servers, SGX.
 | Attack | L | Impact | Mitigation | Residual |
 |---|---|---|---|---|
 | Server reads mail | M (if we designed badly) | Catastrophic | No keys on server, AEAD, tests that scan logs/DB for plaintext fixtures | Bugs in client sealing |
-| DB leak | M | Metadata + ciphertext | Encryption at rest (platform), peppered phones, TTL | Graph, sizes, times |
+| DB leak | M | Metadata + ciphertext | Encryption at rest (platform), peppered phones, TTL; consumed OPK publics wiped; revoked device directory material wiped | Graph, sizes, times; live public keys remain (needed for X3DH) |
 | Object store leak | M | Ciphertext blobs | Per-file keys in envelopes | Size/timing |
 | Log leak of OTP / token | M | ATO | Redacting logger, denylist of field names, tests | Mis-instrumentation |
 | Push body leak | L | Preview on lock screen / Google | Empty bodies by default | User disables privacy |

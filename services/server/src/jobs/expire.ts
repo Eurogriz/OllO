@@ -3,7 +3,7 @@ import { log } from "../observability/logger.js";
 
 export async function expireStale(
   db: Db,
-): Promise<{ envelopes: number; attachments: number; prekeys: number }> {
+): Promise<{ envelopes: number; attachments: number; prekeys: number; revoked_keys: number }> {
   const envelopes = await db.query<{ id: string }>(
     "DELETE FROM envelopes WHERE expires_at IS NOT NULL AND expires_at < now() RETURNING id",
   );
@@ -15,12 +15,32 @@ export async function expireStale(
      WHERE consumed_at IS NOT NULL AND consumed_at < now() - interval '14 days'
      RETURNING key_id`,
   );
+  const empty = Buffer.alloc(0);
+  const revoked = await db.query<{ id: string }>(
+    `UPDATE devices SET
+       identity_x25519 = $1,
+       identity_ed25519 = $1,
+       signed_prekey_public = $1,
+       signed_prekey_sig = $1,
+       push_token_enc = NULL
+     WHERE revoked_at IS NOT NULL
+       AND (
+         octet_length(identity_x25519) > 0
+         OR octet_length(identity_ed25519) > 0
+         OR octet_length(signed_prekey_public) > 0
+         OR octet_length(signed_prekey_sig) > 0
+         OR push_token_enc IS NOT NULL
+       )
+     RETURNING id`,
+    [empty],
+  );
   const result = {
     envelopes: envelopes.rows.length,
     attachments: attachments.rows.length,
     prekeys: prekeys.rows.length,
+    revoked_keys: revoked.rows.length,
   };
-  if (result.envelopes || result.attachments || result.prekeys) {
+  if (result.envelopes || result.attachments || result.prekeys || result.revoked_keys) {
     log.info("expired stale rows", result);
   }
   return result;

@@ -137,6 +137,16 @@ object EnvelopePlanner {
         return "apply"
     }
 
+    const val X25519_PUBLIC_LEN = 32
+    const val ED25519_PUBLIC_LEN = 32
+    const val ED25519_SIGNATURE_LEN = 64
+
+    fun planPublicKeyAccept(bytes: ByteArray, expected: Int): String {
+        if (expected < 1 || bytes.size != expected) return "drop"
+        if (bytes.all { it == 0.toByte() }) return "drop"
+        return "accept"
+    }
+
     fun planSignedPrekeyRotation(currentId: Int, createdAtMs: Long?, now: Long): SignedPrekeyPlan? {
         if (currentId < 1) return null
         if (createdAtMs == null) return null

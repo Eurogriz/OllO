@@ -4,6 +4,11 @@ import { z } from "zod";
 import type { Db } from "../db/index.js";
 import { ApiError, requireAuth } from "../http.js";
 import { dropDevice } from "../realtime/hub.js";
+import {
+  ED25519_SIGNATURE_LEN,
+  X25519_PUBLIC_LEN,
+  requirePublicBytes,
+} from "../security/public-keys.js";
 
 function b64(value: unknown): string {
   if (Buffer.isBuffer(value)) return value.toString("base64");
@@ -51,7 +56,17 @@ export async function registerKeys(app: FastifyInstance, db: Db): Promise<void> 
     if (!r.rows[0] || r.rows[0].user_id !== auth.userId) {
       throw new ApiError("not_found", "Device not found", 404);
     }
-    await db.query("UPDATE devices SET revoked_at = now(), push_token_enc = NULL WHERE id = $1", [id]);
+    await db.query(
+      `UPDATE devices SET
+         revoked_at = now(),
+         push_token_enc = NULL,
+         identity_x25519 = $2,
+         identity_ed25519 = $2,
+         signed_prekey_public = $2,
+         signed_prekey_sig = $2
+       WHERE id = $1`,
+      [id, Buffer.alloc(0)],
+    );
     await db.query("UPDATE sessions SET revoked_at = now() WHERE device_id = $1 AND revoked_at IS NULL", [id]);
     await db.query("DELETE FROM one_time_prekeys WHERE device_id = $1", [id]);
     await db.query("DELETE FROM envelopes WHERE recipient_device_id = $1", [id]);
@@ -150,7 +165,12 @@ export async function registerKeys(app: FastifyInstance, db: Db): Promise<void> 
     await db.query(
       `UPDATE devices SET signed_prekey_id = $2, signed_prekey_public = $3, signed_prekey_sig = $4
        WHERE id = $1`,
-      [auth.deviceId, body.id, Buffer.from(body.public, "base64"), Buffer.from(body.signature, "base64")],
+      [
+        auth.deviceId,
+        body.id,
+        requirePublicBytes(body.public, X25519_PUBLIC_LEN, "signed_prekey.public"),
+        requirePublicBytes(body.signature, ED25519_SIGNATURE_LEN, "signed_prekey.signature"),
+      ],
     );
     return { ok: true };
   });
@@ -164,7 +184,7 @@ export async function registerKeys(app: FastifyInstance, db: Db): Promise<void> 
       await db.query(
         `INSERT INTO one_time_prekeys (device_id, key_id, public_key) VALUES ($1,$2,$3)
          ON CONFLICT (device_id, key_id) DO NOTHING`,
-        [auth.deviceId, k.id, Buffer.from(k.public, "base64")],
+        [auth.deviceId, k.id, requirePublicBytes(k.public, X25519_PUBLIC_LEN, "one_time_prekey")],
       );
     }
     return { ok: true, count: body.keys.length };
@@ -225,8 +245,8 @@ async function takeBundle(db: Db, userId: string, deviceId: string, consume: boo
     );
     if (opk.rows[0]) {
       await db.query(
-        "UPDATE one_time_prekeys SET consumed_at = now() WHERE device_id = $1 AND key_id = $2",
-        [d.id, opk.rows[0].key_id],
+        "UPDATE one_time_prekeys SET consumed_at = now(), public_key = $3 WHERE device_id = $1 AND key_id = $2",
+        [d.id, opk.rows[0].key_id, Buffer.alloc(0)],
       );
       oneTime = { id: opk.rows[0].key_id, public: b64(opk.rows[0].public_key) };
     }
