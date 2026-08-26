@@ -1399,8 +1399,35 @@ describe("API integration", () => {
     const token = granted.body.grant as string;
     const peek = await json("GET", `/v1/attachments/${id}?grant=${token}`, undefined, bob.tok);
     assert.equal(peek.status, 200, JSON.stringify(peek.body));
+    assert.equal(Object.hasOwn(peek.body, "grant"), false);
     const noGrant = await json("GET", `/v1/attachments/${id}`, undefined, bob.tok);
     assert.equal(noGrant.status, 403);
+    const viaHeader = await app.inject({
+      method: "GET",
+      url: `/v1/attachments/${id}/data`,
+      headers: {
+        authorization: `Bearer ${bob.tok}`,
+        "x-attachment-grant": token,
+      },
+    });
+    assert.equal(viaHeader.statusCode, 200, viaHeader.body);
+    assert.equal(Buffer.from(viaHeader.rawPayload).toString("utf8"), "abcd");
+    const { createHash } = await import("node:crypto");
+    const digest = createHash("sha256").update("abcd").digest("hex");
+    const lied = await json(
+      "POST",
+      `/v1/attachments/${id}/complete`,
+      { digest: "00".repeat(32), size: 4 },
+      alice.tok,
+    );
+    assert.equal(lied.status, 400);
+    const okDigest = await json(
+      "POST",
+      `/v1/attachments/${id}/complete`,
+      { digest, size: 4 },
+      alice.tok,
+    );
+    assert.equal(okDigest.status, 200, JSON.stringify(okDigest.body));
   });
 
   it("pages envelopes by created_at then id and binds LIMIT", async () => {

@@ -61,7 +61,7 @@ export async function buildApp(db: Db): Promise<FastifyInstance> {
   await app.register(cors, {
     origin: (origin, cb) => cb(null, originAllowed(origin)),
     credentials: true,
-    allowedHeaders: ["Authorization", "Content-Type", "Idempotency-Key", "X-Request-Id"],
+    allowedHeaders: ["Authorization", "Content-Type", "Idempotency-Key", "X-Request-Id", "X-Attachment-Grant"],
   });
 
   await app.register(rateLimit, {

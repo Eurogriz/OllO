@@ -142,14 +142,19 @@ export function createResponderSession(args: {
   };
 }
 
+function pair(a: Uint8Array, b: Uint8Array): [Uint8Array, Uint8Array] {
+  return compareBytes(a, b) <= 0 ? [a, b] : [b, a];
+}
+
 function aadFor(state: SessionState, header: RatchetHeader): Uint8Array {
-  // Canonical order so both parties derive the same AD.
-  const a = state.localIdentity.x25519Public;
-  const b = state.remoteIdentityX25519;
-  const [first, second] = compareBytes(a, b) <= 0 ? [a, b] : [b, a];
+  // Canonical IK_x25519 || IK_ed25519 || header so a swapped identity fails AEAD.
+  const [xFirst, xSecond] = pair(state.localIdentity.x25519Public, state.remoteIdentityX25519);
+  const [eFirst, eSecond] = pair(state.localIdentity.ed25519Public, state.remoteIdentityEd25519);
   return concat(
-    first,
-    second,
+    xFirst,
+    xSecond,
+    eFirst,
+    eSecond,
     header.dhPublic,
     u32(header.previousChainLength),
     u32(header.messageNumber),

@@ -71,6 +71,21 @@ describe("X3DH + Double Ratchet", () => {
     assert.equal(back.text, "принято");
   });
 
+  it("fails closed if the first-message Ed25519 identity is swapped", () => {
+    const alice = device("alice", "a1");
+    const bob = device("bob", "b1");
+    const init = beginSession(alice, bundleOf(bob));
+    const sealed = encryptFirstMessage(alice, init, text("t", "bound"));
+    const received = decodeSealed(encodeSealed(sealed));
+    assert.ok(received.prekey);
+    received.prekey!.identityKeyEd25519 = new Uint8Array(32).fill(9);
+    const bobSession = acceptSession(bob, received, alice.userId, alice.deviceId);
+    assert.throws(() => decryptMessage(bobSession, received));
+    const zeros = decodeSealed(encodeSealed(sealed));
+    zeros.prekey!.identityKeyEd25519 = new Uint8Array(32);
+    assert.throws(() => acceptSession(bob, zeros, alice.userId, alice.deviceId));
+  });
+
   it("handles out-of-order messages within the skip window", () => {
     const alice = device("alice", "a1");
     const bob = device("bob", "b1");

@@ -1425,10 +1425,9 @@ export async function downloadAndDecrypt(
     grant?: string;
   },
 ): Promise<Blob> {
-  const q = pointer.grant ? `?grant=${encodeURIComponent(pointer.grant)}` : "";
-  const res = await fetch(`/v1/attachments/${pointer.objectId}/data${q}`, {
-    headers: { Authorization: `Bearer ${acc.access}` },
-  });
+  const headers: Record<string, string> = { Authorization: `Bearer ${acc.access}` };
+  if (pointer.grant) headers["X-Attachment-Grant"] = pointer.grant;
+  const res = await fetch(`/v1/attachments/${pointer.objectId}/data`, { headers });
   if (!res.ok) throw new Error("download failed");
   const buf = new Uint8Array(await res.arrayBuffer());
   const pt = decryptAttachment(

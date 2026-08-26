@@ -1,10 +1,35 @@
-import type { FastifyInstance } from "fastify";
+import { createHash, timingSafeEqual } from "node:crypto";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { config } from "../config.js";
 import type { Db } from "../db/index.js";
 import { ApiError, requireAuth } from "../http.js";
 import { getObject, newObjectKey, objectExists, putObject } from "../objects.js";
 import { randomToken, randomUuid, sha256Hex } from "../security/crypto-utils.js";
+
+function readGrant(req: FastifyRequest): string | undefined {
+  const header = req.headers["x-attachment-grant"];
+  if (typeof header === "string" && header.length > 0) return header;
+  const q = (req.query as { grant?: unknown }).grant;
+  if (typeof q === "string" && q.length > 0) return q;
+  return undefined;
+}
+
+function digestOf(buf: Buffer): Buffer {
+  return createHash("sha256").update(buf).digest();
+}
+
+function sameDigest(stored: Buffer | Uint8Array, hex: string): boolean {
+  let incoming: Buffer;
+  try {
+    incoming = Buffer.from(hex, "hex");
+  } catch {
+    return false;
+  }
+  const have = Buffer.isBuffer(stored) ? stored : Buffer.from(stored);
+  if (incoming.length !== have.length || incoming.length !== 32) return false;
+  return timingSafeEqual(incoming, have);
+}
 
 async function grantAllows(db: Db, attachmentId: string, token: string, userId: string): Promise<boolean> {
   const g = await db.query<{ recipient_user_id: string | null; group_id: string | null; expires_at: string }>(
@@ -67,27 +92,37 @@ export async function registerAttachments(app: FastifyInstance, db: Db): Promise
       throw new ApiError("payload_too_large", "File too large", 413);
     }
     await putObject(a.object_key, buf);
-    await db.query("UPDATE attachments SET size = $2, completed_at = now() WHERE id = $1", [id, buf.length]);
+    await db.query("UPDATE attachments SET size = $2, digest = $3, completed_at = now() WHERE id = $1", [
+      id,
+      buf.length,
+      digestOf(buf),
+    ]);
     return { ok: true, size: buf.length };
   });
 
   app.post("/v1/attachments/:id/complete", async (req) => {
     const auth = requireAuth(req);
     const id = (req.params as { id: string }).id;
-    const body = z.object({ digest: z.string(), size: z.number().int().nonnegative() }).parse(req.body);
-    const row = await db.query<{ object_key: string; uploader_device_id: string }>(
-      "SELECT object_key, uploader_device_id FROM attachments WHERE id = $1",
-      [id],
-    );
+    const body = z
+      .object({ digest: z.string().regex(/^[0-9a-f]{64}$/i), size: z.number().int().nonnegative() })
+      .parse(req.body);
+    const row = await db.query<{
+      object_key: string;
+      uploader_device_id: string;
+      digest: Buffer | null;
+      size: number | null;
+      completed_at: string | null;
+    }>("SELECT object_key, uploader_device_id, digest, size, completed_at FROM attachments WHERE id = $1", [id]);
     const a = row.rows[0];
     if (!a || a.uploader_device_id !== auth.deviceId) {
       throw new ApiError("not_found", "Attachment not found", 404);
     }
-    await db.query("UPDATE attachments SET digest = $2, size = $3, completed_at = now() WHERE id = $1", [
-      id,
-      Buffer.from(body.digest, "hex"),
-      body.size,
-    ]);
+    if (!a.completed_at || !a.digest || !(await objectExists(a.object_key))) {
+      throw new ApiError("not_found", "Attachment not found", 404);
+    }
+    if (!sameDigest(a.digest, body.digest) || Number(a.size) !== body.size) {
+      throw new ApiError("validation", "Digest mismatch", 400);
+    }
     return { ok: true };
   });
 
@@ -132,7 +167,7 @@ export async function registerAttachments(app: FastifyInstance, db: Db): Promise
   app.get("/v1/attachments/:id", async (req) => {
     const auth = requireAuth(req);
     const id = (req.params as { id: string }).id;
-    const q = req.query as { grant?: string };
+    const grant = readGrant(req);
     const row = await db.query<{ object_key: string; uploader_device_id: string; completed_at: string | null }>(
       "SELECT object_key, uploader_device_id, completed_at FROM attachments WHERE id = $1",
       [id],
@@ -140,26 +175,28 @@ export async function registerAttachments(app: FastifyInstance, db: Db): Promise
     const a = row.rows[0];
     if (!a || !a.completed_at) throw new ApiError("not_found", "Attachment not found", 404);
     let allowed = a.uploader_device_id === auth.deviceId;
-    if (!allowed && q.grant) {
-      allowed = await grantAllows(db, id, q.grant, auth.userId);
+    if (!allowed && grant) {
+      allowed = await grantAllows(db, id, grant, auth.userId);
     }
     if (!allowed) throw new ApiError("forbidden", "No download grant", 403);
-    return { download_path: `/v1/attachments/${id}/data`, grant: q.grant ?? null };
+    return { download_path: `/v1/attachments/${id}/data` };
   });
 
   app.get("/v1/attachments/:id/data", async (req, reply) => {
     const auth = requireAuth(req);
     const id = (req.params as { id: string }).id;
-    const q = req.query as { grant?: string };
-    const row = await db.query<{ object_key: string; uploader_device_id: string }>(
-      "SELECT object_key, uploader_device_id FROM attachments WHERE id = $1",
+    const grant = readGrant(req);
+    const row = await db.query<{ object_key: string; uploader_device_id: string; completed_at: string | null }>(
+      "SELECT object_key, uploader_device_id, completed_at FROM attachments WHERE id = $1",
       [id],
     );
     const a = row.rows[0];
-    if (!a || !(await objectExists(a.object_key))) throw new ApiError("not_found", "Attachment not found", 404);
+    if (!a || !a.completed_at || !(await objectExists(a.object_key))) {
+      throw new ApiError("not_found", "Attachment not found", 404);
+    }
     let allowed = a.uploader_device_id === auth.deviceId;
-    if (!allowed && q.grant) {
-      allowed = await grantAllows(db, id, q.grant, auth.userId);
+    if (!allowed && grant) {
+      allowed = await grantAllows(db, id, grant, auth.userId);
     }
     if (!allowed) throw new ApiError("forbidden", "No download grant", 403);
     const buf = await getObject(a.object_key);

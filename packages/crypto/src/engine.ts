@@ -134,6 +134,9 @@ export function acceptSession(
   if (!remoteEd || remoteEd.length !== 32) {
     throw new Error("missing remote identity");
   }
+  let edOr = 0;
+  for (const b of remoteEd) edOr |= b;
+  if (edOr === 0) throw new Error("missing remote identity");
   const opk = sealed.prekey.oneTimePrekeyId
     ? local.oneTimePrekeys.find((k) => k.id === sealed.prekey!.oneTimePrekeyId)
     : undefined;
