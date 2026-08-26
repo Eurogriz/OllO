@@ -19,6 +19,10 @@ public final class SessionController: @unchecked Sendable {
         return secrets
     }
 
+    public func launch() throws -> EnvelopePlanner.SessionLaunch {
+        EnvelopePlanner.planSessionLaunch(hasVaultSession: try restore() != nil)
+    }
+
     public func save(_ next: SessionSecrets) throws {
         try proto.sessionVault.save(next)
         secrets = next

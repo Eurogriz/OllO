@@ -92,4 +92,16 @@ class SessionVaultTest {
         assertNull(proto.sessions.loadSession(SessionDirectory.Address("u2", "d9")))
         assertTrue(store.isEmpty())
     }
+
+    @Test
+    fun launchFollowsVaultThenWipe() {
+        val proto = ProtocolStore(IdentityStore(), wrap)
+        val ctl = SessionController(proto)
+        assertEquals(EnvelopePlanner.SessionLaunch.NeedAuth, ctl.launch())
+        ctl.save(SessionSecrets("u1", "d1", "access-1", "refresh-1"))
+        assertEquals(EnvelopePlanner.SessionLaunch.SignedIn, ctl.launch())
+        ctl.wipe()
+        assertEquals(EnvelopePlanner.SessionLaunch.NeedAuth, ctl.launch())
+        assertNull(ctl.restore())
+    }
 }

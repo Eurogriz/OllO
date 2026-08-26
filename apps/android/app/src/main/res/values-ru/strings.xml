@@ -9,4 +9,6 @@
     <string name="settings_body">Устройства, код безопасности, PIN, исчезающие сообщения.</string>
     <string name="wipe_local">Стереть локальные секреты</string>
     <string name="engine_unbound">Вход требует привязанный движок libsignal. Эта сборка не создаёт фальшивую сессию.</string>
+    <string name="sign_in_failed">Вход не удался.</string>
+    <string name="wrap_unavailable">Это устройство не может развернуть хранилище протокола.</string>
 </resources>

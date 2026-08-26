@@ -165,6 +165,12 @@ Native wraps the vault key in Keystore/Keychain (AES-256-GCM, AAD
 account delete. Web may wrap the vault key with a PIN via Argon2id.
 Without a PIN, web localStorage is not a seizure-resistant store.
 
+`SessionHost` (Android `MainActivity`, iOS `OlloApp`) owns `ProtocolStore`
+under `noBackupFilesDir` / Application Support and `AuthRepository.connected`
+(401 → refresh → wipe). `planSessionLaunch` restores a vault session into
+the inbox. Registration is blocked until a bound libsignal engine emits
+`deviceRegistrationJson`. The UI never fabricates a device payload.
+
 ## 7. Backend modules
 
 ### 7.1 Auth

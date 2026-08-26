@@ -82,6 +82,12 @@ object EnvelopePlanner {
 
     enum class AuthFailure { Wipe, Retry }
 
+    enum class SessionLaunch { SignedIn, NeedAuth }
+
+    /** A wrapped vault session skips OTP. Missing secrets require a bound engine. */
+    fun planSessionLaunch(hasVaultSession: Boolean): SessionLaunch =
+        if (hasVaultSession) SessionLaunch.SignedIn else SessionLaunch.NeedAuth
+
     const val SIGNED_PREKEY_MAX_AGE_MS = 7L * 24 * 60 * 60 * 1000
     const val SIGNED_PREKEY_KEEP = 2
 

@@ -9,4 +9,6 @@
     <string name="settings_body">Devices, safety number, registration lock, disappearing messages.</string>
     <string name="wipe_local">Wipe local secrets</string>
     <string name="engine_unbound">Sign-in needs a bound libsignal engine. This build will not fake a session.</string>
+    <string name="sign_in_failed">Sign-in failed.</string>
+    <string name="wrap_unavailable">This device cannot unwrap the protocol store.</string>
 </resources>

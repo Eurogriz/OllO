@@ -89,6 +89,16 @@ public enum EnvelopePlanner {
         refreshSucceeded ? .retry : .wipe
     }
 
+    public enum SessionLaunch: String, Sendable {
+        case signedIn = "signed-in"
+        case needAuth = "need-auth"
+    }
+
+    /// A wrapped vault session skips OTP. Missing secrets require a bound engine.
+    public static func planSessionLaunch(hasVaultSession: Bool) -> SessionLaunch {
+        hasVaultSession ? .signedIn : .needAuth
+    }
+
     public static let signedPrekeyMaxAgeMs: Int64 = 7 * 24 * 60 * 60 * 1000
     public static let signedPrekeyKeep = 2
 

@@ -23,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -34,10 +35,12 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.ollo.crypto.ChatThread
-import app.ollo.crypto.DevicePayload
-import app.ollo.crypto.ThreadIndex
-import app.ollo.crypto.UnboundCryptoEngine
+import app.ollo.crypto.EnvelopePlanner
 import app.ollo.messenger.R
+import app.ollo.messenger.SessionHost
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private val Bg = Color(0xFF070A0E)
 private val Elev = Color(0xFF141B24)
@@ -48,14 +51,28 @@ private val Mute = Color(0xFF8B9BB0)
 private enum class Dest { Splash, Auth, Chats, Chat, Settings }
 
 @Composable
-fun OlloRoot() {
-    var dest by remember { mutableStateOf(Dest.Auth) }
+fun VaultUnavailable() {
+    Box(Modifier.fillMaxSize().background(Bg), contentAlignment = Alignment.Center) {
+        Text(stringResource(R.string.wrap_unavailable), color = Mute, modifier = Modifier.padding(28.dp))
+    }
+}
+
+@Composable
+fun OlloRoot(host: SessionHost) {
+    val scope = rememberCoroutineScope()
+    var dest by remember {
+        mutableStateOf(
+            if (host.launch() == EnvelopePlanner.SessionLaunch.SignedIn) Dest.Chats else Dest.Auth,
+        )
+    }
     var phone by remember { mutableStateOf("+7") }
     var otp by remember { mutableStateOf("") }
     var authError by remember { mutableStateOf("") }
-    val inbox = remember { ThreadIndex() }
+    val inbox = remember { host.loadInbox() }
     var threads by remember { mutableStateOf(inbox.visible()) }
     var active by remember { mutableStateOf<ChatThread?>(null) }
+    val signInFailed = stringResource(R.string.sign_in_failed)
+    val unbound = stringResource(R.string.engine_unbound)
     Box(Modifier.fillMaxSize().background(Bg)) {
         when (dest) {
             Dest.Splash, Dest.Auth -> AuthScreen(
@@ -65,11 +82,26 @@ fun OlloRoot() {
                 onPhone = { phone = it },
                 onOtp = { otp = it },
                 onContinue = {
-                    try {
-                        DevicePayload.requireIdentity(UnboundCryptoEngine())
-                        dest = Dest.Chats
-                    } catch (_: IllegalStateException) {
-                        authError = "libsignal engine is not bound"
+                    scope.launch {
+                        try {
+                            val next = withContext(Dispatchers.IO) {
+                                if (host.launch() == EnvelopePlanner.SessionLaunch.SignedIn) {
+                                    return@withContext host.loadInbox()
+                                }
+                                val deviceJson = host.requireRegistration("Android", "android")
+                                val (challenge, _) = host.auth.requestOtp(phone)
+                                host.auth.verify(challenge, otp, deviceJson)
+                                host.loadInbox()
+                            }
+                            inbox.wipe()
+                            next.visible().forEach { inbox.upsert(it) }
+                            threads = inbox.visible()
+                            dest = Dest.Chats
+                        } catch (e: IllegalStateException) {
+                            authError = e.message?.takeIf { it.isNotBlank() } ?: unbound
+                        } catch (_: Throwable) {
+                            authError = signInFailed
+                        }
                     }
                 },
             )
@@ -88,8 +120,9 @@ fun OlloRoot() {
             Dest.Settings -> SettingsScreen(
                 onBack = { dest = Dest.Chats },
                 onWipe = {
+                    host.wipe()
                     inbox.wipe()
-                    threads = inbox.visible()
+                    threads = emptyList()
                     active = null
                     dest = Dest.Auth
                 },

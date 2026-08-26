@@ -81,4 +81,15 @@ final class SessionVaultTests: XCTestCase {
         XCTAssertNil(try proto.sessions.loadSession(SessionDirectory.Address(userId: "u2", deviceId: "d9")))
         XCTAssertTrue(store.isEmpty)
     }
+
+    func testLaunchFollowsVaultThenWipe() throws {
+        let proto = ProtocolStore(store: IdentityStore(), wrapKey: wrap)
+        let ctl = SessionController(proto: proto)
+        XCTAssertEqual(try ctl.launch(), .needAuth)
+        try ctl.save(SessionSecrets(userId: "u1", deviceId: "d1", access: "access-1", refresh: "refresh-1"))
+        XCTAssertEqual(try ctl.launch(), .signedIn)
+        ctl.wipe()
+        XCTAssertEqual(try ctl.launch(), .needAuth)
+        XCTAssertNil(try ctl.restore())
+    }
 }

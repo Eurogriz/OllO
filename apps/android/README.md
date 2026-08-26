@@ -3,7 +3,8 @@
 Kotlin + Jetpack Compose. Production crypto engine: official `libsignal-client`.
 Local DB: SQLCipher in `noBackupFilesDir`. Key wrapping: Android Keystore
 (StrongBox when available). `FLAG_SECURE` is on. Cloud backup of the DB is
-excluded.
+excluded. `SessionHost` restores `SessionVault` on launch and fails closed
+before OTP unless a bound libsignal engine emits `deviceRegistrationJson`.
 
 ## Build
 

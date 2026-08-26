@@ -10,6 +10,7 @@ package app.ollo.crypto
  */
 interface CryptoEngine {
     fun generateIdentity(): IdentityMaterial
+    fun deviceRegistrationJson(name: String, platform: String): String
     fun processPrekeyBundle(remote: ByteArray): SessionHandle
     fun encrypt(session: SessionHandle, plaintext: ByteArray): ByteArray
     fun decrypt(session: SessionHandle, payload: ByteArray): ByteArray
@@ -32,6 +33,9 @@ class SessionHandle(val id: String)
  */
 class UnboundCryptoEngine : CryptoEngine {
     override fun generateIdentity(): IdentityMaterial =
+        throw IllegalStateException("libsignal engine is not bound")
+
+    override fun deviceRegistrationJson(name: String, platform: String): String =
         throw IllegalStateException("libsignal engine is not bound")
 
     override fun processPrekeyBundle(remote: ByteArray): SessionHandle =

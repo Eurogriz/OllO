@@ -74,8 +74,19 @@ final class EnvelopePlannerTests: XCTestCase {
         )
     }
 
+    func testLaunchSkipsOtpWhenVaultHasSession() {
+        XCTAssertEqual(EnvelopePlanner.planSessionLaunch(hasVaultSession: true), .signedIn)
+        XCTAssertEqual(EnvelopePlanner.planSessionLaunch(hasVaultSession: false), .needAuth)
+    }
+
     func testUnboundEngineDoesNotInventIdentity() {
         XCTAssertThrowsError(try UnboundCryptoEngine().generateIdentity()) { error in
+            XCTAssertEqual(error as? UnboundCryptoEngine.EngineError, .unbound)
+        }
+    }
+
+    func testUnboundEngineDoesNotInventRegistration() {
+        XCTAssertThrowsError(try UnboundCryptoEngine().deviceRegistrationJson(name: "iPhone", platform: "ios")) { error in
             XCTAssertEqual(error as? UnboundCryptoEngine.EngineError, .unbound)
         }
     }

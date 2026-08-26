@@ -10,12 +10,27 @@ struct ChatRow: Identifiable, Equatable {
 }
 
 struct ContentView: View {
-    @State private var dest: Dest = .auth
+    let host: SessionHost
+    @State private var dest: Dest
     @State private var phone = "+7"
     @State private var otp = ""
     @State private var authError = ""
-    @State private var threads: [ChatRow] = []
+    @State private var threads: [ChatRow]
     @State private var active: ChatRow?
+
+    init(host: SessionHost) {
+        self.host = host
+        if (try? host.launch()) == .signedIn {
+            _dest = State(initialValue: .chats)
+            let rows = (try? host.loadInbox())?.visible().map {
+                ChatRow(id: $0.id, title: $0.title, preview: $0.preview)
+            } ?? []
+            _threads = State(initialValue: rows)
+        } else {
+            _dest = State(initialValue: .auth)
+            _threads = State(initialValue: [])
+        }
+    }
 
     var body: some View {
         ZStack {
@@ -32,8 +47,13 @@ struct ContentView: View {
                     }
                     Button(continueLabel) {
                         do {
-                            _ = try UnboundCryptoEngine().generateIdentity()
-                            dest = .chats
+                            if try host.launch() == .signedIn {
+                                reloadInbox()
+                                dest = .chats
+                                return
+                            }
+                            _ = try host.requireRegistration(name: "iPhone", platform: "ios")
+                            authError = signInFailed
                         } catch {
                             authError = engineUnbound
                         }
@@ -77,6 +97,7 @@ struct ContentView: View {
                     Button("← \(settingsTitle)") { dest = .chats }.foregroundStyle(.white)
                     Text(settingsBody).foregroundStyle(.secondary)
                     Button(wipeLocal) {
+                        host.wipe()
                         threads = []
                         active = nil
                         dest = .auth
@@ -85,6 +106,12 @@ struct ContentView: View {
                 }.padding()
             }
         }
+    }
+
+    private func reloadInbox() {
+        threads = (try? host.loadInbox())?.visible().map {
+            ChatRow(id: $0.id, title: $0.title, preview: $0.preview)
+        } ?? []
     }
 
     private var russian: Bool {
@@ -119,5 +146,15 @@ struct ContentView: View {
 
     private var wipeLocal: String {
         russian ? "Стереть локальные секреты" : "Wipe local secrets"
+    }
+
+    private var engineUnbound: String {
+        russian
+            ? "Вход требует привязанный движок libsignal. Эта сборка не создаёт фальшивую сессию."
+            : "Sign-in needs a bound libsignal engine. This build will not fake a session."
+    }
+
+    private var signInFailed: String {
+        russian ? "Вход не удался." : "Sign-in failed."
     }
 }

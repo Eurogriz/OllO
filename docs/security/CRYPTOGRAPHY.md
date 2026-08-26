@@ -269,6 +269,14 @@ Encrypt / decrypt stay inside official libsignal. An unbound engine fails
 closed. The TypeScript engine is not used on native release builds. Java
 package names are not imported until the 0.58 client API is confirmed.
 
+Native launch (`SessionHost`) constructs `ProtocolStore` + `SessionController`
+and calls `planSessionLaunch`. A wrapped vault session opens the inbox and
+skips OTP. Missing secrets stay on the auth screen. Continue calls
+`deviceRegistrationJson` **before** `request-otp`; `UnboundCryptoEngine`
+throws and the client does not invent `registration_id`, prekey ids, or a
+device JSON body. Settings wipe is `SessionController.wipe()`. A failed
+Keystore / Keychain unwrap fails closed (no zero wrap key).
+
 ## 9. Sealed push and call signaling
 
 Push payload (production):

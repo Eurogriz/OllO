@@ -10,6 +10,7 @@ import {
   onSendFailure,
   planKeyFetch,
   planPrekeyReplenish,
+  planSessionLaunch,
   planSignedPrekeyRotation,
   type OutboxItemView,
 } from "./outbox.js";
@@ -96,5 +97,12 @@ describe("signed prekey rotation planner", () => {
     );
     assert.deepEqual(keepSignedPrekeyIds(5, [1, 2, 3, 4, 5]), [5, 4, 3]);
     assert.deepEqual(keepSignedPrekeyIds(2, [2]), [2]);
+  });
+});
+
+describe("session launch", () => {
+  it("skips OTP when the vault has a session and requires auth after wipe", () => {
+    assert.equal(planSessionLaunch(true), "signed-in");
+    assert.equal(planSessionLaunch(false), "need-auth");
   });
 });

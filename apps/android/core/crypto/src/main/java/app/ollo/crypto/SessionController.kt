@@ -18,6 +18,9 @@ class SessionController(private val proto: ProtocolStore) {
         return secrets
     }
 
+    fun launch(): EnvelopePlanner.SessionLaunch =
+        EnvelopePlanner.planSessionLaunch(restore() != null)
+
     fun save(next: SessionSecrets) {
         vault.save(next)
         secrets = next

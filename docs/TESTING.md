@@ -23,6 +23,8 @@ A change that touches any of these is incomplete without tests:
 - Sealed session directory (`planKeyFetch`, identity-change, wipe)
 - Durable protocol store (prekeys, file restart, local TTL history)
 - Device roster hash, OPK peek without consume, refresh-reuse wipe
+- Session launch (`planSessionLaunch`, vault restore, wipe → need-auth)
+- Unbound `deviceRegistrationJson` fails closed before OTP
 - Device registration and revoke
 - Group membership + epoch
 - Message ordering and de-dupe

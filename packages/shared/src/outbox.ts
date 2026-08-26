@@ -81,6 +81,13 @@ export function afterUnauthorized(refreshSucceeded: boolean): "retry" | "wipe" {
   return refreshSucceeded ? "retry" : "wipe";
 }
 
+export type SessionLaunch = "signed-in" | "need-auth";
+
+/** A wrapped vault session skips OTP. Missing secrets require a bound engine. */
+export function planSessionLaunch(hasVaultSession: boolean): SessionLaunch {
+  return hasVaultSession ? "signed-in" : "need-auth";
+}
+
 export const SIGNED_PREKEY_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 export const SIGNED_PREKEY_KEEP = 2;
 

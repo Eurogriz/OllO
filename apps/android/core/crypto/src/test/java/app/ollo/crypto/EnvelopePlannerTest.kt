@@ -55,9 +55,25 @@ class EnvelopePlannerTest {
     }
 
     @Test
+    fun launchSkipsOtpWhenVaultHasSession() {
+        assertEquals(EnvelopePlanner.SessionLaunch.SignedIn, EnvelopePlanner.planSessionLaunch(true))
+        assertEquals(EnvelopePlanner.SessionLaunch.NeedAuth, EnvelopePlanner.planSessionLaunch(false))
+    }
+
+    @Test
     fun unboundEngineDoesNotInventIdentity() {
         try {
             DevicePayload.requireIdentity(UnboundCryptoEngine())
+            throw AssertionError("expected unbound engine to fail closed")
+        } catch (e: IllegalStateException) {
+            assertEquals("libsignal engine is not bound", e.message)
+        }
+    }
+
+    @Test
+    fun unboundEngineDoesNotInventRegistration() {
+        try {
+            DevicePayload.requireRegistration(UnboundCryptoEngine(), "Android", "android")
             throw AssertionError("expected unbound engine to fail closed")
         } catch (e: IllegalStateException) {
             assertEquals("libsignal engine is not bound", e.message)

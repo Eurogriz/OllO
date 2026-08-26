@@ -4,6 +4,7 @@ import Foundation
 /// Do not implement a homegrown Double Ratchet here.
 public protocol CryptoEngine: Sendable {
     func generateIdentity() throws -> IdentityMaterial
+    func deviceRegistrationJson(name: String, platform: String) throws -> String
     func processPrekeyBundle(_ remote: Data) throws -> String
     func encrypt(sessionId: String, plaintext: Data) throws -> Data
     func decrypt(sessionId: String, payload: Data) throws -> Data
@@ -38,6 +39,10 @@ public struct UnboundCryptoEngine: CryptoEngine {
     public init() {}
 
     public func generateIdentity() throws -> IdentityMaterial {
+        throw EngineError.unbound
+    }
+
+    public func deviceRegistrationJson(name: String, platform: String) throws -> String {
         throw EngineError.unbound
     }
 
