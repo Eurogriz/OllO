@@ -80,6 +80,7 @@ button { cursor: pointer; }
 }
 .danger { background: rgba(255, 107, 122, 0.16); color: var(--danger); }
 .icon-btn:hover, .ghost:hover { filter: brightness(1.08); }
+.ghost:disabled, .primary:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .shell { flex: 1; display: grid; grid-template-columns: 340px 1fr; min-height: 0; }
 .sidebar {

@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { verify, verifySignedPrekey } from "@ollo/crypto";
 import { isValidE164 } from "@ollo/protocol";
 import {
@@ -61,6 +61,10 @@ const verifySchema = z.object({
 const otpWindow = new Map<string, { n: number; reset: number }>();
 const authWindow = new Map<string, { n: number; reset: number }>();
 
+/** Per-IP caps for key-rooted signup. A global slot would DoS every honest client. */
+export const AUTH_CHALLENGE_PER_IP = 30;
+export const AUTH_REGISTER_PER_IP = 10;
+
 function takeOtpSlot(phoneH: string): void {
   const now = Date.now();
   const cur = otpWindow.get(phoneH);
@@ -72,14 +76,25 @@ function takeOtpSlot(phoneH: string): void {
   cur.n += 1;
 }
 
-function takeAuthSlot(key: string): void {
+function clientIp(req: FastifyRequest): string {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.trim()) {
+    return forwarded.split(",")[0]!.trim();
+  }
+  if (Array.isArray(forwarded) && forwarded[0]) return forwarded[0].split(",")[0]!.trim();
+  return req.ip || "unknown";
+}
+
+function takeAuthSlot(req: FastifyRequest, action: "challenge" | "register-key"): void {
+  const max = action === "challenge" ? AUTH_CHALLENGE_PER_IP : AUTH_REGISTER_PER_IP;
+  const key = `${action}:${clientIp(req)}`;
   const now = Date.now();
   const cur = authWindow.get(key);
   if (!cur || cur.reset < now) {
     authWindow.set(key, { n: 1, reset: now + 60_000 });
     return;
   }
-  if (cur.n >= 8) throw new ApiError("rate_limited", "Too many auth requests", 429);
+  if (cur.n >= max) throw new ApiError("rate_limited", "Too many auth requests", 429);
   cur.n += 1;
 }
 
@@ -160,7 +175,7 @@ export async function registerAuth(app: FastifyInstance, db: Db): Promise<void> 
   });
 
   app.post("/v1/auth/challenge", async (req, reply) => {
-    takeAuthSlot("challenge");
+    takeAuthSlot(req, "challenge");
     const challengeId = randomId("ch");
     const nonce = randomToken(24);
     const expires = new Date(Date.now() + config.otpTtlSeconds * 1000);
@@ -184,7 +199,7 @@ export async function registerAuth(app: FastifyInstance, db: Db): Promise<void> 
         device: deviceSchema,
       })
       .parse(req.body);
-    takeAuthSlot("register-key");
+    takeAuthSlot(req, "register-key");
     const ch = await db.query<{
       id: string;
       nonce: string;

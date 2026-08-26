@@ -69,7 +69,7 @@ Out of scope for this revision: desktop native, federated servers, SGX.
 
 | Attack | L | Impact | Mitigation | Residual |
 |---|---|---|---|---|
-| Cheap key-only account flood | H | Directory spam | Per-IP challenge / register-key quotas | Distributed botnet |
+| Cheap key-only account flood | H | Directory spam | Per-IP challenge (30/min) and register-key (10/min) quotas | Distributed botnet |
 | Envelope flood | H | Mailbox / disk | Per-sender quotas, max envelope size, group fan-out budget | Popular groups |
 | WS connection flood | H | File descriptors | Edge limits, auth-before-upgrade, per-account connection cap | Large botnet |
 | Huge attachment | M | Cost | Max size, auth, prepaid quota | Paid attacker |

@@ -39,6 +39,8 @@ import {
   encodeAuthProof,
   encodeUserUri,
   parseUserUri,
+  planBackupAccept,
+  planBackupExport,
 } from "@ollo/shared";
 import {
   type LocalDevice,
@@ -1493,15 +1495,56 @@ export async function maybeRotateSignedPrekey(acc: Account, now = Date.now()): P
   return true;
 }
 
+export function accountFromSession(
+  res: {
+    user: { id: string; username: string | null };
+    device_id: string;
+    access_token: string;
+    refresh_token: string;
+  },
+  mat: ReturnType<typeof createLocalDevice>,
+): Account {
+  return {
+    userId: res.user.id,
+    deviceId: res.device_id,
+    username: res.user.username,
+    displayName: "",
+    about: "",
+    access: res.access_token,
+    refresh: res.refresh_token,
+    device: { ...mat, userId: res.user.id, deviceId: res.device_id },
+    sessions: {},
+    messages: {},
+    threads: [],
+    contacts: [],
+    pinned: {},
+    drafts: {},
+    firstSent: {},
+    knownIdentities: {},
+    outbox: [],
+    senderKeys: {},
+    remoteSenderKeys: {},
+    heldSenderKeys: {},
+    signedPrekeyAt: Date.now(),
+    replay: { ids: [] },
+    memberships: {},
+    pendingMemberships: {},
+    rejectedMemberships: {},
+    droppedDevices: [],
+    senderKeyShared: {},
+  };
+}
+
 export function backupPlaintext(acc: Account): Uint8Array {
+  const secrets = planBackupExport({ access: acc.access, refresh: acc.refresh });
   const stored: Stored = {
     userId: acc.userId,
     deviceId: acc.deviceId,
     username: acc.username,
     displayName: acc.displayName,
     about: acc.about,
-    access: "",
-    refresh: "",
+    access: secrets.access,
+    refresh: secrets.refresh,
     registrationId: acc.device.registrationId,
     identity: serializeIdentity(acc.device.identity),
     signedPrekey: serSpk(acc.device.signedPrekey),
@@ -1519,7 +1562,7 @@ export function backupPlaintext(acc: Account): Uint8Array {
     drafts: acc.drafts,
     firstSent: acc.firstSent,
     knownIdentities: acc.knownIdentities,
-    outbox: [],
+    outbox: secrets.outbox,
     senderKeys: Object.fromEntries(
       Object.entries(acc.senderKeys ?? {}).map(([k, v]) => [k, serializeSenderKey(v)]),
     ),
@@ -1529,7 +1572,7 @@ export function backupPlaintext(acc: Account): Uint8Array {
     heldSenderKeys: Object.fromEntries(
       Object.entries(acc.heldSenderKeys ?? {}).map(([k, v]) => [k, serializeRemoteSenderKey(v)]),
     ),
-    replay: emptyReplayCache(),
+    replay: secrets.replay,
     memberships: acc.memberships ?? {},
     pendingMemberships: acc.pendingMemberships ?? {},
     rejectedMemberships: acc.rejectedMemberships ?? {},
@@ -1543,10 +1586,21 @@ export function createBackupFile(acc: Account, passphrase: string): string {
   return encodeBackup(sealBackup(passphrase, backupPlaintext(acc)));
 }
 
-export function materialFromBackup(raw: string, passphrase: string): ReturnType<typeof createLocalDevice> & {
-  identity: Account["device"]["identity"];
-} {
+function openBackupStore(raw: string, passphrase: string): Stored {
   const stored = JSON.parse(fromUtf8(openBackup(passphrase, decodeBackup(raw)))) as Stored;
+  if (
+    planBackupAccept({
+      hasIdentity: Boolean(stored.identity),
+      access: stored.access ?? "",
+      refresh: stored.refresh ?? "",
+    }) !== "accept"
+  ) {
+    throw new Error("invalid backup");
+  }
+  return stored;
+}
+
+function materialFromStored(stored: Stored): ReturnType<typeof createLocalDevice> {
   return {
     registrationId: stored.registrationId,
     identity: deserializeIdentity(stored.identity),
@@ -1560,8 +1614,51 @@ export function materialFromBackup(raw: string, passphrase: string): ReturnType<
   };
 }
 
+export function materialFromBackup(raw: string, passphrase: string): ReturnType<typeof createLocalDevice> & {
+  identity: Account["device"]["identity"];
+} {
+  return materialFromStored(openBackupStore(raw, passphrase));
+}
+
+export async function restoreFromBackup(
+  raw: string,
+  passphrase: string,
+  name: string,
+  lockPin?: string,
+): Promise<{ account: Account; isNew: boolean }> {
+  const stored = openBackupStore(raw, passphrase);
+  const mat = materialFromStored(stored);
+  const res = await registerWithIdentity(mat, name, lockPin);
+  const acc = accountFromSession(res, mat);
+  mergeBackupHistoryInto(acc, stored);
+  return { account: acc, isNew: Boolean(res.user.is_new) };
+}
+
+export async function uploadSealedBackup(acc: Account, passphrase: string): Promise<void> {
+  const file = createBackupFile(acc, passphrase);
+  await api(
+    "/v1/backups",
+    acc.access,
+    { method: "PUT", body: JSON.stringify({ blob: b64(utf8(file)) }) },
+    acc,
+  );
+}
+
+export function downloadBackupFile(filename: string, contents: string): void {
+  const blob = new Blob([contents], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function mergeBackupHistory(acc: Account, raw: string, passphrase: string): void {
-  const stored = JSON.parse(fromUtf8(openBackup(passphrase, decodeBackup(raw)))) as Stored;
+  mergeBackupHistoryInto(acc, openBackupStore(raw, passphrase));
+}
+
+function mergeBackupHistoryInto(acc: Account, stored: Stored): void {
   acc.messages = { ...stored.messages, ...acc.messages };
   acc.threads = stored.threads.length ? stored.threads : acc.threads;
   acc.contacts = stored.contacts.length ? stored.contacts : acc.contacts;

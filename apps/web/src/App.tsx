@@ -10,18 +10,18 @@ import {
   b64u,
   clearAccount,
   computeSafety,
+  accountFromSession,
   createBackupFile,
   confirmPendingMembership,
   createSignedGroup,
   distributeOwnSenderKey,
   downloadAndDecrypt,
+  downloadBackupFile,
   encryptFile,
   flushOutbox,
   ingestSenderKey,
   loadAccount,
-  materialFromBackup,
   maybeRotateSignedPrekey,
-  mergeBackupHistory,
   newDeviceMaterial,
   noteEnvelope,
   announceDeviceDrop,
@@ -36,6 +36,7 @@ import {
   pendingMembershipNotice,
   registerWithIdentity,
   rejectPendingMembership,
+  restoreFromBackup,
   replenishPrekeys,
   resolveSenderEd25519,
   saveAccount,
@@ -47,6 +48,7 @@ import {
   unlockVault,
   unwrapVaultPin,
   vaultLocked,
+  uploadSealedBackup,
   wrapVaultWithPin,
 } from "./client";
 
@@ -189,14 +191,17 @@ function Auth({
   setLang: (l: Lang) => void;
   onReady: (a: Account) => void;
 }) {
-  const [step, setStep] = useState<1 | 2>(1);
+  const [step, setStep] = useState<"choose" | "create" | "restore" | "save-backup" | "profile">("choose");
   const [lockPin, setLockPin] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [username, setUsername] = useState("");
   const [err, setErr] = useState("");
   const [restorePass, setRestorePass] = useState("");
-  const [restoreRaw, setRestoreRaw] = useState("");
+  const [backupPass, setBackupPass] = useState("");
+  const [backupDownloaded, setBackupDownloaded] = useState(false);
   const [address, setAddress] = useState("");
+  const [draft, setDraft] = useState<Account | null>(null);
+  const [restoreNotice, setRestoreNotice] = useState(false);
   const mat = useRef(newDeviceMaterial());
 
   async function createAccount() {
@@ -207,57 +212,53 @@ function Auth({
         navigator.userAgent.slice(0, 40),
         lockPin.trim() || undefined,
       );
-      const acc: Account = {
-        userId: res.user.id,
-        deviceId: res.device_id,
-        username: res.user.username,
-        displayName: "",
-        about: "",
-        access: res.access_token,
-        refresh: res.refresh_token,
-        device: { ...mat.current, userId: res.user.id, deviceId: res.device_id },
-        sessions: {},
-        messages: {},
-        threads: [],
-        contacts: [],
-        pinned: {},
-        drafts: {},
-        firstSent: {},
-        knownIdentities: {},
-        outbox: [],
-        senderKeys: {},
-        remoteSenderKeys: {},
-        heldSenderKeys: {},
-        signedPrekeyAt: Date.now(),
-        replay: { ids: [] },
-        memberships: {},
-        pendingMemberships: {},
-        rejectedMemberships: {},
-        droppedDevices: [],
-        senderKeyShared: {},
-      };
-      if (restoreRaw) {
-        try {
-          mergeBackupHistory(acc, restoreRaw, restorePass);
-        } catch {
-          /* history optional */
-        }
-      }
+      const acc = accountFromSession(res, mat.current);
+      setDraft(acc);
       setAddress(accountAddress(acc));
-      if (res.user.is_new || !res.user.username) {
-        setStep(2);
-        sessionStorage.setItem("ollo.tmp", JSON.stringify({ acc: serializeTmp(acc) }));
-        (window as unknown as { __acc: Account }).__acc = acc;
+      setBackupDownloaded(false);
+      setStep("save-backup");
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+
+  async function restoreAccount(raw: string) {
+    setErr("");
+    try {
+      const { account, isNew } = await restoreFromBackup(
+        raw,
+        restorePass,
+        navigator.userAgent.slice(0, 40),
+        lockPin.trim() || undefined,
+      );
+      setRestoreNotice(true);
+      if (isNew || !account.username) {
+        setDraft(account);
+        setAddress(accountAddress(account));
+        setStep("profile");
       } else {
-        onReady(acc);
+        onReady(account);
       }
     } catch (e) {
       setErr((e as Error).message);
     }
   }
 
+  function saveBackupFile() {
+    if (!draft) return;
+    setErr("");
+    try {
+      const file = createBackupFile(draft, backupPass);
+      downloadBackupFile("ollo-backup.ollo", file);
+      setBackupDownloaded(true);
+      void uploadSealedBackup(draft, backupPass).catch(() => undefined);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+
   async function finishProfile() {
-    const acc = (window as unknown as { __acc: Account }).__acc;
+    const acc = draft;
     if (!acc) return;
     try {
       const res = await api("/v1/me", acc.access, {
@@ -280,7 +281,18 @@ function Auth({
         </div>
         <h1>OllO</h1>
         <p>{t(lang, "tagline")}</p>
-        {step === 1 && (
+        {step === "choose" && (
+          <>
+            <p className="hint">{t(lang, "lostKeyWarning")}</p>
+            <button className="primary" onClick={() => setStep("create")}>
+              {t(lang, "createAccount")}
+            </button>
+            <button className="ghost" style={{ marginTop: 8 }} onClick={() => setStep("restore")}>
+              {t(lang, "restore")}
+            </button>
+          </>
+        )}
+        {step === "create" && (
           <>
             <p className="hint">{t(lang, "addressHint")}</p>
             <div className="field">
@@ -296,10 +308,82 @@ function Auth({
             <button className="primary" onClick={() => void createAccount()}>
               {t(lang, "createAccount")}
             </button>
+            <button className="ghost" style={{ marginTop: 8 }} onClick={() => setStep("choose")}>
+              ←
+            </button>
           </>
         )}
-        {step === 2 && (
+        {step === "restore" && (
           <>
+            <p className="hint">{t(lang, "restoreHint")}</p>
+            <div className="field">
+              <label>{t(lang, "backupPassphrase")}</label>
+              <input
+                type="password"
+                value={restorePass}
+                onChange={(e) => setRestorePass(e.target.value)}
+                placeholder="passphrase"
+              />
+            </div>
+            <div className="field">
+              <label>{t(lang, "lock")}</label>
+              <input
+                type="password"
+                value={lockPin}
+                onChange={(e) => setLockPin(e.target.value)}
+                autoComplete="off"
+                placeholder="PIN"
+              />
+            </div>
+            <input
+              type="file"
+              accept="application/json,.ollo"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (!f) return;
+                void f.text().then((txt) => void restoreAccount(txt));
+              }}
+            />
+            <button className="ghost" style={{ marginTop: 8 }} onClick={() => setStep("choose")}>
+              ←
+            </button>
+          </>
+        )}
+        {step === "save-backup" && draft && (
+          <>
+            <p className="hint">{t(lang, "backupHint")}</p>
+            <QrCard value={address} label={t(lang, "yourAddress")} />
+            <div className="field">
+              <label>{t(lang, "backupPassphrase")}</label>
+              <input
+                type="password"
+                value={backupPass}
+                onChange={(e) => setBackupPass(e.target.value)}
+                minLength={8}
+                placeholder="min 8"
+              />
+            </div>
+            <button className="primary" onClick={() => saveBackupFile()}>
+              {t(lang, "downloadBackup")}
+            </button>
+            {backupDownloaded && <p className="hint">{t(lang, "backupSaved")}</p>}
+            <button
+              className="ghost"
+              style={{ marginTop: 8 }}
+              disabled={!backupDownloaded}
+              onClick={() => {
+                if (!backupDownloaded) return;
+                if (!draft.username) setStep("profile");
+                else onReady(draft);
+              }}
+            >
+              {t(lang, "continue")}
+            </button>
+          </>
+        )}
+        {step === "profile" && (
+          <>
+            {restoreNotice && <p className="hint">{t(lang, "newDeviceOnRestore")}</p>}
             <QrCard value={address} label={t(lang, "yourAddress")} />
             <button
               className="ghost"
@@ -322,34 +406,6 @@ function Auth({
             </button>
           </>
         )}
-        {step === 1 && (
-          <div className="field" style={{ marginTop: 12 }}>
-            <label>{t(lang, "restore")}</label>
-            <input
-              type="password"
-              value={restorePass}
-              onChange={(e) => setRestorePass(e.target.value)}
-              placeholder="passphrase"
-            />
-            <input
-              type="file"
-              accept="application/json,.ollo"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (!f) return;
-                void f.text().then((txt) => {
-                  try {
-                    mat.current = materialFromBackup(txt, restorePass);
-                    setRestoreRaw(txt);
-                    sessionStorage.setItem("ollo.restore", txt);
-                  } catch (er) {
-                    setErr((er as Error).message);
-                  }
-                });
-              }}
-            />
-          </div>
-        )}
         {err && <p style={{ color: "var(--danger)" }}>{err}</p>}
         <div className="hint" style={{ marginTop: 16 }}>
           <button className="ghost" onClick={() => setLang(lang === "ru" ? "en" : "ru")}>
@@ -359,10 +415,6 @@ function Auth({
       </div>
     </div>
   );
-}
-
-function serializeTmp(a: Account) {
-  return a.userId;
 }
 
 function Shell({
@@ -1492,6 +1544,32 @@ function Shell({
                 }}
               >
                 {t(lang, "copyAddress")}
+              </button>
+            </div>
+            <p className="hint">{t(lang, "backupHint")}</p>
+            <div className="list-row">
+              <span>{t(lang, "backup")}</span>
+              <input
+                type="password"
+                value={backupPass}
+                onChange={(e) => setBackupPass(e.target.value)}
+                placeholder="min 8"
+                style={{ width: 90 }}
+              />
+              <button
+                className="ghost"
+                onClick={() => {
+                  try {
+                    const file = createBackupFile(acc, backupPass);
+                    downloadBackupFile("ollo-backup.ollo", file);
+                    void uploadSealedBackup(acc, backupPass).catch(() => undefined);
+                    setBackupPass("");
+                  } catch (e) {
+                    alert((e as Error).message);
+                  }
+                }}
+              >
+                {t(lang, "downloadBackup")}
               </button>
             </div>
             <div className="list-row">

@@ -50,7 +50,8 @@ Response 200:
 ```
 
 The client signs `ollo-auth-v1 || 0x00 || challenge_id || 0x00 || nonce`
-with the identity Ed25519 private key.
+with the identity Ed25519 private key. These two endpoints are limited
+per client IP (30 challenges / 10 register-key per minute).
 
 ### POST /v1/auth/register-key
 

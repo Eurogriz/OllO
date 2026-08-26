@@ -7,6 +7,7 @@ export * from "./history.js";
 export * from "./realtime.js";
 export * from "./replay.js";
 export * from "./membership.js";
+export * from "./backup.js";
 
 export const ACCESS_TTL_SECONDS = 15 * 60;
 export const REFRESH_TTL_SECONDS = 30 * 24 * 60 * 60;

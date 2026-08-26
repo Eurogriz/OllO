@@ -294,7 +294,14 @@ blob = XChaCha20-Poly1305_Encrypt(key, account_export, aad="ollo-backup-v1")
 ```
 
 `account_export` is identity + sessions + sender keys + local history.
-Access / refresh tokens are **not** included. The server stores only `blob`.
+Access / refresh tokens, the replay cache, and the outbox are **not**
+included (`planBackupExport`). `planBackupAccept` refuses a blob that
+still carries tokens or has no identity. The server stores only `blob`.
+
+Restore is `register-key` with the same identity Ed25519: the account
+comes back, a **new** `device_id` is issued. History is merged from the
+file. 1:1 ratchets with peers start over against the new device id.
+A lost key without this file is unrecoverable.
 
 A wrong passphrase or a flipped ciphertext bit fails closed.
 

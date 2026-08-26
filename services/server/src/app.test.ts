@@ -1100,4 +1100,54 @@ describe("API integration", () => {
     const phoneLookup = await json("POST", "/v1/users/search", { phone_e164: "+79990000999" }, tok);
     assert.equal(phoneLookup.status, 403);
   });
+
+  it("restores the same account from the same Ed25519 key as a new device", async () => {
+    const dev = devicePayload("restore-web");
+    const ch = await json("POST", "/v1/auth/challenge", {});
+    const proof = encodeAuthProof(String(ch.body.challenge_id), String(ch.body.nonce));
+    const sig = sign(dev.mat.identity.ed25519Private, proof);
+    const first = await json("POST", "/v1/auth/register-key", {
+      challenge_id: ch.body.challenge_id,
+      signature: b64(sig),
+      device: dev.json,
+    });
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    const userId = (first.body.user as { id: string }).id;
+
+    const ch2 = await json("POST", "/v1/auth/challenge", {});
+    const proof2 = encodeAuthProof(String(ch2.body.challenge_id), String(ch2.body.nonce));
+    const sig2 = sign(dev.mat.identity.ed25519Private, proof2);
+    const again = await json("POST", "/v1/auth/register-key", {
+      challenge_id: ch2.body.challenge_id,
+      signature: b64(sig2),
+      device: { ...dev.json, name: "restore-web-2" },
+    });
+    assert.equal(again.status, 200, JSON.stringify(again.body));
+    assert.equal((again.body.user as { id: string }).id, userId);
+    assert.equal((again.body.user as { is_new: boolean }).is_new, false);
+    assert.notEqual(again.body.device_id, first.body.device_id);
+  });
+
+  it("rate-limits auth challenges per client address", async () => {
+    const { AUTH_CHALLENGE_PER_IP } = await import("./modules/auth.js");
+    const ip = "203.0.113.77";
+    let last = 200;
+    for (let i = 0; i < AUTH_CHALLENGE_PER_IP + 1; i++) {
+      const res = await app.inject({
+        method: "POST",
+        url: "/v1/auth/challenge",
+        payload: {},
+        headers: { "content-type": "application/json", "x-forwarded-for": ip },
+      });
+      last = res.statusCode;
+    }
+    assert.equal(last, 429);
+    const other = await app.inject({
+      method: "POST",
+      url: "/v1/auth/challenge",
+      payload: {},
+      headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.78" },
+    });
+    assert.equal(other.statusCode, 200);
+  });
 });

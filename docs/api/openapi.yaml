@@ -4,13 +4,42 @@ info:
   version: 1.0.0
   description: |
     Store-and-forward API for sealed envelopes. The server does not parse
-    message plaintext. See docs/api/API.md.
+    message plaintext. Identity is a device Ed25519 key, not a phone.
+    See docs/api/API.md.
 servers:
   - url: /v1
 paths:
+  /auth/challenge:
+    post:
+      summary: Issue a single-use Ed25519 possession challenge
+      responses:
+        "200":
+          description: challenge_id + nonce
+        "429":
+          description: Per-IP quota
+  /auth/register-key:
+    post:
+      summary: Register or attach a device by signing the challenge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challenge_id, signature, device]
+              properties:
+                challenge_id: { type: string }
+                signature: { type: string, description: Ed25519 over ollo-auth-v1 }
+                registration_lock: { type: string, nullable: true }
+                device: { type: object }
+      responses:
+        "200": { description: Session issued }
+        "401": { description: Bad proof or spent challenge }
+        "403": { description: Registration lock required }
+        "429": { description: Per-IP quota }
   /auth/request-otp:
     post:
-      summary: Request an OTP
+      summary: Request an OTP (legacy path; not the account root)
       requestBody:
         required: true
         content:
@@ -34,15 +63,32 @@ paths:
       summary: Rotate refresh token
       responses:
         "200": { description: New pair }
+        "401": { description: Invalid or reused refresh }
   /me:
     get:
       security: [{ bearerAuth: [] }]
       responses:
-        "200": { description: Current user }
+        "200": { description: Current user, includes address when set }
     put:
       security: [{ bearerAuth: [] }]
       responses:
         "200": { description: Updated }
+  /users/search:
+    post:
+      security: [{ bearerAuth: [] }]
+      summary: Exact username or ollo:user:v1 address
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username: { type: string }
+                address: { type: string }
+                phone_e164: { type: string, description: Always refused }
+      responses:
+        "200": { description: Matches }
+        "403": { description: Phone lookup refused }
   /envelopes:
     get:
       security: [{ bearerAuth: [] }]
@@ -90,6 +136,29 @@ paths:
       security: [{ bearerAuth: [] }]
       responses:
         "200": { description: Call + ICE servers }
+  /backups:
+    put:
+      security: [{ bearerAuth: [] }]
+      summary: Store an opaque sealed backup blob
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [blob]
+              properties:
+                blob: { type: string, description: base64 of client-sealed JSON }
+      responses:
+        "200": { description: Stored; at most 3 blobs kept }
+        "413": { description: Too large }
+  /backups/latest:
+    get:
+      security: [{ bearerAuth: [] }]
+      summary: Last sealed blob for this user
+      responses:
+        "200": { description: Opaque blob }
+        "404": { description: No backup }
 components:
   securitySchemes:
     bearerAuth:

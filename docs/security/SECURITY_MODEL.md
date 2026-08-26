@@ -174,7 +174,10 @@ lock PIN (if set) is required in addition.
 The account address is the first-device Ed25519 public key. If that
 private key is lost and there is no encrypted backup, the account cannot
 be recovered. A new keypair is a new account. Phone/SIM swap does not
-take over a key-rooted account.
+take over a key-rooted account. Web signup now requires downloading a
+passphrase-sealed backup before the profile step. The server copy is
+ciphertext only and cannot be opened without the passphrase plus a
+session — it is not a substitute for the file.
 
 ### 6.12 Compromised client contact
 
