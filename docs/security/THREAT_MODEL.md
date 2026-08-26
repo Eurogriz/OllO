@@ -38,7 +38,7 @@ Out of scope for this revision: desktop native, federated servers, SGX.
 | MITM TLS | L | Read/modify API | TLS 1.3, pinning on mobile, HSTS | Web PKI, pin update mistakes |
 | Envelope bit flip | M | Decrypt fail / drop | AEAD tag, discard | DoS on that message |
 | Malicious prekey in directory | M | Downgrade / identity mixup | Signed prekey, identity key comparison, safety number | User ignores warning |
-| Group membership inject | M | Extra recipient | Signed membership (`signMembership` / prior-admin in stored JSON / `planTrustedMembers` / `planFanoutRecipients`); invite-join stays pending; clients `confirm` adds before sender-key distro | Server can still **drop** members (availability). Stolen **real** admin can sign a rogue add; other devices withhold keys until confirm |
+| Group membership inject | M | Extra recipient | Signed membership (`signMembership` / prior-admin / `confirm` / rejected hashes stick / `planMembershipSignerNotice` for another own device) | Server can still **drop** members. Stolen **real** admin can still distribute **its** sender keys; honest devices refuse the same hash after decline and warn to revoke that device |
 | Malicious APK / IPA | L | Full compromise | Store signatures, reproducible builds goal, Play Integrity optional | Sideload, supply chain |
 | DB row rewrite | M | Drop/duplicate mail, fake profile | App-level AEAD on mail; profiles are public by nature | Metadata integrity |
 

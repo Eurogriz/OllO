@@ -4,6 +4,8 @@ import {
   planFanoutRecipients,
   planMembershipApply,
   planMembershipDelta,
+  planMembershipSignerNotice,
+  planRejectedHashes,
   planTrustedMembers,
   sameMembership,
 } from "./membership.js";
@@ -139,6 +141,69 @@ describe("membership apply planner", () => {
         ],
       }),
       "drop",
+    );
+  });
+
+  it("keeps a refused roster hash rejected and flags another own device", () => {
+    const alice = { userId: "a", role: "admin" };
+    const eve = { userId: "eve", role: "member" };
+    assert.deepEqual(planRejectedHashes(["aa"], "bb"), ["aa", "bb"]);
+    assert.deepEqual(planRejectedHashes(["aa", "bb"], "aa"), ["bb", "aa"]);
+    assert.equal(planRejectedHashes(Array.from({ length: 40 }, (_, i) => `h${i}`), "zz").length, 32);
+    assert.equal(
+      planMembershipApply({
+        local: { epoch: 1, hash: "aa" },
+        incomingEpoch: 2,
+        incomingHash: "bb",
+        signatureValid: true,
+        signerRole: "admin",
+        signerUserId: "a",
+        localMembers: [alice],
+        incomingMembers: [alice, eve],
+        rejectedHashes: ["bb"],
+      }),
+      "rejected",
+    );
+    assert.equal(
+      planMembershipApply({
+        local: { epoch: 1, hash: "aa" },
+        incomingEpoch: 2,
+        incomingHash: "cc",
+        signatureValid: true,
+        signerRole: "admin",
+        signerUserId: "a",
+        localMembers: [alice],
+        incomingMembers: [alice, eve],
+        rejectedHashes: ["bb"],
+      }),
+      "confirm",
+    );
+    assert.equal(
+      planMembershipSignerNotice({
+        localUserId: "a",
+        localDeviceId: "d1",
+        signerUserId: "a",
+        signerDeviceId: "d1",
+      }),
+      "self",
+    );
+    assert.equal(
+      planMembershipSignerNotice({
+        localUserId: "a",
+        localDeviceId: "d1",
+        signerUserId: "a",
+        signerDeviceId: "stolen",
+      }),
+      "own-other-device",
+    );
+    assert.equal(
+      planMembershipSignerNotice({
+        localUserId: "a",
+        localDeviceId: "d1",
+        signerUserId: "b",
+        signerDeviceId: "d9",
+      }),
+      "other-admin",
     );
   });
 });

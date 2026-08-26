@@ -31,6 +31,7 @@ A change that touches any of these is incomplete without tests:
 - Invite-join stays pending; fan-out skips unsigned extras
 - Prior-admin on stored signed JSON; SQL role upgrade cannot sign
 - Membership `confirm` on add; sender keys wait for `confirmPendingMembership`
+- Declined membership hashes stay `rejected`; own-other-device signer notice
 - Message ordering and de-dupe
 - Attachment encrypt / digest / grant
 - Reconnect / resume

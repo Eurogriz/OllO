@@ -220,7 +220,9 @@ fabricates a device payload.
   stored signed JSON** (not the SQL role, not the new roster). Invite-join
   is pending until that signature. Fan-out recipients are
   `planFanoutRecipients` (signed ∩ live). Clients `confirm` adds before
-  distributing sender keys; removals auto-accept.
+  distributing sender keys; removals auto-accept. A declined roster hash
+  stays `rejected` until a newer signature; another own device signing
+  the change is `own-other-device`.
 
 ### 7.6 Attachments
 

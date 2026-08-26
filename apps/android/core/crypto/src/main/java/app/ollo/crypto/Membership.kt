@@ -15,7 +15,7 @@ object Membership {
 
     data class Local(val epoch: Int, val hash: String)
 
-    enum class Decision { Accept, Confirm, Unchanged, Stale, Drop }
+    enum class Decision { Accept, Confirm, Unchanged, Stale, Drop, Rejected }
 
     fun canonicalize(members: List<Member>): List<Member> {
         val sorted = members.sortedBy { it.userId }
@@ -69,6 +69,21 @@ object Membership {
         return Triple(added, removed, roleChanged)
     }
 
+    fun planRejectedHashes(existing: List<String>, nextHash: String, max: Int = 32): List<String> {
+        if (nextHash.isEmpty()) return existing.filter { it.isNotEmpty() }.takeLast(max)
+        val out = existing.filter { it.isNotEmpty() && it != nextHash }.toMutableList()
+        out.add(nextHash)
+        return out.takeLast(max)
+    }
+
+    fun planSignerNotice(localUserId: String, localDeviceId: String, signerUserId: String, signerDeviceId: String): String {
+        if (localUserId.isEmpty() || localDeviceId.isEmpty() || signerUserId.isEmpty() || signerDeviceId.isEmpty()) {
+            return "other-admin"
+        }
+        if (signerUserId != localUserId) return "other-admin"
+        return if (signerDeviceId == localDeviceId) "self" else "own-other-device"
+    }
+
     fun planApply(
         local: Local?,
         incomingEpoch: Int,
@@ -78,10 +93,12 @@ object Membership {
         signerUserId: String? = null,
         localMembers: List<Member>? = null,
         incomingMembers: List<Member>? = null,
+        rejectedHashes: Collection<String> = emptyList(),
     ): Decision {
         if (!signatureValid) return Decision.Drop
         if (signerRole != "admin") return Decision.Drop
         if (incomingEpoch < 1 || incomingHash.isEmpty()) return Decision.Drop
+        if (incomingHash in rejectedHashes) return Decision.Rejected
         if (localMembers != null && signerUserId != null) {
             val prior = localMembers.find { it.userId == signerUserId }
             if (prior == null || prior.role != "admin") return Decision.Drop

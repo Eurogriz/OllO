@@ -18,6 +18,8 @@ import {
   retainUnexpired,
   planMembershipApply,
   planMembershipDelta,
+  planMembershipSignerNotice,
+  planRejectedHashes,
   planTrustedMembers,
 } from "@ollo/shared";
 import {
@@ -142,6 +144,7 @@ export interface Account {
   replay: ReplayCache;
   memberships: Record<string, LocalGroupMembership>;
   pendingMemberships: Record<string, LocalGroupMembership>;
+  rejectedMemberships: Record<string, string[]>;
 }
 
 export interface LocalGroupMembership {
@@ -201,9 +204,10 @@ function wireMembership(
 export function rememberMembership(
   acc: Account,
   next: LocalGroupMembership,
-): "accept" | "confirm" | "unchanged" | "stale" | "drop" {
+): "accept" | "confirm" | "unchanged" | "stale" | "drop" | "rejected" {
   if (!acc.memberships) acc.memberships = {};
   if (!acc.pendingMemberships) acc.pendingMemberships = {};
+  if (!acc.rejectedMemberships) acc.rejectedMemberships = {};
   const local = acc.memberships[next.groupId];
   const signerRole = next.members.find((m) => m.userId === next.signerUserId)?.role ?? "";
   const decision = planMembershipApply({
@@ -215,12 +219,14 @@ export function rememberMembership(
     signerUserId: next.signerUserId,
     localMembers: local?.members,
     incomingMembers: next.members,
+    rejectedHashes: acc.rejectedMemberships[next.groupId],
   });
   if (decision === "accept") {
     acc.memberships[next.groupId] = next;
     delete acc.pendingMemberships[next.groupId];
   }
   if (decision === "confirm") acc.pendingMemberships[next.groupId] = next;
+  if (decision === "rejected") delete acc.pendingMemberships[next.groupId];
   return decision;
 }
 
@@ -241,7 +247,33 @@ export function confirmPendingMembership(
 }
 
 export function rejectPendingMembership(acc: Account, groupId: string): void {
+  if (!acc.rejectedMemberships) acc.rejectedMemberships = {};
+  const pending = acc.pendingMemberships?.[groupId];
+  if (pending?.hash) {
+    acc.rejectedMemberships[groupId] = planRejectedHashes(acc.rejectedMemberships[groupId] ?? [], pending.hash);
+  }
   if (acc.pendingMemberships) delete acc.pendingMemberships[groupId];
+}
+
+export function pendingMembershipNotice(
+  acc: Account,
+  groupId: string,
+): { added: string[]; roleChanged: string[]; signerDeviceId: string; signerNotice: ReturnType<typeof planMembershipSignerNotice> } | null {
+  const pending = acc.pendingMemberships?.[groupId];
+  if (!pending) return null;
+  const local = acc.memberships?.[groupId];
+  const delta = planMembershipDelta(local?.members ?? [], pending.members);
+  return {
+    added: delta.added,
+    roleChanged: delta.roleChanged,
+    signerDeviceId: pending.signerDeviceId,
+    signerNotice: planMembershipSignerNotice({
+      localUserId: acc.userId,
+      localDeviceId: acc.deviceId,
+      signerUserId: pending.signerUserId,
+      signerDeviceId: pending.signerDeviceId,
+    }),
+  };
 }
 
 export async function createSignedGroup(
@@ -307,7 +339,7 @@ async function trustedGroupMembers(acc: Account, groupId: string, serverRows: { 
     signerDeviceId: membership.signer_device_id,
   });
   if (decision === "drop" || decision === "stale") throw new Error("unsigned_membership");
-  if (decision === "confirm") {
+  if (decision === "confirm" || decision === "rejected") {
     const localIds = (acc.memberships[groupId]?.members ?? []).map((m) => m.userId);
     return planTrustedMembers(
       localIds,
@@ -320,6 +352,23 @@ async function trustedGroupMembers(acc: Account, groupId: string, serverRows: { 
   );
   if (plan.extra.length) throw new Error("unsigned_member");
   return plan.trusted;
+}
+
+/** Fetch and apply the signed roster without sending. Confirm UI can show before a send. */
+export async function syncGroupMembership(acc: Account, groupId: string) {
+  const g = await api(`/v1/groups/${groupId}`, acc.access, {}, acc);
+  await trustedGroupMembers(
+    acc,
+    groupId,
+    (g.group.members ?? []) as { user_id: string }[],
+    (g.group.membership ?? null) as {
+      epoch: number;
+      members: { user_id: string; role: string }[];
+      signer_user_id: string;
+      signer_device_id: string;
+      signature: string;
+    } | null,
+  );
 }
 
 export function vaultPinEnabled(): boolean {
@@ -442,6 +491,7 @@ function accountFromStored(j: Stored): Account {
     replay: j.replay?.ids ? { ids: [...j.replay.ids] } : emptyReplayCache(),
     memberships: j.memberships ?? {},
     pendingMemberships: j.pendingMemberships ?? {},
+    rejectedMemberships: j.rejectedMemberships ?? {},
   };
 }
 
@@ -483,6 +533,7 @@ export function saveAccount(acc: Account): void {
     replay: acc.replay ?? emptyReplayCache(),
     memberships: acc.memberships ?? {},
     pendingMemberships: acc.pendingMemberships ?? {},
+    rejectedMemberships: acc.rejectedMemberships ?? {},
   };
   const sealed = sealVault(ensureVaultKey(), utf8(JSON.stringify(stored)));
   localStorage.setItem(VAULT_STORE, encodeVault(sealed));
@@ -1043,6 +1094,7 @@ export function backupPlaintext(acc: Account): Uint8Array {
     replay: emptyReplayCache(),
     memberships: acc.memberships ?? {},
     pendingMemberships: acc.pendingMemberships ?? {},
+    rejectedMemberships: acc.rejectedMemberships ?? {},
   };
   return utf8(JSON.stringify(stored));
 }
@@ -1077,6 +1129,13 @@ export function mergeBackupHistory(acc: Account, raw: string, passphrase: string
   acc.pinned = { ...stored.pinned, ...acc.pinned };
   acc.memberships = { ...(stored.memberships ?? {}), ...acc.memberships };
   acc.pendingMemberships = { ...(stored.pendingMemberships ?? {}), ...(acc.pendingMemberships ?? {}) };
+  const rejected: Record<string, string[]> = { ...(acc.rejectedMemberships ?? {}) };
+  for (const [gid, hashes] of Object.entries(stored.rejectedMemberships ?? {})) {
+    let cur = rejected[gid] ?? [];
+    for (const h of hashes) cur = planRejectedHashes(cur, h);
+    rejected[gid] = cur;
+  }
+  acc.rejectedMemberships = rejected;
 }
 
 export function searchLocal(acc: Account, q: string): ChatMessage[] {
@@ -1153,4 +1212,5 @@ interface Stored {
   replay?: ReplayCache;
   memberships?: Record<string, LocalGroupMembership>;
   pendingMemberships?: Record<string, LocalGroupMembership>;
+  rejectedMemberships?: Record<string, string[]>;
 }

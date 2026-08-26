@@ -32,6 +32,7 @@ public enum Membership {
         case unchanged
         case stale
         case drop
+        case rejected
     }
 
     public enum MembershipError: Error {
@@ -89,6 +90,21 @@ public enum Membership {
         )
     }
 
+    public static func planRejectedHashes(existing: [String], nextHash: String, max: Int = 32) -> [String] {
+        if nextHash.isEmpty { return Array(existing.filter { !$0.isEmpty }.suffix(max)) }
+        var out = existing.filter { !$0.isEmpty && $0 != nextHash }
+        out.append(nextHash)
+        return Array(out.suffix(max))
+    }
+
+    public static func planSignerNotice(localUserId: String, localDeviceId: String, signerUserId: String, signerDeviceId: String) -> String {
+        if localUserId.isEmpty || localDeviceId.isEmpty || signerUserId.isEmpty || signerDeviceId.isEmpty {
+            return "other-admin"
+        }
+        if signerUserId != localUserId { return "other-admin" }
+        return signerDeviceId == localDeviceId ? "self" : "own-other-device"
+    }
+
     public static func planApply(
         local: Local?,
         incomingEpoch: Int,
@@ -97,11 +113,13 @@ public enum Membership {
         signerRole: String,
         signerUserId: String? = nil,
         localMembers: [Member]? = nil,
-        incomingMembers: [Member]? = nil
+        incomingMembers: [Member]? = nil,
+        rejectedHashes: [String] = []
     ) -> Decision {
         if !signatureValid { return .drop }
         if signerRole != "admin" { return .drop }
         if incomingEpoch < 1 || incomingHash.isEmpty { return .drop }
+        if rejectedHashes.contains(incomingHash) { return .rejected }
         if let localMembers, let signerUserId {
             let prior = localMembers.first { $0.userId == signerUserId }
             if prior == nil || prior?.role != "admin" { return .drop }

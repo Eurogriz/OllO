@@ -79,6 +79,22 @@ final class SessionVaultTests: XCTestCase {
             ),
             .drop
         )
+        XCTAssertEqual(
+            Membership.planApply(
+                local: Membership.Local(epoch: 1, hash: h1),
+                incomingEpoch: 2,
+                incomingHash: "bb",
+                signatureValid: true,
+                signerRole: "admin",
+                signerUserId: "a",
+                localMembers: [alice],
+                incomingMembers: [alice, eve],
+                rejectedHashes: ["bb"]
+            ),
+            .rejected
+        )
+        XCTAssertEqual(Membership.planSignerNotice(localUserId: "a", localDeviceId: "d1", signerUserId: "a", signerDeviceId: "stolen"), "own-other-device")
+        XCTAssertEqual(Membership.planRejectedHashes(existing: ["aa"], nextHash: "bb"), ["aa", "bb"])
     }
 
     func testDropsAReplayedEnvelopeAndClearsOnWipe() throws {

@@ -68,6 +68,7 @@ const dict = {
     restore: "Восстановить",
     screenshare: "Экран",
     membershipConfirm: "Состав группы изменился. Подтвердите, прежде чем новые участники получат ключи.",
+    membershipOtherDevice: "Другое ваше устройство подписало изменение. Отключите его, если это были не вы.",
   },
   en: {
     tagline: "Private messages. The server cannot read them.",
@@ -136,6 +137,7 @@ const dict = {
     restore: "Restore",
     screenshare: "Share screen",
     membershipConfirm: "Group membership changed. Confirm before new members receive sender keys.",
+    membershipOtherDevice: "Another of your devices signed this change. Revoke it if this was not you.",
   },
 } as const;
 

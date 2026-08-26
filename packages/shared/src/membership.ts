@@ -3,12 +3,16 @@
  * this only decides whether a verified roster replaces local state
  * and which user ids may receive sender keys.
  */
-export type MembershipDecision = "accept" | "confirm" | "unchanged" | "stale" | "drop";
+export type MembershipDecision = "accept" | "confirm" | "unchanged" | "stale" | "drop" | "rejected";
+
+export type MembershipSignerNotice = "self" | "own-other-device" | "other-admin";
 
 export interface LocalMembership {
   epoch: number;
   hash: string;
 }
+
+export const MAX_REJECTED_MEMBERSHIP_HASHES = 32;
 
 export function planMembershipDelta(
   local: { userId: string; role: string }[],
@@ -23,6 +27,31 @@ export function planMembershipDelta(
   };
 }
 
+/** Bounded FIFO of refused roster hashes. Same hash is not stored twice. */
+export function planRejectedHashes(existing: string[], nextHash: string, max = MAX_REJECTED_MEMBERSHIP_HASHES): string[] {
+  if (!nextHash) return existing.filter(Boolean).slice(-max);
+  const out = existing.filter((h) => h && h !== nextHash);
+  out.push(nextHash);
+  return out.slice(-max);
+}
+
+/**
+ * Another of this user's devices signed the roster (stolen-admin residual
+ * on honest devices). `self` is this device; `other-admin` is not us.
+ */
+export function planMembershipSignerNotice(args: {
+  localUserId: string;
+  localDeviceId: string;
+  signerUserId: string;
+  signerDeviceId: string;
+}): MembershipSignerNotice {
+  if (!args.localUserId || !args.localDeviceId || !args.signerUserId || !args.signerDeviceId) {
+    return "other-admin";
+  }
+  if (args.signerUserId !== args.localUserId) return "other-admin";
+  return args.signerDeviceId === args.localDeviceId ? "self" : "own-other-device";
+}
+
 export function planMembershipApply(args: {
   local?: LocalMembership;
   incomingEpoch: number;
@@ -32,10 +61,12 @@ export function planMembershipApply(args: {
   signerUserId?: string;
   localMembers?: { userId: string; role: string }[];
   incomingMembers?: { userId: string; role: string }[];
+  rejectedHashes?: string[];
 }): MembershipDecision {
   if (!args.signatureValid) return "drop";
   if (args.signerRole !== "admin") return "drop";
   if (args.incomingEpoch < 1 || !args.incomingHash) return "drop";
+  if (args.rejectedHashes?.includes(args.incomingHash)) return "rejected";
   if (args.localMembers && args.signerUserId) {
     const prior = args.localMembers.find((m) => m.userId === args.signerUserId);
     if (!prior || prior.role !== "admin") return "drop";

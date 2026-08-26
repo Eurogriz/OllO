@@ -88,6 +88,22 @@ class SessionVaultTest {
                 listOf(eve, Membership.Member("a", "member")),
             ),
         )
+        assertEquals(
+            Membership.Decision.Rejected,
+            Membership.planApply(
+                Membership.Local(1, h1),
+                2,
+                "bb",
+                true,
+                "admin",
+                "a",
+                listOf(alice),
+                listOf(alice, eve),
+                listOf("bb"),
+            ),
+        )
+        assertEquals("own-other-device", Membership.planSignerNotice("a", "d1", "a", "stolen"))
+        assertEquals(listOf("aa", "bb"), Membership.planRejectedHashes(listOf("aa"), "bb"))
     }
 
     @Test

@@ -28,6 +28,7 @@ import {
   realtimeUrl,
   openEnvelope,
   publicDevicePayload,
+  pendingMembershipNotice,
   rejectPendingMembership,
   replenishPrekeys,
   resolveSenderEd25519,
@@ -35,6 +36,7 @@ import {
   searchLocal,
   sendToGroup,
   sendToUser,
+  syncGroupMembership,
   syncToOwnDevices,
   unlockVault,
   unwrapVaultPin,
@@ -86,6 +88,7 @@ export function App() {
     if (!next.replay) next.replay = { ids: [] };
     if (!next.memberships) next.memberships = {};
     if (!next.pendingMemberships) next.pendingMemberships = {};
+    if (!next.rejectedMemberships) next.rejectedMemberships = {};
     saveAccount(next);
     setAcc({ ...next, sessions: next.sessions, messages: { ...next.messages }, threads: [...next.threads] });
   }, []);
@@ -241,6 +244,7 @@ function Auth({
         replay: { ids: [] },
         memberships: {},
         pendingMemberships: {},
+        rejectedMemberships: {},
       };
       if (restoreRaw) {
         try {
@@ -447,6 +451,19 @@ function Shell({
       clearInterval(id);
     };
   }, [thread?.peerUserId, acc.access]);
+
+  useEffect(() => {
+    if (!thread?.groupId) return;
+    let stop = false;
+    void syncGroupMembership(acc, thread.groupId)
+      .then(() => {
+        if (!stop) persist(acc);
+      })
+      .catch(() => undefined);
+    return () => {
+      stop = true;
+    };
+  }, [thread?.groupId, acc.access]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -1268,6 +1285,19 @@ function Shell({
               {thread.groupId && acc.pendingMemberships?.[thread.groupId] && (
                 <div className="hint" style={{ padding: "8px 16px", color: "var(--danger)" }}>
                   {t(lang, "membershipConfirm")}{" "}
+                  {(() => {
+                    const view = pendingMembershipNotice(acc, thread.groupId!);
+                    if (!view) return null;
+                    const extra = view.added.map((id) => id.slice(0, 8)).join(", ");
+                    return (
+                      <>
+                        {extra ? <span>({extra})</span> : null}
+                        {view.signerNotice === "own-other-device" ? (
+                          <div>{t(lang, "membershipOtherDevice")}</div>
+                        ) : null}
+                      </>
+                    );
+                  })()}{" "}
                   <button className="primary" onClick={() => void confirmGroupMembership(thread.groupId!)}>
                     {t(lang, "accept")}
                   </button>{" "}
