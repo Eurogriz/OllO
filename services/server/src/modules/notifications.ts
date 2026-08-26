@@ -8,7 +8,7 @@ import { z } from "zod";
 import { config } from "../config.js";
 import type { Db } from "../db/index.js";
 import { requireAuth } from "../http.js";
-import { isDeviceOnline } from "../realtime/hub.js";
+import { devicePresenceSeen } from "../realtime/hub.js";
 
 export type SealedWakeKind = "msg" | "call";
 
@@ -47,7 +47,7 @@ export function wrapPushToken(token: string): Buffer {
 export function unwrapPushToken(buf: Buffer): string | null {
   if (!buf.length) return null;
   if (buf[0] !== 1 || buf.length < 1 + 12 + 16) {
-    return buf.toString("utf8");
+    return null;
   }
   try {
     const iv = buf.subarray(1, 13);
@@ -76,7 +76,7 @@ export async function maybeWake(
   kind: SealedWakeKind = "msg",
 ): Promise<void> {
   if (!shouldWake(kind)) return;
-  if (isDeviceOnline(recipientDeviceId)) return;
+  if (await devicePresenceSeen(recipientDeviceId)) return;
   const tok = await db.query<{ push_token_enc: Buffer | null }>(
     "SELECT push_token_enc FROM devices WHERE id = $1 AND revoked_at IS NULL",
     [recipientDeviceId],

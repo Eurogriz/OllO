@@ -1005,7 +1005,7 @@ describe("API integration", () => {
     );
     assert.equal(msgOnline.status, 200, JSON.stringify(msgOnline.body));
     assert.equal(recentWakes().length, 0);
-    detach(socket);
+    await detach(socket);
     resetHub();
 
     const msgOffline = await json(
@@ -1333,5 +1333,133 @@ describe("API integration", () => {
       headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.78" },
     });
     assert.equal(other.statusCode, 200);
+  });
+
+  it("refuses attachment grants from anyone but the uploader", async () => {
+    async function signup(phone: string, username: string) {
+      const otp = await json("POST", "/v1/auth/request-otp", { phone_e164: phone });
+      const verified = await json("POST", "/v1/auth/verify-otp", {
+        challenge_id: otp.body.challenge_id,
+        otp: otp.body.dev_otp,
+        account_ed25519: b64(generateEd25519().publicKey),
+        device: devicePayload(username).json,
+      });
+      assert.equal(verified.status, 200, JSON.stringify(verified.body));
+      const tok = verified.body.access_token as string;
+      await json("PUT", "/v1/me", { username, display_name: username }, tok);
+      return {
+        tok,
+        userId: (verified.body.user as { id: string }).id,
+      };
+    }
+    const alice = await signup("+79990000301", "aliceatt");
+    const bob = await signup("+79990000302", "bobatt");
+    const created = await json("POST", "/v1/attachments", { size: 4 }, alice.tok);
+    assert.equal(created.status, 200, JSON.stringify(created.body));
+    const id = created.body.object_id as string;
+    const put = await app.inject({
+      method: "PUT",
+      url: `/v1/attachments/${id}/data`,
+      payload: Buffer.from("abcd"),
+      headers: {
+        authorization: `Bearer ${alice.tok}`,
+        "content-type": "application/octet-stream",
+      },
+    });
+    assert.equal(put.statusCode, 200, put.body);
+    const stolen = await json(
+      "POST",
+      `/v1/attachments/${id}/grants`,
+      { recipient_user_id: bob.userId },
+      bob.tok,
+    );
+    assert.equal(stolen.status, 403);
+    const granted = await json(
+      "POST",
+      `/v1/attachments/${id}/grants`,
+      { recipient_user_id: bob.userId },
+      alice.tok,
+    );
+    assert.equal(granted.status, 200, JSON.stringify(granted.body));
+    const token = granted.body.grant as string;
+    const peek = await json("GET", `/v1/attachments/${id}?grant=${token}`, undefined, bob.tok);
+    assert.equal(peek.status, 200, JSON.stringify(peek.body));
+    const noGrant = await json("GET", `/v1/attachments/${id}`, undefined, bob.tok);
+    assert.equal(noGrant.status, 403);
+  });
+
+  it("pages envelopes by created_at then id and binds LIMIT", async () => {
+    const aDev = devicePayload("alice-cur");
+    const bDev = devicePayload("bob-cur");
+    const otpA = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000311" });
+    const alice = await json("POST", "/v1/auth/verify-otp", {
+      challenge_id: otpA.body.challenge_id,
+      otp: otpA.body.dev_otp,
+      account_ed25519: b64(generateEd25519().publicKey),
+      device: aDev.json,
+    });
+    const otpB = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000312" });
+    const bob = await json("POST", "/v1/auth/verify-otp", {
+      challenge_id: otpB.body.challenge_id,
+      otp: otpB.body.dev_otp,
+      account_ed25519: b64(generateEd25519().publicKey),
+      device: bDev.json,
+    });
+    assert.equal(alice.status, 200, JSON.stringify(alice.body));
+    assert.equal(bob.status, 200, JSON.stringify(bob.body));
+    const aliceTok = alice.body.access_token as string;
+    const bobTok = bob.body.access_token as string;
+    const bobUser = (bob.body.user as { id: string }).id;
+    const bobDevice = bob.body.device_id as string;
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const sent = await json(
+        "POST",
+        "/v1/envelopes",
+        {
+          envelopes: [
+            {
+              recipient_user_id: bobUser,
+              recipient_device_id: bobDevice,
+              kind: "control",
+              ciphertext: Buffer.from(`opaque-page-${i}`).toString("base64"),
+              padding_bucket: 256,
+            },
+          ],
+        },
+        aliceTok,
+      );
+      assert.equal(sent.status, 200, JSON.stringify(sent.body));
+      ids.push(((sent.body.accepted as Array<{ id: string }>)[0]!).id);
+    }
+    const first = await json("GET", "/v1/envelopes?limit=1", undefined, bobTok);
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    const page1 = first.body.envelopes as Array<{ id: string }>;
+    assert.equal(page1.length, 1);
+    assert.equal(first.body.next_cursor, page1[0]!.id);
+    const second = await json(
+      "GET",
+      `/v1/envelopes?limit=1&cursor=${page1[0]!.id}`,
+      undefined,
+      bobTok,
+    );
+    assert.equal(second.status, 200, JSON.stringify(second.body));
+    const page2 = second.body.envelopes as Array<{ id: string }>;
+    assert.equal(page2.length, 1);
+    assert.notEqual(page2[0]!.id, page1[0]!.id);
+    const rest = await json(
+      "GET",
+      `/v1/envelopes?limit=10&cursor=${page2[0]!.id}`,
+      undefined,
+      bobTok,
+    );
+    const page3 = rest.body.envelopes as Array<{ id: string }>;
+    assert.equal(page3.length, 1);
+    assert.equal(rest.body.next_cursor, null);
+    const seen = new Set([page1[0]!.id, page2[0]!.id, page3[0]!.id]);
+    assert.equal(seen.size, 3);
+    for (const id of ids) assert.equal(seen.has(id), true);
+    const bad = await json("GET", "/v1/envelopes?cursor=not-a-uuid", undefined, bobTok);
+    assert.equal(bad.status, 400);
   });
 });

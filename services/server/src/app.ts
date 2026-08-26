@@ -29,6 +29,7 @@ import {
   type SocketClient,
   connectionCount,
   presenceSeen,
+  startHubFanout,
   touchPresence,
 } from "./realtime/hub.js";
 import { randomToken } from "./security/crypto-utils.js";
@@ -146,6 +147,10 @@ export async function buildApp(db: Db): Promise<FastifyInstance> {
   await registerCalls(app, db);
   await registerNotifications(app, db);
   await registerBackups(app, db);
+
+  void startHubFanout().catch((err) => {
+    log.warn("hub fanout not started", { err: err instanceof Error ? err.message : String(err) });
+  });
 
   app.get("/v1/presence/:userId", async (req) => {
     const auth = requireAuth(req);

@@ -1,9 +1,13 @@
 import type { WebSocket } from "ws";
 import { log } from "../observability/logger.js";
-import { getRedis } from "../redis.js";
+import { getRedis, publishBus, PUSH_CHANNEL, subscribeBus } from "../redis.js";
+import { randomToken } from "../security/crypto-utils.js";
 
 /** Cross-process presence TTL. Local maps still drive this-process WS push. */
 export const PRESENCE_TTL_SECONDS = 90;
+
+/** Skip our own PUBLISH so local deliver is not doubled. */
+export const HUB_INSTANCE = randomToken(8);
 
 export interface SocketClient {
   deviceId: string;
@@ -45,7 +49,7 @@ export async function presenceSeen(userId: string): Promise<boolean> {
   }
 }
 
-export function detach(client: SocketClient): void {
+export function detach(client: SocketClient): Promise<void> {
   const set = byDevice.get(client.deviceId);
   if (set) {
     set.delete(client);
@@ -53,6 +57,18 @@ export function detach(client: SocketClient): void {
   }
   if (!byDevice.has(client.deviceId)) {
     byUser.get(client.userId)?.delete(client.deviceId);
+    return clearDevicePresence(client.userId, client.deviceId);
+  }
+  return Promise.resolve();
+}
+
+async function clearDevicePresence(userId: string, deviceId: string): Promise<void> {
+  try {
+    const r = await getRedis();
+    await r.del(`presence:device:${deviceId}`);
+    if (!isOnline(userId)) await r.del(`presence:user:${userId}`);
+  } catch {
+    /* TTL still expires the key */
   }
 }
 
@@ -70,6 +86,17 @@ export function isDeviceOnline(deviceId: string): boolean {
   return false;
 }
 
+/** True if this process holds a live socket or Redis has a presence:device key. */
+export async function devicePresenceSeen(deviceId: string): Promise<boolean> {
+  if (isDeviceOnline(deviceId)) return true;
+  try {
+    const r = await getRedis();
+    return (await r.get(`presence:device:${deviceId}`)) != null;
+  } catch {
+    return false;
+  }
+}
+
 export function pushToUser(userId: string, frame: unknown): number {
   const devices = byUser.get(userId);
   if (!devices) return 0;
@@ -78,7 +105,7 @@ export function pushToUser(userId: string, frame: unknown): number {
   return n;
 }
 
-export function pushToDevice(deviceId: string, frame: unknown): number {
+export function deliverLocal(deviceId: string, frame: unknown): number {
   const set = byDevice.get(deviceId);
   if (!set) return 0;
   const data = JSON.stringify(frame);
@@ -89,11 +116,39 @@ export function pushToDevice(deviceId: string, frame: unknown): number {
         c.ws.send(data);
         n += 1;
       }
-    } catch (err) {
+    } catch {
       log.warn("ws send failed", { deviceId });
     }
   }
   return n;
+}
+
+export function pushToDevice(deviceId: string, frame: unknown): number {
+  const n = deliverLocal(deviceId, frame);
+  void publishPush(deviceId, frame);
+  return n;
+}
+
+async function publishPush(deviceId: string, frame: unknown): Promise<void> {
+  try {
+    await publishBus(PUSH_CHANNEL, JSON.stringify({ origin: HUB_INSTANCE, deviceId, frame }));
+  } catch {
+    /* local deliver already ran */
+  }
+}
+
+function onPushBus(raw: string): void {
+  try {
+    const msg = JSON.parse(raw) as { origin?: unknown; deviceId?: unknown; frame?: unknown };
+    if (msg.origin === HUB_INSTANCE) return;
+    if (typeof msg.deviceId === "string") deliverLocal(msg.deviceId, msg.frame);
+  } catch {
+    /* drop malformed bus frames */
+  }
+}
+
+export async function startHubFanout(): Promise<() => void> {
+  return subscribeBus(PUSH_CHANNEL, onPushBus);
 }
 
 export function connectionCount(): number {

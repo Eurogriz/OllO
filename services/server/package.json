@@ -9,7 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "migrate": "tsx src/db/migrate.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test src/app.test.ts src/jobs/expire.test.ts src/security/redaction.test.ts src/realtime/hub.test.ts src/realtime/hello.test.ts src/http/frame-policy.test.ts src/sms.test.ts src/s3.test.ts src/redis.test.ts",
+    "test": "node --import tsx --test src/app.test.ts src/jobs/expire.test.ts src/security/redaction.test.ts src/realtime/hub.test.ts src/realtime/hello.test.ts src/http/frame-policy.test.ts src/sms.test.ts src/s3.test.ts src/redis.test.ts src/modules/notifications.test.ts",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

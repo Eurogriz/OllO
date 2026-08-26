@@ -101,11 +101,17 @@ export async function registerAttachments(app: FastifyInstance, db: Db): Promise
       })
       .refine((v) => Boolean(v.recipient_user_id || v.group_id), { message: "recipient or group required" })
       .parse(req.body);
-    const row = await db.query<{ uploader_device_id: string }>(
-      "SELECT uploader_device_id FROM attachments WHERE id = $1",
+    const row = await db.query<{ uploader_user_id: string }>(
+      `SELECT d.user_id AS uploader_user_id
+       FROM attachments a
+       JOIN devices d ON d.id = a.uploader_device_id
+       WHERE a.id = $1`,
       [id],
     );
     if (!row.rows[0]) throw new ApiError("not_found", "Attachment not found", 404);
+    if (row.rows[0].uploader_user_id !== auth.userId) {
+      throw new ApiError("forbidden", "Only the uploader can mint a grant", 403);
+    }
     if (body.group_id) {
       const mem = await db.query(
         "SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2 AND removed_at IS NULL",

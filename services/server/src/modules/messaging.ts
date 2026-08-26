@@ -91,8 +91,14 @@ export async function registerMessaging(app: FastifyInstance, db: Db): Promise<v
 
   app.get("/v1/envelopes", async (req) => {
     const auth = requireAuth(req);
-    const q = req.query as { cursor?: string; limit?: string };
-    const limit = Math.min(Number(q.limit ?? 100), 200);
+    const q = z
+      .object({
+        cursor: z.string().uuid().optional(),
+        limit: z.string().optional(),
+      })
+      .parse(req.query ?? {});
+    const parsed = Number.parseInt(q.limit ?? "100", 10);
+    const limit = Number.isFinite(parsed) ? Math.min(Math.max(parsed, 1), 200) : 100;
     const params: unknown[] = [auth.deviceId];
     let sql = `SELECT id, sender_user_id, sender_device_id, recipient_user_id, recipient_device_id,
                       group_id, kind, payload, padding_bucket, created_at
@@ -101,9 +107,13 @@ export async function registerMessaging(app: FastifyInstance, db: Db): Promise<v
                  AND (expires_at IS NULL OR expires_at > now())`;
     if (q.cursor) {
       params.push(q.cursor);
-      sql += ` AND id > $2`;
+      sql += ` AND (created_at, id) > (
+        SELECT created_at, id FROM envelopes
+        WHERE id = $${params.length} AND recipient_device_id = $1
+      )`;
     }
-    sql += ` ORDER BY created_at ASC LIMIT ${limit}`;
+    params.push(limit);
+    sql += ` ORDER BY created_at ASC, id ASC LIMIT $${params.length}`;
     const r = await db.query<{
       id: string;
       sender_user_id: string;

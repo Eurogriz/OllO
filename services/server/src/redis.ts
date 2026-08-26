@@ -1,10 +1,11 @@
 /**
- * Thin Redis client (RESP2) used for rate-limit and presence.
+ * Thin Redis client (RESP2) used for rate-limit, presence, and WS fan-out.
  * No extra dependency. Fail closed when REDIS_REQUIRED / production.
  *
  * Commands on one socket are serialized. INCR+EXPIRE is a single EVAL so a
  * crash cannot leave a limiter key without a TTL (permanent lockout).
  * `rediss://` and REDIS_TLS open a TLS socket (ElastiCache transit encryption).
+ * PUBLISH/SUBSCRIBE uses a dedicated subscriber socket (RESP arrays).
  */
 import { Socket } from "node:net";
 import { connect as tlsConnect, type TLSSocket } from "node:tls";
@@ -24,8 +25,12 @@ export interface RedisClient {
   setEx(key: string, ttlSeconds: number, value: string): Promise<void>;
   del(key: string): Promise<void>;
   ping(): Promise<string>;
+  publish(channel: string, message: string): Promise<number>;
+  subscribe(channel: string, handler: (message: string) => void): () => void;
   close(): void;
 }
+
+export const PUSH_CHANNEL = "ollo:push";
 
 export interface RedisEndpoint {
   host: string;
@@ -40,7 +45,9 @@ export const INCR_EXPIRE_LUA =
   "local n=redis.call('INCR',KEYS[1]) if n==1 then redis.call('EXPIRE',KEYS[1],ARGV[1]) end return n";
 
 class MemoryRedis implements RedisClient {
+  readonly kind = "memory" as const;
   private readonly store = new Map<string, { v: string; exp: number }>();
+  private readonly subs = new Map<string, Set<(message: string) => void>>();
 
   private live(key: string): { v: string; exp: number } | undefined {
     const cur = this.store.get(key);
@@ -76,8 +83,32 @@ class MemoryRedis implements RedisClient {
     return "PONG";
   }
 
+  async publish(channel: string, message: string): Promise<number> {
+    const set = this.subs.get(channel);
+    if (!set) return 0;
+    for (const fn of set) {
+      try {
+        fn(message);
+      } catch {
+        /* subscriber must not break the bus */
+      }
+    }
+    return set.size;
+  }
+
+  subscribe(channel: string, handler: (message: string) => void): () => void {
+    const set = this.subs.get(channel) ?? new Set<(message: string) => void>();
+    set.add(handler);
+    this.subs.set(channel, set);
+    return () => {
+      set.delete(handler);
+      if (set.size === 0) this.subs.delete(channel);
+    };
+  }
+
   close(): void {
     this.store.clear();
+    this.subs.clear();
   }
 }
 
@@ -111,6 +142,20 @@ export function parseResp(buf: Buffer): { value: unknown; rest: Buffer } {
     const stop = start + n;
     if (buf.length < stop + 2) throw new RedisError("incomplete");
     return { value: buf.subarray(start, stop).toString("utf8"), rest: buf.subarray(stop + 2) };
+  }
+  if (kind === "*") {
+    const end = buf.indexOf("\r\n");
+    if (end < 0) throw new RedisError("incomplete");
+    const n = Number(buf.subarray(1, end).toString("utf8"));
+    if (n < 0) return { value: null, rest: buf.subarray(end + 2) };
+    let rest = buf.subarray(end + 2);
+    const items: unknown[] = [];
+    for (let i = 0; i < n; i++) {
+      const next = parseResp(rest);
+      items.push(next.value);
+      rest = next.rest;
+    }
+    return { value: items, rest };
   }
   throw new RedisError("unsupported RESP");
 }
@@ -196,6 +241,14 @@ class NetRedis implements RedisClient {
   async auth(password: string, username?: string | null): Promise<void> {
     if (username) await this.call("AUTH", username, password);
     else await this.call("AUTH", password);
+  }
+
+  async publish(channel: string, message: string): Promise<number> {
+    return Number(await this.call("PUBLISH", channel, message));
+  }
+
+  subscribe(_channel: string, _handler: (message: string) => void): () => void {
+    throw new RedisError("use subscribeBus for a dedicated subscriber socket");
   }
 
   close(): void {
@@ -290,7 +343,81 @@ export class RedisWindowStore {
   }
 }
 
+function isMemoryRedis(r: RedisClient): r is MemoryRedis {
+  return (r as MemoryRedis).kind === "memory";
+}
+
+export async function publishBus(channel: string, message: string): Promise<number> {
+  const r = await getRedis();
+  return r.publish(channel, message);
+}
+
+let netSub: { socket: Socket; stop: () => void } | null = null;
+
+export async function subscribeBus(
+  channel: string,
+  handler: (message: string) => void,
+): Promise<() => void> {
+  const r = await getRedis();
+  if (isMemoryRedis(r)) return r.subscribe(channel, handler);
+  if (!config.redisUrl) return () => undefined;
+  return subscribeNet(config.redisUrl, config.redisTls, channel, handler);
+}
+
+async function subscribeNet(
+  url: string,
+  tlsForced: boolean,
+  channel: string,
+  handler: (message: string) => void,
+): Promise<() => void> {
+  const ep = redisEndpoint(url, tlsForced);
+  const sock = await new Promise<Socket>((resolve, reject) => {
+    if (ep.tls) {
+      const s: TLSSocket = tlsConnect(
+        { host: ep.host, port: ep.port, servername: ep.host },
+        () => resolve(s),
+      );
+      s.once("error", reject);
+      return;
+    }
+    const s = new Socket();
+    s.once("error", reject);
+    s.connect(ep.port, ep.host, () => resolve(s));
+  });
+  if (ep.password) {
+    sock.write(encodeCommand(ep.username ? ["AUTH", ep.username, ep.password] : ["AUTH", ep.password]));
+  }
+  sock.write(encodeCommand(["SUBSCRIBE", channel]));
+  let acc: Buffer = Buffer.alloc(0);
+  const onData = (chunk: Buffer) => {
+    acc = Buffer.from(Buffer.concat([acc, chunk]));
+    for (;;) {
+      try {
+        const parsed = parseResp(acc);
+        acc = Buffer.from(parsed.rest);
+        const arr = parsed.value;
+        if (Array.isArray(arr) && arr[0] === "message" && typeof arr[2] === "string") {
+          handler(arr[2]);
+        }
+      } catch (e) {
+        if (e instanceof RedisError && e.message === "incomplete") return;
+        return;
+      }
+    }
+  };
+  sock.on("data", onData);
+  const stop = () => {
+    sock.off("data", onData);
+    sock.destroy();
+    if (netSub?.socket === sock) netSub = null;
+  };
+  netSub = { socket: sock, stop };
+  return stop;
+}
+
 export function resetRedisForTests(next?: RedisClient): void {
+  netSub?.stop();
+  netSub = null;
   client?.close();
   client = next ?? null;
   connecting = null;

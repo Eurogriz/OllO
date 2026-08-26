@@ -5,9 +5,12 @@ import {
   INCR_EXPIRE_LUA,
   memoryRedis,
   parseResp,
+  publishBus,
+  PUSH_CHANNEL,
   redisEndpoint,
   RedisWindowStore,
   resetRedisForTests,
+  subscribeBus,
   takeWindow,
 } from "./redis.js";
 
@@ -18,6 +21,20 @@ describe("Redis RESP + window", () => {
     assert.equal(parseResp(Buffer.from("$5\r\nhello\r\n")).value, "hello");
     assert.equal(parseResp(Buffer.from("$-1\r\n")).value, null);
     assert.throws(() => parseResp(Buffer.from("-ERR nope\r\n")));
+    const pub = parseResp(Buffer.from("*3\r\n$7\r\nmessage\r\n$9\r\nollo:push\r\n$5\r\nhello\r\n"));
+    assert.deepEqual(pub.value, ["message", "ollo:push", "hello"]);
+  });
+
+  it("publishes to in-memory subscribers", async () => {
+    resetRedisForTests(memoryRedis());
+    const seen: string[] = [];
+    const stop = await subscribeBus(PUSH_CHANNEL, (m) => seen.push(m));
+    assert.equal(await publishBus(PUSH_CHANNEL, "frame-1"), 1);
+    assert.deepEqual(seen, ["frame-1"]);
+    stop();
+    assert.equal(await publishBus(PUSH_CHANNEL, "frame-2"), 0);
+    assert.deepEqual(seen, ["frame-1"]);
+    resetRedisForTests();
   });
 
   it("encodes EVAL so INCR+EXPIRE is one round trip", () => {
