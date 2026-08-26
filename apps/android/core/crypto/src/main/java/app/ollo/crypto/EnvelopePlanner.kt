@@ -114,6 +114,12 @@ object EnvelopePlanner {
         return sessionKeys.filter { it == target }
     }
 
+    /** Refuse acceptSession / beginSession for a locally dropped device. */
+    fun planSessionAccept(userId: String, deviceId: String, droppedDevices: List<String> = emptyList()): String {
+        if (userId.isEmpty() || deviceId.isEmpty()) return "drop"
+        return if ("$userId:$deviceId" in droppedDevices) "drop" else "accept"
+    }
+
     fun planSignedPrekeyRotation(currentId: Int, createdAtMs: Long?, now: Long): SignedPrekeyPlan? {
         if (currentId < 1) return null
         if (createdAtMs == null) return null

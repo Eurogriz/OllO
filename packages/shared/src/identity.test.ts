@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { noteRemoteIdentity, planDeviceDrop, planRosterPrune } from "./identity.js";
+import { noteRemoteIdentity, planDeviceDrop, planRosterPrune, planSessionAccept } from "./identity.js";
 
 describe("remote identity guard", () => {
   it("treats a first-seen key as new and a mismatch as changed", () => {
@@ -16,5 +16,8 @@ describe("remote identity guard", () => {
     assert.deepEqual(planRosterPrune(keys, "", ["d1"]), []);
     assert.deepEqual(planDeviceDrop(keys, "u1", "d2"), ["u1:d2"]);
     assert.deepEqual(planDeviceDrop(keys, "u1", "missing"), []);
+    assert.equal(planSessionAccept({ userId: "u1", deviceId: "d2", droppedDevices: ["u1:d2"] }), "drop");
+    assert.equal(planSessionAccept({ userId: "u1", deviceId: "d1", droppedDevices: ["u1:d2"] }), "accept");
+    assert.equal(planSessionAccept({ userId: "u1", deviceId: "", droppedDevices: [] }), "drop");
   });
 });

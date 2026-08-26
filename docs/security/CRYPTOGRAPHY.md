@@ -200,6 +200,10 @@ Device roster hash (`ollo-roster-v1` over sorted `device_id || IK_x25519`)
 is shown under “devices” so a silent extra device is visible even if it
 was restored with the same identity keys. `planRosterPrune` drops local
 ratchet records for a device id that left that user's live list.
+`planSessionAccept` refuses `acceptSession` / `beginSession` for a
+`userId:deviceId` in `droppedDevices`, so a PreKey whisper from a
+revoked or declined own-other device cannot rebuild the 1:1 ratchet.
+This is not Signal-level security.
 `DELETE /v1/devices/:id` and account delete reject that device's access
 JWT immediately and close its sockets — a stolen phone does not keep a
 15-minute window.

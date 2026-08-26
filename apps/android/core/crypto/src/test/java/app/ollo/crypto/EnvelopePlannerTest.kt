@@ -52,6 +52,9 @@ class EnvelopePlannerTest {
             EnvelopePlanner.planRosterPrune(listOf("u1:d1", "u1:d2", "u10:d1"), "u1", listOf("d1")),
         )
         assertEquals(listOf("u1:d2"), EnvelopePlanner.planDeviceDrop(listOf("u1:d1", "u1:d2"), "u1", "d2"))
+        assertEquals("drop", EnvelopePlanner.planSessionAccept("u1", "d2", listOf("u1:d2")))
+        assertEquals("accept", EnvelopePlanner.planSessionAccept("u1", "d1", listOf("u1:d2")))
+        assertEquals("drop", EnvelopePlanner.planSessionAccept("u1", "", emptyList()))
     }
 
     @Test

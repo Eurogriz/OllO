@@ -27,7 +27,7 @@ Out of scope for this revision: desktop native, federated servers, SGX.
 | OTP intercept (SS7 / SMS) | M | Same | Registration lock PIN, new-device warning, no history pull | SMS is a weak channel; lock is optional |
 | Session token theft | M | Impersonate device | Device-bound refresh, rotation + reuse detection, short access TTL, TLS only | Malware on device |
 | Stolen refresh reuse | M | Session hijack | Reuse → revoke family | Attacker who is first wins the race |
-| Forged device identity | L | Silent extra mailbox | Identity key is client-generated; server stores public only; other devices warn on new IK | User clicks through warning |
+| Forged device identity | L | Silent extra mailbox | Identity key is client-generated; server stores public only; other devices warn on new IK; `planSessionAccept` refuses 1:1 rebuild from `droppedDevices` | User clicks through warning. Stolen **live** device still talks until revoke/decline pins it |
 | Push token swap | L | Wakes on wrong device | Token associated with device id + session | Spurious wakes |
 | Caller ID spoof in signaling | L | Fake incoming call UI | Signaling is E2EE from a known session | Malicious contact |
 

@@ -6,6 +6,7 @@ import {
   onSendFailure,
   planDeviceDrop,
   planKeyFetch,
+  planSessionAccept,
   planPrekeyReplenish,
   planRosterPrune,
   afterUnauthorized,
@@ -730,6 +731,15 @@ export async function sealForExisting(acc: Account, userId: string, deviceId: st
 }
 
 export async function sealWithBundle(acc: Account, bundle: PrekeyBundle, inner: InnerMessage) {
+  if (
+    planSessionAccept({
+      userId: bundle.userId,
+      deviceId: bundle.deviceId,
+      droppedDevices: acc.droppedDevices,
+    }) === "drop"
+  ) {
+    throw new Error("dropped_device");
+  }
   const sk = sessionKey(bundle.userId, bundle.deviceId);
   const fp = b64(bundle.identityKeyX25519);
   if (noteRemoteIdentity(acc.knownIdentities[sk], fp) === "changed") {
@@ -765,6 +775,15 @@ export async function sendToUser(
   );
   const envelopes = [];
   for (const d of devices) {
+    if (
+      planSessionAccept({
+        userId: peerUserId,
+        deviceId: d.device_id,
+        droppedDevices: acc.droppedDevices,
+      }) === "drop"
+    ) {
+      continue;
+    }
     const plan = planKeyFetch({
       localUserId: acc.userId,
       localDeviceId: acc.deviceId,
@@ -835,6 +854,16 @@ export function openEnvelope(
   ciphertextB64: string,
   groupId?: string,
 ): InnerMessage {
+  if (
+    planSessionAccept({
+      userId: senderUserId,
+      deviceId: senderDeviceId,
+      droppedDevices: acc.droppedDevices,
+    }) === "drop"
+  ) {
+    delete acc.sessions[sessionKey(senderUserId, senderDeviceId)];
+    throw new Error("dropped_device");
+  }
   const sealed = decodeSealed(b64u(ciphertextB64));
   if (sealed.alg.startsWith("senderkey") && groupId) {
     const epoch = sealed.header.previousChainLength;

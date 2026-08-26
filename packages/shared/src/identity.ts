@@ -34,3 +34,14 @@ export function planDeviceDrop(sessionKeys: string[], userId: string, deviceId: 
   const target = sessionAddress(userId, deviceId);
   return sessionKeys.filter((k) => k === target);
 }
+
+/** Refuse acceptSession / beginSession for a locally dropped device. */
+export function planSessionAccept(args: {
+  userId: string;
+  deviceId: string;
+  droppedDevices?: string[];
+}): "accept" | "drop" {
+  if (!args.userId || !args.deviceId) return "drop";
+  if (args.droppedDevices?.includes(sessionAddress(args.userId, args.deviceId))) return "drop";
+  return "accept";
+}

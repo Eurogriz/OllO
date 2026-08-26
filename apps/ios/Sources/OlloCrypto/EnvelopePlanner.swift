@@ -132,6 +132,12 @@ public enum EnvelopePlanner {
         return sessionKeys.filter { $0 == target }
     }
 
+    /// Refuse acceptSession / beginSession for a locally dropped device.
+    public static func planSessionAccept(userId: String, deviceId: String, droppedDevices: [String] = []) -> String {
+        if userId.isEmpty || deviceId.isEmpty { return "drop" }
+        return droppedDevices.contains("\(userId):\(deviceId)") ? "drop" : "accept"
+    }
+
     public static func planSignedPrekeyRotation(currentId: Int, createdAtMs: Int64?, now: Int64) -> SignedPrekeyPlan? {
         if currentId < 1 { return nil }
         guard let createdAtMs else { return nil }

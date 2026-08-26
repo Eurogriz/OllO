@@ -72,6 +72,9 @@ final class EnvelopePlannerTests: XCTestCase {
             EnvelopePlanner.planDeviceDrop(sessionKeys: ["u1:d1", "u1:d2"], userId: "u1", deviceId: "d2"),
             ["u1:d2"]
         )
+        XCTAssertEqual(EnvelopePlanner.planSessionAccept(userId: "u1", deviceId: "d2", droppedDevices: ["u1:d2"]), "drop")
+        XCTAssertEqual(EnvelopePlanner.planSessionAccept(userId: "u1", deviceId: "d1", droppedDevices: ["u1:d2"]), "accept")
+        XCTAssertEqual(EnvelopePlanner.planSessionAccept(userId: "u1", deviceId: "", droppedDevices: []), "drop")
     }
 
     func testLaunchSkipsOtpWhenVaultHasSession() {
