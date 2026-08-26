@@ -129,21 +129,21 @@ public final class LibsignalEngine: CryptoEngine, @unchecked Sendable {
         guard let xeddsaB64, let xeddsa = Data(base64Encoded: xeddsaB64) else {
             throw CryptoEngineError.unbound
         }
-        let identityKey = try IdentityKey(bytes: Self.prefixDjb(Self.b64(identityB64)))
-        let preKey: (UInt32, PublicKey)? = {
-            guard let opk = json["one_time_prekey"] as? [String: Any],
-                  let id = opk["id"] as? Int,
-                  let pub = opk["public"] as? String
-            else { return nil }
-            return (UInt32(id), try? PublicKey(Self.prefixDjb(Self.b64(pub))))
-        }()
+        let identityKey = try IdentityKey(bytes: try Self.prefixDjb(try Self.b64(identityB64)))
+        var preKey: (UInt32, PublicKey)?
+        if let opk = json["one_time_prekey"] as? [String: Any] {
+            guard let id = opk["id"] as? Int, let pub = opk["public"] as? String else {
+                throw CryptoEngineError.unbound
+            }
+            preKey = (UInt32(id), try PublicKey(try Self.prefixDjb(try Self.b64(pub))))
+        }
         let bundle = try PreKeyBundle(
             registrationId: UInt32(registration),
             deviceId: 1,
             prekeyId: preKey?.0,
             prekey: preKey?.1,
             signedPrekeyId: UInt32(spkId),
-            signedPrekey: PublicKey(Self.prefixDjb(Self.b64(spkPubB64))),
+            signedPrekey: PublicKey(try Self.prefixDjb(try Self.b64(spkPubB64))),
             signedPrekeySignature: xeddsa,
             identity: identityKey
         )
@@ -224,7 +224,8 @@ public final class LibsignalEngine: CryptoEngine, @unchecked Sendable {
         return Data(serialized.dropFirst())
     }
 
-    public static func prefixDjb(_ raw32: Data) -> Data {
+    public static func prefixDjb(_ raw32: Data) throws -> Data {
+        guard raw32.count == 32 else { throw CryptoEngineError.unbound }
         var out = Data([djbType])
         out.append(raw32)
         return out
@@ -353,8 +354,9 @@ public final class LibsignalEngine: CryptoEngine, @unchecked Sendable {
         }
     }
 
-    private static func b64(_ s: String) -> Data {
-        Data(base64Encoded: s) ?? Data()
+    private static func b64(_ s: String) throws -> Data {
+        guard let d = Data(base64Encoded: s), d.count == 32 else { throw CryptoEngineError.unbound }
+        return d
     }
 
     private struct PublishedKeys {

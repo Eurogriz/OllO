@@ -133,7 +133,15 @@ describe("API integration", () => {
     const found = await json("POST", "/v1/users/search", { username: "bob" }, aliceTok);
     assert.equal(((found.body.users as { username: string }[])[0]).username, "bob");
 
-    const keys = await json("GET", `/v1/keys/${bobUser}`, undefined, aliceTok);
+    const depthAfterPeekList = await json("GET", "/v1/me/prekey-depth", undefined, bobTok);
+    const peekList = await json("GET", `/v1/keys/${bobUser}`, undefined, aliceTok);
+    const peeked = peekList.body.bundles as Array<{ one_time_prekey: unknown }>;
+    assert.ok(peeked.length >= 1);
+    assert.equal(peeked[0]?.one_time_prekey, null);
+    const depthStill = await json("GET", "/v1/me/prekey-depth", undefined, bobTok);
+    assert.equal(depthStill.body.remaining, depthAfterPeekList.body.remaining);
+
+    const keys = await json("GET", `/v1/keys/${bobUser}?consume=1`, undefined, aliceTok);
     const bundles = keys.body.bundles as Array<{
       user_id: string;
       device_id: string;
@@ -144,6 +152,7 @@ describe("API integration", () => {
       one_time_prekey: { id: number; public: string } | null;
     }>;
     assert.ok(bundles.length >= 1);
+    assert.ok(bundles[0]?.one_time_prekey);
 
     const bundle = bundles[0]!;
     const local = { ...aDev.mat, userId: aliceUser, deviceId: alice.body.device_id as string };

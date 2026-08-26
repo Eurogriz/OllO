@@ -141,7 +141,7 @@ export async function registerKeys(app: FastifyInstance, db: Db): Promise<void> 
   app.get("/v1/keys/:userId/:deviceId", async (req) => {
     const auth = requireAuth(req);
     const { userId, deviceId } = req.params as { userId: string; deviceId: string };
-    const consume = String((req.query as { consume?: string }).consume ?? "1") !== "0";
+    const consume = wantsConsume(req.query, true);
     if (consume) await takeOpkSlot(auth.userId, userId);
     const bundle = await takeBundle(db, userId, deviceId, consume);
     if (!bundle) throw new ApiError("not_found", "Device not found", 404);
@@ -151,7 +151,7 @@ export async function registerKeys(app: FastifyInstance, db: Db): Promise<void> 
   app.get("/v1/keys/:userId", async (req) => {
     const auth = requireAuth(req);
     const userId = (req.params as { userId: string }).userId;
-    const consume = String((req.query as { consume?: string }).consume ?? "1") !== "0";
+    const consume = wantsConsume(req.query, false);
     if (consume) await takeOpkSlot(auth.userId, userId);
     const devices = await listDeviceRows(db, userId);
     const bundles = [];
@@ -214,6 +214,12 @@ export async function registerKeys(app: FastifyInstance, db: Db): Promise<void> 
     }
     return { ok: true, count: body.keys.length };
   });
+}
+
+function wantsConsume(query: unknown, defaultConsume: boolean): boolean {
+  const raw = (query as { consume?: string } | undefined)?.consume;
+  if (raw === undefined) return defaultConsume;
+  return String(raw) !== "0";
 }
 
 async function takeOpkSlot(requesterUserId: string, targetUserId: string): Promise<void> {

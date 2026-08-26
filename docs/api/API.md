@@ -162,9 +162,9 @@ Set / change / remove Argon2id lock.
 
 - `GET /v1/devices`
 - `DELETE /v1/devices/{id}`
-- `GET /v1/keys/{user_id}` — prekey bundles (`?consume=0` does not take one-time prekeys)
+- `GET /v1/keys/{user_id}` — peek every device bundle. Does **not** consume OPKs unless `?consume=1` (one OPK per device)
 - `GET /v1/keys/{user_id}/devices` — device list without consuming prekeys
-- `GET /v1/keys/{user_id}/{device_id}` — consume one bundle for that device
+- `GET /v1/keys/{user_id}/{device_id}` — one bundle; default `consume=1`. `?consume=0` peeks without taking an OPK
 - `PUT /v1/keys/signed-prekey`
 - `POST /v1/keys/one-time` — replenish
 - `GET /v1/me/prekey-depth`
@@ -233,9 +233,9 @@ ignore server-only extra members (`planTrustedMembers`).
 
 ## Attachments
 
-- `POST /v1/attachments` → `{ upload_url, object_id, headers }`
-- `POST /v1/attachments/{id}/complete` — `{ digest, size }`
-- `GET /v1/attachments/{id}` → short-lived `{ download_url }`
+- `POST /v1/attachments` → `{ upload_path, object_id, headers }` (`upload_path` is `/v1/attachments/{id}/data`)
+- `POST /v1/attachments/{id}/complete` — `{ digest, size }` (must match the SHA-256 and size recorded on PUT)
+- `GET /v1/attachments/{id}` → `{ download_path }` after `complete`. Authorization: Bearer plus `X-Attachment-Grant` (query `grant=` is accepted only as a fallback)
 
 Authorization for download: the requester must be the uploader or present
 a `grant` issued inside a delivered envelope (HMAC of object_id with a
