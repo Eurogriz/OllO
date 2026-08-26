@@ -16,6 +16,8 @@ import {
   emptyReplayCache,
   type ReplayCache,
   retainUnexpired,
+  planMembershipApply,
+  planTrustedMembers,
 } from "@ollo/shared";
 import {
   type LocalDevice,
@@ -23,6 +25,9 @@ import {
   type SenderKeyState,
   type SessionState,
   deviceRosterHash,
+  membershipHash,
+  signMembership,
+  verifyMembership,
   acceptSenderKey,
   acceptSession,
   beginSession,
@@ -134,6 +139,16 @@ export interface Account {
   ownRosterHash?: string;
   signedPrekeyAt?: number;
   replay: ReplayCache;
+  memberships: Record<string, LocalGroupMembership>;
+}
+
+export interface LocalGroupMembership {
+  groupId: string;
+  epoch: number;
+  hash: string;
+  members: { userId: string; role: string }[];
+  signerUserId: string;
+  signerDeviceId: string;
 }
 
 export function sessionKey(userId: string, deviceId: string): string {
@@ -165,6 +180,109 @@ export function dropDeviceSessions(acc: Account, userId: string, deviceId: strin
 export function noteEnvelope(acc: Account, envelopeId: string): "accept" | "drop" {
   if (!acc.replay) acc.replay = emptyReplayCache();
   return rememberEnvelope(acc.replay, envelopeId);
+}
+
+function wireMembership(
+  signed: { epoch: number; members: { userId: string; role: string }[]; signature: Uint8Array },
+  signerUserId: string,
+  signerDeviceId: string,
+) {
+  return {
+    epoch: signed.epoch,
+    members: signed.members.map((m) => ({ user_id: m.userId, role: m.role })),
+    signer_user_id: signerUserId,
+    signer_device_id: signerDeviceId,
+    signature: b64(signed.signature),
+  };
+}
+
+export function rememberMembership(
+  acc: Account,
+  next: LocalGroupMembership,
+): "accept" | "unchanged" | "stale" | "drop" {
+  if (!acc.memberships) acc.memberships = {};
+  const local = acc.memberships[next.groupId];
+  const signerRole = next.members.find((m) => m.userId === next.signerUserId)?.role ?? "";
+  const decision = planMembershipApply({
+    local: local ? { epoch: local.epoch, hash: local.hash } : undefined,
+    incomingEpoch: next.epoch,
+    incomingHash: next.hash,
+    signatureValid: true,
+    signerRole,
+  });
+  if (decision === "accept") acc.memberships[next.groupId] = next;
+  return decision;
+}
+
+export async function createSignedGroup(
+  acc: Account,
+  memberIds: string[],
+): Promise<{ id: string; epoch: number; memberIds: string[] }> {
+  const id = crypto.randomUUID();
+  const unique = [...new Set([acc.userId, ...memberIds])];
+  const members = unique.map((userId) => ({
+    userId,
+    role: (userId === acc.userId ? "admin" : "member") as "admin" | "member",
+  }));
+  const signed = signMembership({ groupId: id, epoch: 1, members }, acc.device.identity);
+  await api(
+    "/v1/groups",
+    acc.access,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        id,
+        member_ids: memberIds,
+        membership: wireMembership(signed, acc.userId, acc.deviceId),
+      }),
+    },
+    acc,
+  );
+  rememberMembership(acc, {
+    groupId: id,
+    epoch: 1,
+    hash: signed.hash,
+    members: signed.members,
+    signerUserId: acc.userId,
+    signerDeviceId: acc.deviceId,
+  });
+  return { id, epoch: 1, memberIds: unique };
+}
+
+async function trustedGroupMembers(acc: Account, groupId: string, serverRows: { user_id: string }[], membership: {
+  epoch: number;
+  members: { user_id: string; role: string }[];
+  signer_user_id: string;
+  signer_device_id: string;
+  signature: string;
+} | null): Promise<string[]> {
+  if (!membership) throw new Error("unsigned_membership");
+  const members = membership.members.map((m) => ({ userId: m.user_id, role: m.role }));
+  const ed = await resolveSenderEd25519(acc, membership.signer_user_id, membership.signer_device_id);
+  const valid = verifyMembership({
+    groupId,
+    epoch: membership.epoch,
+    members,
+    signerEd25519: ed,
+    signature: b64u(membership.signature),
+  });
+  if (!valid) throw new Error("unsigned_membership");
+  const hash = membershipHash(groupId, membership.epoch, members);
+  const decision = rememberMembership(acc, {
+    groupId,
+    epoch: membership.epoch,
+    hash,
+    members,
+    signerUserId: membership.signer_user_id,
+    signerDeviceId: membership.signer_device_id,
+  });
+  if (decision === "drop" || decision === "stale") throw new Error("unsigned_membership");
+  const plan = planTrustedMembers(
+    members.map((m) => m.userId),
+    serverRows.map((m) => m.user_id),
+  );
+  if (plan.extra.length) throw new Error("unsigned_member");
+  return plan.trusted;
 }
 
 export function vaultPinEnabled(): boolean {
@@ -285,6 +403,7 @@ function accountFromStored(j: Stored): Account {
     ownRosterHash: j.ownRosterHash,
     signedPrekeyAt: j.signedPrekeyAt,
     replay: j.replay?.ids ? { ids: [...j.replay.ids] } : emptyReplayCache(),
+    memberships: j.memberships ?? {},
   };
 }
 
@@ -324,6 +443,7 @@ export function saveAccount(acc: Account): void {
     ownRosterHash: acc.ownRosterHash,
     signedPrekeyAt: acc.signedPrekeyAt,
     replay: acc.replay ?? emptyReplayCache(),
+    memberships: acc.memberships ?? {},
   };
   const sealed = sealVault(ensureVaultKey(), utf8(JSON.stringify(stored)));
   localStorage.setItem(VAULT_STORE, encodeVault(sealed));
@@ -580,6 +700,9 @@ export async function resolveSenderEd25519(
   senderUserId: string,
   senderDeviceId: string,
 ): Promise<Uint8Array> {
+  if (senderUserId === acc.userId && senderDeviceId === acc.deviceId) {
+    return acc.device.identity.ed25519Public;
+  }
   const sk = sessionKey(senderUserId, senderDeviceId);
   const session = acc.sessions[sk];
   if (session && !bytesZero(session.remoteIdentityEd25519)) {
@@ -673,7 +796,18 @@ export async function sendToGroup(
 ): Promise<void> {
   const g = await api(`/v1/groups/${groupId}`, acc.access, {}, acc);
   const epoch = Number(g.group.epoch ?? 1);
-  const members = (g.group.members as { user_id: string }[]).map((m) => m.user_id);
+  const members = await trustedGroupMembers(
+    acc,
+    groupId,
+    (g.group.members ?? []) as { user_id: string }[],
+    (g.group.membership ?? null) as {
+      epoch: number;
+      members: { user_id: string; role: string }[];
+      signer_user_id: string;
+      signer_device_id: string;
+      signature: string;
+    } | null,
+  );
   const keyId = `${groupId}:${epoch}`;
   const existed = Boolean(acc.senderKeys?.[keyId]);
   if (!existed) {
@@ -868,6 +1002,7 @@ export function backupPlaintext(acc: Account): Uint8Array {
       Object.entries(acc.remoteSenderKeys ?? {}).map(([k, v]) => [k, serializeRemoteSenderKey(v)]),
     ),
     replay: emptyReplayCache(),
+    memberships: acc.memberships ?? {},
   };
   return utf8(JSON.stringify(stored));
 }
@@ -900,6 +1035,7 @@ export function mergeBackupHistory(acc: Account, raw: string, passphrase: string
   acc.contacts = stored.contacts.length ? stored.contacts : acc.contacts;
   acc.knownIdentities = { ...stored.knownIdentities, ...acc.knownIdentities };
   acc.pinned = { ...stored.pinned, ...acc.pinned };
+  acc.memberships = { ...(stored.memberships ?? {}), ...acc.memberships };
 }
 
 export function searchLocal(acc: Account, q: string): ChatMessage[] {
@@ -974,4 +1110,5 @@ interface Stored {
   ownRosterHash?: string;
   signedPrekeyAt?: number;
   replay?: ReplayCache;
+  memberships?: Record<string, LocalGroupMembership>;
 }

@@ -3,8 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { createLocalDevice } from "@ollo/crypto";
-import { beginSession, encryptFirstMessage } from "@ollo/crypto";
+import { beginSession, createLocalDevice, encryptFirstMessage, signMembership } from "@ollo/crypto";
 import { encodeSealed, paddingBucket } from "@ollo/protocol";
 
 process.env.OLLO_ENV = "development";
@@ -207,8 +206,14 @@ describe("API integration", () => {
   });
 
   it("fans out one group ciphertext the server cannot read", async () => {
-    const { createSenderKey, distributeSenderKey, encryptGroupMessage, decryptGroupMessage, acceptSenderKey } =
-      await import("@ollo/crypto");
+    const {
+      createSenderKey,
+      distributeSenderKey,
+      encryptGroupMessage,
+      decryptGroupMessage,
+      acceptSenderKey,
+      signMembership,
+    } = await import("@ollo/crypto");
     const { encodeSealed, decodeSealed, paddingBucket } = await import("@ollo/protocol");
 
     const aDev = devicePayload("alice-g");
@@ -236,10 +241,38 @@ describe("API integration", () => {
     const bob = await signup("+79990000012", "bobg", bDev);
     const carol = await signup("+79990000013", "carolg", cDev);
 
-    const created = await json("POST", "/v1/groups", { member_ids: [bob.userId, carol.userId] }, alice.tok);
+    const unsigned = await json("POST", "/v1/groups", { member_ids: [bob.userId, carol.userId] }, alice.tok);
+    assert.equal(unsigned.status, 400);
+
+    const groupId = crypto.randomUUID();
+    const signedMembers = [
+      { userId: alice.userId, role: "admin" as const },
+      { userId: bob.userId, role: "member" as const },
+      { userId: carol.userId, role: "member" as const },
+    ];
+    const signed = signMembership({ groupId, epoch: 1, members: signedMembers }, aDev.mat.identity);
+    const created = await json(
+      "POST",
+      "/v1/groups",
+      {
+        id: groupId,
+        member_ids: [bob.userId, carol.userId],
+        membership: {
+          epoch: 1,
+          members: signed.members.map((m) => ({ user_id: m.userId, role: m.role })),
+          signer_user_id: alice.userId,
+          signer_device_id: alice.deviceId,
+          signature: Buffer.from(signed.signature).toString("base64"),
+        },
+      },
+      alice.tok,
+    );
     assert.equal(created.status, 200, JSON.stringify(created.body));
-    const groupId = (created.body.group as { id: string; epoch: number }).id;
+    assert.equal((created.body.group as { id: string }).id, groupId);
     const epoch = (created.body.group as { epoch: number }).epoch;
+    const peeked = await json("GET", `/v1/groups/${groupId}`, undefined, alice.tok);
+    assert.equal(peeked.status, 200, JSON.stringify(peeked.body));
+    assert.equal(((peeked.body.group as { membership: { epoch: number } }).membership).epoch, 1);
 
     const sk = createSenderKey(groupId, epoch);
     const dist = distributeSenderKey(sk, aDev.mat.identity);
@@ -310,6 +343,14 @@ describe("API integration", () => {
       eve.body.access_token as string,
     );
     assert.equal(forbidden.status, 403);
+
+    const injected = await json(
+      "POST",
+      `/v1/groups/${groupId}/members`,
+      { user_id: (eve.body.user as { id: string }).id },
+      alice.tok,
+    );
+    assert.equal(injected.status, 400);
   });
 
   it("issues call rooms without SDP and rejects blocked callees", async () => {

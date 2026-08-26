@@ -1,10 +1,30 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { verifyMembership } from "@ollo/crypto";
+import { sameMembership } from "@ollo/shared";
 import type { Db } from "../db/index.js";
 import { ApiError, requireAuth } from "../http.js";
 import { pushToDevice } from "../realtime/hub.js";
 import { randomToken, randomUuid, sha256Hex } from "../security/crypto-utils.js";
 import { maybeWake } from "./notifications.js";
+
+const membershipBody = z.object({
+  epoch: z.number().int().positive(),
+  members: z
+    .array(
+      z.object({
+        user_id: z.string().uuid(),
+        role: z.enum(["admin", "moderator", "member"]),
+      }),
+    )
+    .min(1)
+    .max(256),
+  signer_user_id: z.string().uuid(),
+  signer_device_id: z.string().uuid(),
+  signature: z.string().min(1),
+});
+
+type MembershipBody = z.infer<typeof membershipBody>;
 
 async function requireMember(db: Db, groupId: string, userId: string) {
   const r = await db.query<{ role: string }>(
@@ -15,19 +35,120 @@ async function requireMember(db: Db, groupId: string, userId: string) {
   return r.rows[0];
 }
 
+async function liveMembers(db: Db, groupId: string) {
+  const r = await db.query<{ user_id: string; role: string }>(
+    "SELECT user_id, role FROM group_members WHERE group_id = $1 AND removed_at IS NULL",
+    [groupId],
+  );
+  return r.rows.map((m) => ({ userId: m.user_id, role: m.role }));
+}
+
+async function loadSignerEd25519(db: Db, userId: string, deviceId: string): Promise<Uint8Array> {
+  const r = await db.query<{ identity_ed25519: Uint8Array }>(
+    "SELECT identity_ed25519 FROM devices WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL",
+    [deviceId, userId],
+  );
+  if (!r.rows[0]) throw new ApiError("forbidden", "Unknown signer device", 403);
+  return new Uint8Array(r.rows[0].identity_ed25519);
+}
+
+function rowsFromBody(body: MembershipBody) {
+  return body.members.map((m) => ({ userId: m.user_id, role: m.role }));
+}
+
+async function requireSignedMembership(
+  db: Db,
+  auth: { userId: string; deviceId: string },
+  groupId: string,
+  raw: unknown,
+  expected: { userId: string; role: string }[],
+  epoch: number,
+): Promise<MembershipBody> {
+  const parsed = membershipBody.safeParse(raw);
+  if (!parsed.success) throw new ApiError("validation", "Signed membership required", 400);
+  const body = parsed.data;
+  if (body.epoch !== epoch) throw new ApiError("validation", "Membership epoch mismatch", 400);
+  if (body.signer_user_id !== auth.userId) throw new ApiError("forbidden", "Signer must be the caller", 403);
+  if (body.signer_device_id !== auth.deviceId) {
+    throw new ApiError("forbidden", "Signer device must be this session", 403);
+  }
+  const rows = rowsFromBody(body);
+  if (!sameMembership(rows, expected)) {
+    throw new ApiError("validation", "Membership roster mismatch", 400);
+  }
+  const signerRole = rows.find((m) => m.userId === body.signer_user_id)?.role;
+  if (signerRole !== "admin") throw new ApiError("forbidden", "Signer is not an admin", 403);
+  const pub = await loadSignerEd25519(db, body.signer_user_id, body.signer_device_id);
+  const ok = verifyMembership({
+    groupId,
+    epoch: body.epoch,
+    members: rows,
+    signerEd25519: pub,
+    signature: Buffer.from(body.signature, "base64"),
+  });
+  if (!ok) throw new ApiError("forbidden", "Membership signature invalid", 403);
+  return body;
+}
+
+async function persistMembership(db: Db, groupId: string, epoch: number, body: MembershipBody) {
+  await db.query(
+    `UPDATE groups SET epoch = $2, membership_epoch = $2, membership_json = $3,
+     membership_sig = $4, membership_signer_user_id = $5, membership_signer_device_id = $6
+     WHERE id = $1`,
+    [
+      groupId,
+      epoch,
+      JSON.stringify(body.members),
+      Buffer.from(body.signature, "base64"),
+      body.signer_user_id,
+      body.signer_device_id,
+    ],
+  );
+}
+
+function wireMembership(row: {
+  membership_epoch: number | null;
+  membership_json: string | null;
+  membership_sig: Uint8Array | null;
+  membership_signer_user_id: string | null;
+  membership_signer_device_id: string | null;
+}) {
+  if (!row.membership_json || !row.membership_sig || row.membership_epoch == null) return null;
+  return {
+    epoch: row.membership_epoch,
+    members: JSON.parse(row.membership_json) as Array<{ user_id: string; role: string }>,
+    signer_user_id: row.membership_signer_user_id,
+    signer_device_id: row.membership_signer_device_id,
+    signature: Buffer.from(row.membership_sig).toString("base64"),
+  };
+}
+
 export async function registerGroups(app: FastifyInstance, db: Db): Promise<void> {
   app.post("/v1/groups", async (req) => {
     const auth = requireAuth(req);
-    const body = z.object({ member_ids: z.array(z.string().uuid()).max(256) }).parse(req.body ?? {});
-    const id = randomUuid();
+    const body = z
+      .object({
+        id: z.string().uuid().optional(),
+        member_ids: z.array(z.string().uuid()).max(256),
+        membership: membershipBody,
+      })
+      .parse(req.body ?? {});
+    const id = body.id ?? randomUuid();
+    const unique = [...new Set([auth.userId, ...body.member_ids])];
+    const expected = unique.map((uid) => ({
+      userId: uid,
+      role: uid === auth.userId ? "admin" : "member",
+    }));
+    await requireSignedMembership(db, auth, id, body.membership, expected, 1);
     await db.query("INSERT INTO groups (id, creator_id, epoch) VALUES ($1,$2,1)", [id, auth.userId]);
-    const members = new Set([auth.userId, ...body.member_ids]);
-    for (const uid of members) {
-      await db.query(
-        `INSERT INTO group_members (group_id, user_id, role) VALUES ($1,$2,$3)`,
-        [id, uid, uid === auth.userId ? "admin" : "member"],
-      );
+    for (const uid of unique) {
+      await db.query(`INSERT INTO group_members (group_id, user_id, role) VALUES ($1,$2,$3)`, [
+        id,
+        uid,
+        uid === auth.userId ? "admin" : "member",
+      ]);
     }
+    await persistMembership(db, id, 1, body.membership);
     return { group: { id, epoch: 1, role: "admin" } };
   });
 
@@ -46,15 +167,36 @@ export async function registerGroups(app: FastifyInstance, db: Db): Promise<void
     const auth = requireAuth(req);
     const id = (req.params as { id: string }).id;
     await requireMember(db, id, auth.userId);
-    const g = await db.query<{ id: string; epoch: number; creator_id: string }>(
-      "SELECT id, epoch, creator_id FROM groups WHERE id = $1",
+    const g = await db.query<{
+      id: string;
+      epoch: number;
+      creator_id: string;
+      membership_epoch: number | null;
+      membership_json: string | null;
+      membership_sig: Uint8Array | null;
+      membership_signer_user_id: string | null;
+      membership_signer_device_id: string | null;
+    }>(
+      `SELECT id, epoch, creator_id, membership_epoch, membership_json, membership_sig,
+              membership_signer_user_id, membership_signer_device_id
+       FROM groups WHERE id = $1`,
       [id],
     );
     const members = await db.query<{ user_id: string; role: string }>(
       "SELECT user_id, role FROM group_members WHERE group_id = $1 AND removed_at IS NULL",
       [id],
     );
-    return { group: { ...g.rows[0], members: members.rows } };
+    const row = g.rows[0];
+    if (!row) throw new ApiError("not_found", "Group not found", 404);
+    return {
+      group: {
+        id: row.id,
+        epoch: row.epoch,
+        creator_id: row.creator_id,
+        members: members.rows,
+        membership: wireMembership(row),
+      },
+    };
   });
 
   app.post("/v1/groups/:id/members", async (req) => {
@@ -64,16 +206,27 @@ export async function registerGroups(app: FastifyInstance, db: Db): Promise<void
     if (me.role !== "admin" && me.role !== "moderator") {
       throw new ApiError("forbidden", "Insufficient role", 403);
     }
-    const body = z.object({ user_id: z.string().uuid(), role: z.enum(["member", "moderator"]).optional() }).parse(
-      req.body,
-    );
+    const body = z
+      .object({
+        user_id: z.string().uuid(),
+        role: z.enum(["member", "moderator"]).optional(),
+        membership: membershipBody,
+      })
+      .parse(req.body);
+    const g = await db.query<{ epoch: number }>("SELECT epoch FROM groups WHERE id = $1", [id]);
+    const nextEpoch = (g.rows[0]?.epoch ?? 0) + 1;
+    const current = await liveMembers(db, id);
+    const expected = current.some((m) => m.userId === body.user_id)
+      ? current.map((m) => (m.userId === body.user_id ? { userId: m.userId, role: body.role ?? m.role } : m))
+      : [...current, { userId: body.user_id, role: body.role ?? "member" }];
+    await requireSignedMembership(db, auth, id, body.membership, expected, nextEpoch);
     await db.query(
       `INSERT INTO group_members (group_id, user_id, role) VALUES ($1,$2,$3)
        ON CONFLICT (group_id, user_id) DO UPDATE SET removed_at = NULL, role = EXCLUDED.role`,
       [id, body.user_id, body.role ?? "member"],
     );
-    const epoch = await bumpEpoch(db, id);
-    return { ok: true, epoch };
+    await persistMembership(db, id, nextEpoch, body.membership);
+    return { ok: true, epoch: nextEpoch };
   });
 
   app.delete("/v1/groups/:id/members/:userId", async (req) => {
@@ -83,20 +236,30 @@ export async function registerGroups(app: FastifyInstance, db: Db): Promise<void
     if (userId !== auth.userId && me.role !== "admin") {
       throw new ApiError("forbidden", "Insufficient role", 403);
     }
-    await db.query(
-      "UPDATE group_members SET removed_at = now() WHERE group_id = $1 AND user_id = $2",
-      [id, userId],
-    );
-    const epoch = await bumpEpoch(db, id);
-    return { ok: true, epoch };
+    const body = z.object({ membership: membershipBody }).parse(req.body ?? {});
+    const g = await db.query<{ epoch: number }>("SELECT epoch FROM groups WHERE id = $1", [id]);
+    const nextEpoch = (g.rows[0]?.epoch ?? 0) + 1;
+    const expected = (await liveMembers(db, id)).filter((m) => m.userId !== userId);
+    await requireSignedMembership(db, auth, id, body.membership, expected, nextEpoch);
+    await db.query("UPDATE group_members SET removed_at = now() WHERE group_id = $1 AND user_id = $2", [
+      id,
+      userId,
+    ]);
+    await persistMembership(db, id, nextEpoch, body.membership);
+    return { ok: true, epoch: nextEpoch };
   });
 
   app.post("/v1/groups/:id/epoch", async (req) => {
     const auth = requireAuth(req);
     const id = (req.params as { id: string }).id;
     await requireMember(db, id, auth.userId);
-    const epoch = await bumpEpoch(db, id);
-    return { epoch };
+    const body = z.object({ membership: membershipBody }).parse(req.body ?? {});
+    const g = await db.query<{ epoch: number }>("SELECT epoch FROM groups WHERE id = $1", [id]);
+    const nextEpoch = (g.rows[0]?.epoch ?? 0) + 1;
+    const expected = await liveMembers(db, id);
+    await requireSignedMembership(db, auth, id, body.membership, expected, nextEpoch);
+    await persistMembership(db, id, nextEpoch, body.membership);
+    return { epoch: nextEpoch };
   });
 
   app.post("/v1/groups/:id/invites", async (req) => {
@@ -106,10 +269,12 @@ export async function registerGroups(app: FastifyInstance, db: Db): Promise<void
     if (me.role !== "admin") throw new ApiError("forbidden", "Insufficient role", 403);
     const token = randomToken(18);
     const exp = new Date(Date.now() + 7 * 86400_000);
-    await db.query(
-      `INSERT INTO group_invites (token_hash, group_id, created_by, expires_at) VALUES ($1,$2,$3,$4)`,
-      [sha256Hex(token), id, auth.userId, exp.toISOString()],
-    );
+    await db.query(`INSERT INTO group_invites (token_hash, group_id, created_by, expires_at) VALUES ($1,$2,$3,$4)`, [
+      sha256Hex(token),
+      id,
+      auth.userId,
+      exp.toISOString(),
+    ]);
     return { token, expires_at: exp.toISOString() };
   });
 
@@ -209,9 +374,8 @@ export async function registerGroups(app: FastifyInstance, db: Db): Promise<void
 }
 
 async function bumpEpoch(db: Db, groupId: string): Promise<number> {
-  const r = await db.query<{ epoch: number }>(
-    "UPDATE groups SET epoch = epoch + 1 WHERE id = $1 RETURNING epoch",
-    [groupId],
-  );
+  const r = await db.query<{ epoch: number }>("UPDATE groups SET epoch = epoch + 1 WHERE id = $1 RETURNING epoch", [
+    groupId,
+  ]);
   return r.rows[0]?.epoch ?? 0;
 }

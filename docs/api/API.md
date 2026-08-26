@@ -150,14 +150,14 @@ never wake the OS.
 
 ## Groups
 
-- `POST /v1/groups`
-- `GET /v1/groups/{id}`
-- `POST /v1/groups/{id}/members`
-- `DELETE /v1/groups/{id}/members/{user_id}`
-- `POST /v1/groups/{id}/epoch` — bump after membership crypto rotation
+- `POST /v1/groups` — `{ id?, member_ids, membership }` (`membership` is required)
+- `GET /v1/groups/{id}` — includes server rows **and** the last signed `membership`
+- `POST /v1/groups/{id}/members` — `{ user_id, role?, membership }`
+- `DELETE /v1/groups/{id}/members/{user_id}` — body `{ membership }`
+- `POST /v1/groups/{id}/epoch` — `{ membership }` after sender-key rotation
 - `POST /v1/groups/{id}/fanout` — copy one opaque ciphertext to every other member device
 - `POST /v1/groups/{id}/invites`
-- `POST /v1/groups/join/{token}`
+- `POST /v1/groups/join/{token}` — server row only; not trusted until an admin re-signs
 
 Fan-out body (server never parses the inner payload):
 
@@ -171,8 +171,11 @@ Fan-out body (server never parses the inner payload):
 ```
 
 The same ciphertext is stored once per recipient device (except the sender device).
-Membership is required. A membership change increments `epoch`; clients must
-redistribute Sender Keys over 1:1 sessions before the next group send.
+A membership change increments `epoch`; clients must redistribute Sender Keys
+over 1:1 sessions before the next group send. Mutations except invite-join
+require `membership`: `{ epoch, members[{user_id,role}], signer_user_id,
+signer_device_id, signature }` — Ed25519 over `ollo-membership-v1`. Clients
+ignore server-only extra members (`planTrustedMembers`).
 
 ## Attachments
 

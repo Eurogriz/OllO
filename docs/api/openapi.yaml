@@ -72,8 +72,10 @@ paths:
   /groups:
     post:
       security: [{ bearerAuth: [] }]
+      summary: Create a group with a signed membership roster
       responses:
         "200": { description: Created }
+        "400": { description: Missing or mismatched membership }
     get:
       security: [{ bearerAuth: [] }]
       responses:

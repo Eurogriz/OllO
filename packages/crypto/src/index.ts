@@ -7,6 +7,7 @@ export * from "./engine.js";
 export * from "./kdf.js";
 export * from "./pin.js";
 export * from "./keys.js";
+export * from "./membership.js";
 export * from "./ratchet.js";
 export * from "./safety.js";
 export * from "./sender-keys.js";

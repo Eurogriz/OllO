@@ -207,7 +207,8 @@ Without a PIN, web localStorage is not a seizure-resistant store.
 - Sender key distribution is regular sealed envelopes
 - Removing a member increments epoch; clients ratchet sender keys
 - Server cannot add a silent member without clients noticing (membership
-  changes are signed by an admin identity and gossiped)
+  changes are signed by an admin identity, stored on GET, applied with
+  `planMembershipApply`)
 
 ### 7.6 Attachments
 

@@ -34,6 +34,20 @@ final class SessionVaultTests: XCTestCase {
         XCTAssertEqual(plan?.startId, 11)
     }
 
+    func testRefusesAnUnsignedExtraGroupMember() throws {
+        let members = [
+            Membership.Member(userId: "b", role: "member"),
+            Membership.Member(userId: "a", role: "admin"),
+        ]
+        let h1 = try Membership.hash(groupId: "g1", epoch: 1, members: members)
+        let h2 = try Membership.hash(groupId: "g1", epoch: 1, members: members.reversed())
+        XCTAssertEqual(h1, h2)
+        XCTAssertEqual(Membership.planApply(local: nil, incomingEpoch: 1, incomingHash: h1, signatureValid: false, signerRole: "admin"), .drop)
+        let plan = Membership.trustedMembers(signedUserIds: ["a", "b"], serverUserIds: ["a", "b", "eve"])
+        XCTAssertEqual(Set(plan.trusted), Set(["a", "b"]))
+        XCTAssertEqual(plan.extra, ["eve"])
+    }
+
     func testDropsAReplayedEnvelopeAndClearsOnWipe() throws {
         let store = IdentityStore()
         let proto = ProtocolStore(store: store, wrapKey: wrap)

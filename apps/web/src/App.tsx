@@ -9,6 +9,7 @@ import {
   clearAccount,
   computeSafety,
   createBackupFile,
+  createSignedGroup,
   distributeOwnSenderKey,
   downloadAndDecrypt,
   encryptFile,
@@ -81,6 +82,7 @@ export function App() {
     if (!next.senderKeys) next.senderKeys = {};
     if (!next.remoteSenderKeys) next.remoteSenderKeys = {};
     if (!next.replay) next.replay = { ids: [] };
+    if (!next.memberships) next.memberships = {};
     saveAccount(next);
     setAcc({ ...next, sessions: next.sessions, messages: { ...next.messages }, threads: [...next.threads] });
   }, []);
@@ -234,6 +236,7 @@ function Auth({
         remoteSenderKeys: {},
         signedPrekeyAt: Date.now(),
         replay: { ids: [] },
+        memberships: {},
       };
       if (restoreRaw) {
         try {
@@ -1023,24 +1026,19 @@ function Shell({
   }
 
   async function createGroup(name: string, ids: string[]) {
-    const res = await api("/v1/groups", acc.access, {
-      method: "POST",
-      body: JSON.stringify({ member_ids: ids }),
-    });
-    const id = res.group.id as string;
-    const epoch = Number(res.group.epoch ?? 1);
+    const created = await createSignedGroup(acc, ids);
     acc.threads.unshift({
-      id,
+      id: created.id,
       kind: "group",
       title: name || "Group",
-      groupId: id,
+      groupId: created.id,
       last: "",
       unread: 0,
       disappearingSeconds: 0,
     });
-    await distributeOwnSenderKey(acc, id, epoch, [acc.userId, ...ids]);
+    await distributeOwnSenderKey(acc, created.id, created.epoch, created.memberIds);
     persist(acc);
-    setActive(id);
+    setActive(created.id);
     setModal(null);
   }
 

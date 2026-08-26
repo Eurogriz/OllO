@@ -43,6 +43,24 @@ class SessionVaultTest {
     }
 
     @Test
+    fun refusesAnUnsignedExtraGroupMember() {
+        val members = listOf(
+            Membership.Member("b", "member"),
+            Membership.Member("a", "admin"),
+        )
+        val h1 = Membership.hash("g1", 1, members)
+        val h2 = Membership.hash("g1", 1, members.reversed())
+        assertEquals(h1, h2)
+        assertEquals(
+            Membership.Decision.Drop,
+            Membership.planApply(null, 1, h1, false, "admin"),
+        )
+        val (trusted, extra, _) = Membership.trustedMembers(listOf("a", "b"), listOf("a", "b", "eve"))
+        assertEquals(listOf("a", "b"), trusted)
+        assertEquals(listOf("eve"), extra)
+    }
+
+    @Test
     fun dropsAReplayedEnvelopeAndClearsOnWipe() {
         val store = IdentityStore()
         val proto = ProtocolStore(store, wrap)
