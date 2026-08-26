@@ -7,6 +7,7 @@ import {
   planMembershipSignerNotice,
   planDroppedDevices,
   planHeldSenderKeyFlush,
+  planOwnOtherHoldDevices,
   planRejectedHashes,
   planSenderKeyIngest,
   planSenderKeyPrune,
@@ -290,5 +291,38 @@ describe("membership apply planner", () => {
     assert.equal(bounded.length, 64);
     assert.equal(bounded[63], "u:new");
     assert.equal(bounded.includes("u:d0"), false);
+    assert.deepEqual(
+      planOwnOtherHoldDevices({
+        localUserId: "a",
+        localDeviceId: "d1",
+        pending: [
+          { signerUserId: "a", signerDeviceId: "stolen" },
+          { signerUserId: "a", signerDeviceId: "d1" },
+          { signerUserId: "b", signerDeviceId: "d9" },
+        ],
+      }),
+      ["a:stolen"],
+    );
+    assert.equal(
+      planSenderKeyIngest({
+        trustedUserIds: ["a"],
+        pendingUserIds: [],
+        senderUserId: "a",
+        senderDeviceId: "stolen",
+        holdDevices: ["a:stolen"],
+      }),
+      "hold",
+    );
+    assert.equal(
+      planSenderKeyIngest({
+        trustedUserIds: ["a"],
+        pendingUserIds: [],
+        senderUserId: "a",
+        senderDeviceId: "stolen",
+        holdDevices: ["a:stolen"],
+        droppedDevices: ["a:stolen"],
+      }),
+      "drop",
+    );
   });
 });

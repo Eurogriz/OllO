@@ -153,9 +153,14 @@ ingest. Revoke, a device leaving the live roster, or decline of an
 own-other-device roster prunes that device's remote/held sender-key
 slots and records `droppedDevices` so the same `userId:deviceId` is
 never re-installed. Member **remove** prunes that user's slots but does
-not pin `droppedDevices` (a later re-add may ingest). A stolen **live**
-admin can still distribute **its own** sender keys until that device is
-revoked. This is not Signal-level security. `planTrustedMembers` still refuses a server-only extra id.
+not pin `droppedDevices` (a later re-add may ingest). While an
+own-other-device roster is pending, that signer's remote sender-key
+slots are quarantined (`hold`) and new distributions from that
+`userId:deviceId` are held, not installed. Decline pins
+`droppedDevices` before any held flush so a trusted user id cannot
+re-install them. Confirm flushes held keys. A stolen **live** admin
+with no pending roster can still distribute **its own** sender keys
+until that device is revoked. This is not Signal-level security. `planTrustedMembers` still refuses a server-only extra id.
 Invite-join is pending only (`used_by`, no live row, no epoch bump).
 Fan-out uses `planFanoutRecipients` so a server-only extra id does not get
 a mailbox copy. This is not MLS.

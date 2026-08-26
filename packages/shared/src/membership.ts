@@ -107,20 +107,43 @@ export function planTrustedMembers(
  * Install a sender-key distribution only for locally trusted members.
  * `hold` = in the pending roster, not yet confirmed (new-device TOFU or add).
  */
+export function planOwnOtherHoldDevices(args: {
+  localUserId: string;
+  localDeviceId: string;
+  pending: { signerUserId: string; signerDeviceId: string }[];
+}): string[] {
+  const out: string[] = [];
+  for (const p of args.pending) {
+    if (
+      planMembershipSignerNotice({
+        localUserId: args.localUserId,
+        localDeviceId: args.localDeviceId,
+        signerUserId: p.signerUserId,
+        signerDeviceId: p.signerDeviceId,
+      }) !== "own-other-device"
+    ) {
+      continue;
+    }
+    const key = droppedDeviceKey(p.signerUserId, p.signerDeviceId);
+    if (key && !out.includes(key)) out.push(key);
+  }
+  return out;
+}
+
 export function planSenderKeyIngest(args: {
   trustedUserIds: string[];
   pendingUserIds: string[];
   senderUserId: string;
   senderDeviceId?: string;
   droppedDevices?: string[];
+  holdDevices?: string[];
 }): "accept" | "hold" | "drop" {
   if (!args.senderUserId) return "drop";
-  if (
-    args.senderDeviceId &&
-    args.droppedDevices?.includes(droppedDeviceKey(args.senderUserId, args.senderDeviceId))
-  ) {
-    return "drop";
-  }
+  const deviceKey = args.senderDeviceId
+    ? droppedDeviceKey(args.senderUserId, args.senderDeviceId)
+    : "";
+  if (deviceKey && args.droppedDevices?.includes(deviceKey)) return "drop";
+  if (deviceKey && args.holdDevices?.includes(deviceKey)) return "hold";
   if (args.trustedUserIds.includes(args.senderUserId)) return "accept";
   if (args.pendingUserIds.includes(args.senderUserId)) return "hold";
   return "drop";

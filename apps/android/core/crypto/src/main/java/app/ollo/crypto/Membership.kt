@@ -158,17 +158,34 @@ object Membership {
         return out.takeLast(max)
     }
 
+    fun planOwnOtherHoldDevices(
+        localUserId: String,
+        localDeviceId: String,
+        pending: List<Pair<String, String>>,
+    ): List<String> {
+        val out = ArrayList<String>()
+        for ((signerUserId, signerDeviceId) in pending) {
+            if (planSignerNotice(localUserId, localDeviceId, signerUserId, signerDeviceId) != "own-other-device") {
+                continue
+            }
+            val key = droppedDeviceKey(signerUserId, signerDeviceId)
+            if (key.isNotEmpty() && key !in out) out.add(key)
+        }
+        return out
+    }
+
     fun planSenderKeyIngest(
         trustedUserIds: List<String>,
         pendingUserIds: List<String>,
         senderUserId: String,
         senderDeviceId: String? = null,
         droppedDevices: List<String> = emptyList(),
+        holdDevices: List<String> = emptyList(),
     ): String {
         if (senderUserId.isEmpty()) return "drop"
-        if (!senderDeviceId.isNullOrEmpty() && droppedDeviceKey(senderUserId, senderDeviceId) in droppedDevices) {
-            return "drop"
-        }
+        val deviceKey = if (senderDeviceId.isNullOrEmpty()) "" else droppedDeviceKey(senderUserId, senderDeviceId)
+        if (deviceKey.isNotEmpty() && deviceKey in droppedDevices) return "drop"
+        if (deviceKey.isNotEmpty() && deviceKey in holdDevices) return "hold"
         if (senderUserId in trustedUserIds) return "accept"
         if (senderUserId in pendingUserIds) return "hold"
         return "drop"

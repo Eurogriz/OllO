@@ -19,6 +19,7 @@ import {
   retainUnexpired,
   planDroppedDevices,
   planHeldSenderKeyFlush,
+  planOwnOtherHoldDevices,
   planMembershipApply,
   planMembershipDelta,
   planMembershipSignerNotice,
@@ -210,6 +211,27 @@ function pruneSenderKeys(acc: Account, filter: { userId?: string; deviceId?: str
   }
 }
 
+function quarantineSenderDevice(acc: Account, userId: string, deviceId: string): void {
+  if (!acc.remoteSenderKeys) acc.remoteSenderKeys = {};
+  if (!acc.heldSenderKeys) acc.heldSenderKeys = {};
+  for (const slot of planSenderKeyPrune(Object.keys(acc.remoteSenderKeys), { userId, deviceId })) {
+    const k = acc.remoteSenderKeys[slot];
+    if (k) acc.heldSenderKeys[slot] = k;
+    delete acc.remoteSenderKeys[slot];
+  }
+}
+
+function pendingHoldDevices(acc: Account): string[] {
+  return planOwnOtherHoldDevices({
+    localUserId: acc.userId,
+    localDeviceId: acc.deviceId,
+    pending: Object.values(acc.pendingMemberships ?? {}).map((p) => ({
+      signerUserId: p.signerUserId,
+      signerDeviceId: p.signerDeviceId,
+    })),
+  });
+}
+
 /** Record a transport envelope id before decrypting. Drop means skip the body. */
 export function noteEnvelope(acc: Account, envelopeId: string): "accept" | "drop" {
   if (!acc.replay) acc.replay = emptyReplayCache();
@@ -259,7 +281,18 @@ export function rememberMembership(
     flushHeldSenderKeys(acc, next.groupId, next.members.map((m) => m.userId));
     for (const uid of removed) pruneSenderKeys(acc, { userId: uid });
   }
-  if (decision === "confirm") acc.pendingMemberships[next.groupId] = next;
+  if (decision === "confirm") {
+    acc.pendingMemberships[next.groupId] = next;
+    const notice = planMembershipSignerNotice({
+      localUserId: acc.userId,
+      localDeviceId: acc.deviceId,
+      signerUserId: next.signerUserId,
+      signerDeviceId: next.signerDeviceId,
+    });
+    if (notice === "own-other-device") {
+      quarantineSenderDevice(acc, next.signerUserId, next.signerDeviceId);
+    }
+  }
   if (decision === "rejected") delete acc.pendingMemberships[next.groupId];
   return decision;
 }
@@ -289,8 +322,6 @@ export function rejectPendingMembership(acc: Account, groupId: string): void {
     acc.rejectedMemberships[groupId] = planRejectedHashes(acc.rejectedMemberships[groupId] ?? [], pending.hash);
   }
   if (acc.pendingMemberships) delete acc.pendingMemberships[groupId];
-  const local = acc.memberships?.[groupId];
-  flushHeldSenderKeys(acc, groupId, (local?.members ?? []).map((m) => m.userId));
   if (pending) {
     const notice = planMembershipSignerNotice({
       localUserId: acc.userId,
@@ -302,6 +333,8 @@ export function rejectPendingMembership(acc: Account, groupId: string): void {
       noteDroppedDevice(acc, pending.signerUserId, pending.signerDeviceId);
     }
   }
+  const local = acc.memberships?.[groupId];
+  flushHeldSenderKeys(acc, groupId, (local?.members ?? []).map((m) => m.userId));
 }
 
 function senderKeySlot(k: { groupId: string; userId: string; deviceId: string; epoch: number }): string {
@@ -947,6 +980,7 @@ export function ingestSenderKey(
     senderUserId,
     senderDeviceId,
     droppedDevices: acc.droppedDevices,
+    holdDevices: pendingHoldDevices(acc),
   });
   if (decision === "drop") return;
   const slot = senderKeySlot(remote);

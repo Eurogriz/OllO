@@ -179,18 +179,44 @@ public enum Membership {
         return Array(out.suffix(max))
     }
 
+    public static func planOwnOtherHoldDevices(
+        localUserId: String,
+        localDeviceId: String,
+        pending: [(signerUserId: String, signerDeviceId: String)]
+    ) -> [String] {
+        var out: [String] = []
+        for p in pending {
+            if planSignerNotice(
+                localUserId: localUserId,
+                localDeviceId: localDeviceId,
+                signerUserId: p.signerUserId,
+                signerDeviceId: p.signerDeviceId
+            ) != "own-other-device" {
+                continue
+            }
+            let key = droppedDeviceKey(userId: p.signerUserId, deviceId: p.signerDeviceId)
+            if !key.isEmpty && !out.contains(key) { out.append(key) }
+        }
+        return out
+    }
+
     public static func planSenderKeyIngest(
         trustedUserIds: [String],
         pendingUserIds: [String],
         senderUserId: String,
         senderDeviceId: String? = nil,
-        droppedDevices: [String] = []
+        droppedDevices: [String] = [],
+        holdDevices: [String] = []
     ) -> String {
         if senderUserId.isEmpty { return "drop" }
-        if let senderDeviceId, !senderDeviceId.isEmpty,
-           droppedDevices.contains(droppedDeviceKey(userId: senderUserId, deviceId: senderDeviceId)) {
-            return "drop"
+        let deviceKey: String
+        if let senderDeviceId, !senderDeviceId.isEmpty {
+            deviceKey = droppedDeviceKey(userId: senderUserId, deviceId: senderDeviceId)
+        } else {
+            deviceKey = ""
         }
+        if !deviceKey.isEmpty && droppedDevices.contains(deviceKey) { return "drop" }
+        if !deviceKey.isEmpty && holdDevices.contains(deviceKey) { return "hold" }
         if trustedUserIds.contains(senderUserId) { return "accept" }
         if pendingUserIds.contains(senderUserId) { return "hold" }
         return "drop"

@@ -116,6 +116,12 @@ class SessionVaultTest {
         assertEquals(listOf("a:d1", "a:stolen"), Membership.planDroppedDevices(listOf("a:d1"), "a", "stolen"))
         assertEquals("drop", Membership.planSenderKeyIngest(listOf("alice"), emptyList(), "alice", "phone", listOf("alice:phone")))
         assertEquals("accept", Membership.planSenderKeyIngest(listOf("alice"), emptyList(), "alice", "laptop", listOf("alice:phone")))
+        assertEquals(
+            listOf("a:stolen"),
+            Membership.planOwnOtherHoldDevices("a", "d1", listOf("a" to "stolen", "a" to "d1", "b" to "d9")),
+        )
+        assertEquals("hold", Membership.planSenderKeyIngest(listOf("a"), emptyList(), "a", "stolen", emptyList(), listOf("a:stolen")))
+        assertEquals("drop", Membership.planSenderKeyIngest(listOf("a"), emptyList(), "a", "stolen", listOf("a:stolen"), listOf("a:stolen")))
     }
 
     @Test
