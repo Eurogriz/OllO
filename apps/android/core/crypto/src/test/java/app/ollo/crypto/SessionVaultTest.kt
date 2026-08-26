@@ -144,6 +144,15 @@ class SessionVaultTest {
                 ),
             ),
         )
+        assertEquals("accept", Membership.planGroupEpochAccept(2, 2))
+        assertEquals("drop", Membership.planGroupEpochAccept(1, 2))
+        assertEquals("accept", Membership.planGroupEpochAccept(2, null))
+        assertEquals(
+            "drop",
+            Membership.planSenderKeyIngest(listOf("alice"), emptyList(), "alice", incomingEpoch = 1, localEpoch = 2),
+        )
+        assertEquals(listOf("g1:alice:phone:1"), Membership.planSenderKeyEpochPrune(listOf("g1:alice:phone:1", "g1:bob:d:2"), "g1", 2))
+        assertEquals(listOf("g1:1"), Membership.planOwnSenderKeyEpochPrune(listOf("g1:1", "g1:2", "g10:2"), "g1", 2))
     }
 
     @Test

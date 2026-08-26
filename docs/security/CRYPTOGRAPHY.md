@@ -144,8 +144,12 @@ Each member, per group, per device, holds a Sender Key:
   different device, and the target is **absent** from the live key
   directory (a still-listed sibling cannot drop an honest device).
   Apply pins `droppedDevices` and runs the same sender-key rotate.
-  Decline without revoke cannot safely inform others. Past epoch chains
-  remain readable to anyone who already had them.
+  Decline without revoke cannot safely inform others. After a device has
+  accepted epoch N, `planGroupEpochAccept` refuses inbound sender-key
+  messages and distributions for any other epoch, and
+  `planSenderKeyEpochPrune` drops the old slots. Past-epoch plaintext
+  already in the local history stays. Unknown local epoch still tries
+  decrypt (mailbox ACK is lossy).
 - On member **add**: after `confirmPendingMembership`, current members send
   them the current sender keys over 1:1 (they cannot read history before the
   add unless someone forwards it)

@@ -165,6 +165,27 @@ final class SessionVaultTests: XCTestCase {
             ]).map { "\($0.groupId):\($0.epoch)" },
             ["g2:4", "g3:1"]
         )
+        XCTAssertEqual(Membership.planGroupEpochAccept(envelopeEpoch: 2, localEpoch: 2), "accept")
+        XCTAssertEqual(Membership.planGroupEpochAccept(envelopeEpoch: 1, localEpoch: 2), "drop")
+        XCTAssertEqual(Membership.planGroupEpochAccept(envelopeEpoch: 2, localEpoch: nil), "accept")
+        XCTAssertEqual(
+            Membership.planSenderKeyIngest(
+                trustedUserIds: ["alice"],
+                pendingUserIds: [],
+                senderUserId: "alice",
+                incomingEpoch: 1,
+                localEpoch: 2
+            ),
+            "drop"
+        )
+        XCTAssertEqual(
+            Membership.planSenderKeyEpochPrune(slots: ["g1:alice:phone:1", "g1:bob:d:2"], groupId: "g1", keepEpoch: 2),
+            ["g1:alice:phone:1"]
+        )
+        XCTAssertEqual(
+            Membership.planOwnSenderKeyEpochPrune(keys: ["g1:1", "g1:2", "g10:2"], groupId: "g1", keepEpoch: 2),
+            ["g1:1"]
+        )
     }
 
     func testDropsAReplayedEnvelopeAndClearsOnWipe() throws {

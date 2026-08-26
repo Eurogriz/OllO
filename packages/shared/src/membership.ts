@@ -130,6 +130,43 @@ export function planOwnOtherHoldDevices(args: {
   return out;
 }
 
+/**
+ * After the local roster has accepted epoch N, only that epoch is live.
+ * Unknown local epoch (first sync) must not drop — mailbox ACK is lossy.
+ */
+export function planGroupEpochAccept(args: {
+  localEpoch?: number;
+  envelopeEpoch: number;
+}): "accept" | "drop" {
+  if (!Number.isInteger(args.envelopeEpoch) || args.envelopeEpoch < 1) return "drop";
+  if (args.localEpoch == null || !Number.isInteger(args.localEpoch) || args.localEpoch < 1) {
+    return "accept";
+  }
+  return args.envelopeEpoch === args.localEpoch ? "accept" : "drop";
+}
+
+/** Drop remote/held slots for a group whose epoch is no longer live. */
+export function planSenderKeyEpochPrune(slots: string[], groupId: string, keepEpoch: number): string[] {
+  if (!groupId || keepEpoch < 1) return [];
+  return slots.filter((slot) => {
+    const p = parseSenderKeySlot(slot);
+    if (!p || p.groupId !== groupId) return false;
+    return Number(p.epoch) !== keepEpoch;
+  });
+}
+
+/** Own chains are stored as `groupId:epoch`. */
+export function planOwnSenderKeyEpochPrune(keys: string[], groupId: string, keepEpoch: number): string[] {
+  if (!groupId || keepEpoch < 1) return [];
+  const keep = `${groupId}:${keepEpoch}`;
+  return keys.filter((k) => {
+    if (k === keep) return false;
+    if (!k.startsWith(`${groupId}:`)) return false;
+    const rest = k.slice(groupId.length + 1);
+    return rest !== "" && !rest.includes(":");
+  });
+}
+
 export function planSenderKeyIngest(args: {
   trustedUserIds: string[];
   pendingUserIds: string[];
@@ -137,8 +174,19 @@ export function planSenderKeyIngest(args: {
   senderDeviceId?: string;
   droppedDevices?: string[];
   holdDevices?: string[];
+  incomingEpoch?: number;
+  localEpoch?: number;
 }): "accept" | "hold" | "drop" {
   if (!args.senderUserId) return "drop";
+  if (
+    args.incomingEpoch != null &&
+    planGroupEpochAccept({
+      localEpoch: args.localEpoch,
+      envelopeEpoch: args.incomingEpoch,
+    }) === "drop"
+  ) {
+    return "drop";
+  }
   const deviceKey = args.senderDeviceId
     ? droppedDeviceKey(args.senderUserId, args.senderDeviceId)
     : "";

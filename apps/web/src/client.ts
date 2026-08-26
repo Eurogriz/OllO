@@ -25,7 +25,10 @@ import {
   planMembershipDelta,
   planMembershipSignerNotice,
   planRejectedHashes,
+  planGroupEpochAccept,
+  planOwnSenderKeyEpochPrune,
   planOwnSenderKeyRotate,
+  planSenderKeyEpochPrune,
   planSenderKeyEpochRotate,
   planSenderKeyIngest,
   planSenderKeyPrune,
@@ -201,6 +204,24 @@ function noteDroppedDevice(acc: Account, userId: string, deviceId: string): void
   pruneSenderKeys(acc, { userId, deviceId });
 }
 
+function pruneEpochSenderKeys(acc: Account, groupId: string, keepEpoch: number): void {
+  if (acc.remoteSenderKeys) {
+    for (const slot of planSenderKeyEpochPrune(Object.keys(acc.remoteSenderKeys), groupId, keepEpoch)) {
+      delete acc.remoteSenderKeys[slot];
+    }
+  }
+  if (acc.heldSenderKeys) {
+    for (const slot of planSenderKeyEpochPrune(Object.keys(acc.heldSenderKeys), groupId, keepEpoch)) {
+      delete acc.heldSenderKeys[slot];
+    }
+  }
+  if (acc.senderKeys) {
+    for (const k of planOwnSenderKeyEpochPrune(Object.keys(acc.senderKeys), groupId, keepEpoch)) {
+      delete acc.senderKeys[k];
+    }
+  }
+}
+
 function pruneSenderKeys(acc: Account, filter: { userId?: string; deviceId?: string }): void {
   if (acc.remoteSenderKeys) {
     for (const slot of planSenderKeyPrune(Object.keys(acc.remoteSenderKeys), filter)) {
@@ -283,6 +304,7 @@ export function rememberMembership(
     delete acc.pendingMemberships[next.groupId];
     flushHeldSenderKeys(acc, next.groupId, next.members.map((m) => m.userId));
     for (const uid of removed) pruneSenderKeys(acc, { userId: uid });
+    pruneEpochSenderKeys(acc, next.groupId, next.epoch);
   }
   if (decision === "confirm") {
     acc.pendingMemberships[next.groupId] = next;
@@ -906,6 +928,14 @@ export function openEnvelope(
   const sealed = decodeSealed(b64u(ciphertextB64));
   if (sealed.alg.startsWith("senderkey") && groupId) {
     const epoch = sealed.header.previousChainLength;
+    if (
+      planGroupEpochAccept({
+        localEpoch: acc.memberships?.[groupId]?.epoch,
+        envelopeEpoch: epoch,
+      }) !== "accept"
+    ) {
+      throw new Error("stale_group_epoch");
+    }
     const key = `${groupId}:${senderUserId}:${senderDeviceId}:${epoch}`;
     const rk = acc.remoteSenderKeys?.[key];
     if (!rk) throw new Error("missing sender key");
@@ -987,6 +1017,8 @@ export function ingestSenderKey(
     senderDeviceId,
     droppedDevices: acc.droppedDevices,
     holdDevices: pendingHoldDevices(acc),
+    incomingEpoch: remote.epoch,
+    localEpoch: acc.memberships?.[remote.groupId]?.epoch ?? acc.pendingMemberships?.[remote.groupId]?.epoch,
   });
   if (decision === "drop") return;
   const slot = senderKeySlot(remote);

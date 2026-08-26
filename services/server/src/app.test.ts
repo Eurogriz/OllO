@@ -362,6 +362,44 @@ describe("API integration", () => {
       alice.tok,
     );
     assert.equal(injected.status, 400);
+
+    const memberBump = signMembership({ groupId, epoch: 2, members: signedMembers }, bDev.mat.identity);
+    const asMember = await json(
+      "POST",
+      `/v1/groups/${groupId}/epoch`,
+      {
+        membership: {
+          epoch: 2,
+          members: memberBump.members.map((m) => ({ user_id: m.userId, role: m.role })),
+          signer_user_id: bob.userId,
+          signer_device_id: bob.deviceId,
+          signature: Buffer.from(memberBump.signature).toString("base64"),
+        },
+      },
+      bob.tok,
+    );
+    assert.equal(asMember.status, 403);
+
+    const adminBump = signMembership({ groupId, epoch: 2, members: signedMembers }, aDev.mat.identity);
+    const bumped = await json(
+      "POST",
+      `/v1/groups/${groupId}/epoch`,
+      {
+        membership: {
+          epoch: 2,
+          members: adminBump.members.map((m) => ({ user_id: m.userId, role: m.role })),
+          signer_user_id: alice.userId,
+          signer_device_id: alice.deviceId,
+          signature: Buffer.from(adminBump.signature).toString("base64"),
+        },
+      },
+      alice.tok,
+    );
+    assert.equal(bumped.status, 200, JSON.stringify(bumped.body));
+    assert.equal(bumped.body.epoch, 2);
+    const after = await json("GET", `/v1/groups/${groupId}`, undefined, alice.tok);
+    assert.equal((after.body.group as { epoch: number }).epoch, 2);
+    assert.equal(((after.body.group as { membership: { epoch: number } }).membership).epoch, 2);
   });
 
   it("keeps invite-join pending until an admin re-signs", async () => {

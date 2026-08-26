@@ -9,7 +9,10 @@ import {
   planHeldSenderKeyFlush,
   planOwnOtherHoldDevices,
   planRejectedHashes,
+  planGroupEpochAccept,
+  planOwnSenderKeyEpochPrune,
   planOwnSenderKeyRotate,
+  planSenderKeyEpochPrune,
   planSenderKeyEpochRotate,
   planSenderKeyIngest,
   planSenderKeyPrune,
@@ -347,5 +350,39 @@ describe("membership apply planner", () => {
         { groupId: "g3", epoch: 1 },
       ],
     );
+    assert.equal(planGroupEpochAccept({ envelopeEpoch: 2, localEpoch: 2 }), "accept");
+    assert.equal(planGroupEpochAccept({ envelopeEpoch: 1, localEpoch: 2 }), "drop");
+    assert.equal(planGroupEpochAccept({ envelopeEpoch: 3, localEpoch: 2 }), "drop");
+    assert.equal(planGroupEpochAccept({ envelopeEpoch: 2 }), "accept");
+    assert.equal(planGroupEpochAccept({ envelopeEpoch: 0, localEpoch: 1 }), "drop");
+    assert.equal(
+      planSenderKeyIngest({
+        trustedUserIds: ["alice"],
+        pendingUserIds: [],
+        senderUserId: "alice",
+        incomingEpoch: 1,
+        localEpoch: 2,
+      }),
+      "drop",
+    );
+    assert.equal(
+      planSenderKeyIngest({
+        trustedUserIds: ["alice"],
+        pendingUserIds: [],
+        senderUserId: "alice",
+        incomingEpoch: 2,
+        localEpoch: 2,
+      }),
+      "accept",
+    );
+    assert.deepEqual(
+      planSenderKeyEpochPrune(
+        ["g1:alice:phone:1", "g1:bob:d:2", "g2:alice:phone:1"],
+        "g1",
+        2,
+      ).sort(),
+      ["g1:alice:phone:1"],
+    );
+    assert.deepEqual(planOwnSenderKeyEpochPrune(["g1:1", "g1:2", "g10:2", "g1:2:x"], "g1", 2), ["g1:1"]);
   });
 });

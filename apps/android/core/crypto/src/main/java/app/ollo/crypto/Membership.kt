@@ -174,6 +174,28 @@ object Membership {
         return out
     }
 
+    fun planGroupEpochAccept(envelopeEpoch: Int, localEpoch: Int? = null): String {
+        if (envelopeEpoch < 1) return "drop"
+        if (localEpoch == null || localEpoch < 1) return "accept"
+        return if (envelopeEpoch == localEpoch) "accept" else "drop"
+    }
+
+    fun planSenderKeyEpochPrune(slots: List<String>, groupId: String, keepEpoch: Int): List<String> {
+        if (groupId.isEmpty() || keepEpoch < 1) return emptyList()
+        return slots.filter { slot ->
+            val p = parseSenderKeySlot(slot) ?: return@filter false
+            p[0] == groupId && p[3].toIntOrNull() != keepEpoch
+        }
+    }
+
+    fun planOwnSenderKeyEpochPrune(keys: List<String>, groupId: String, keepEpoch: Int): List<String> {
+        if (groupId.isEmpty() || keepEpoch < 1) return emptyList()
+        val keep = "$groupId:$keepEpoch"
+        return keys.filter { k ->
+            k != keep && k.startsWith("$groupId:") && !k.removePrefix("$groupId:").contains(":")
+        }
+    }
+
     fun planSenderKeyIngest(
         trustedUserIds: List<String>,
         pendingUserIds: List<String>,
@@ -181,8 +203,11 @@ object Membership {
         senderDeviceId: String? = null,
         droppedDevices: List<String> = emptyList(),
         holdDevices: List<String> = emptyList(),
+        incomingEpoch: Int? = null,
+        localEpoch: Int? = null,
     ): String {
         if (senderUserId.isEmpty()) return "drop"
+        if (incomingEpoch != null && planGroupEpochAccept(incomingEpoch, localEpoch) == "drop") return "drop"
         val deviceKey = if (senderDeviceId.isNullOrEmpty()) "" else droppedDeviceKey(senderUserId, senderDeviceId)
         if (deviceKey.isNotEmpty() && deviceKey in droppedDevices) return "drop"
         if (deviceKey.isNotEmpty() && deviceKey in holdDevices) return "hold"

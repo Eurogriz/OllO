@@ -200,15 +200,42 @@ public enum Membership {
         return out
     }
 
+    public static func planGroupEpochAccept(envelopeEpoch: Int, localEpoch: Int? = nil) -> String {
+        if envelopeEpoch < 1 { return "drop" }
+        guard let localEpoch, localEpoch >= 1 else { return "accept" }
+        return envelopeEpoch == localEpoch ? "accept" : "drop"
+    }
+
+    public static func planSenderKeyEpochPrune(slots: [String], groupId: String, keepEpoch: Int) -> [String] {
+        if groupId.isEmpty || keepEpoch < 1 { return [] }
+        return slots.filter { slot in
+            guard let p = parseSenderKeySlot(slot) else { return false }
+            return p.groupId == groupId && Int(p.epoch) != keepEpoch
+        }
+    }
+
+    public static func planOwnSenderKeyEpochPrune(keys: [String], groupId: String, keepEpoch: Int) -> [String] {
+        if groupId.isEmpty || keepEpoch < 1 { return [] }
+        let keep = "\(groupId):\(keepEpoch)"
+        return keys.filter { k in
+            k != keep && k.hasPrefix("\(groupId):") && !String(k.dropFirst(groupId.count + 1)).contains(":")
+        }
+    }
+
     public static func planSenderKeyIngest(
         trustedUserIds: [String],
         pendingUserIds: [String],
         senderUserId: String,
         senderDeviceId: String? = nil,
         droppedDevices: [String] = [],
-        holdDevices: [String] = []
+        holdDevices: [String] = [],
+        incomingEpoch: Int? = nil,
+        localEpoch: Int? = nil
     ) -> String {
         if senderUserId.isEmpty { return "drop" }
+        if let incomingEpoch, planGroupEpochAccept(envelopeEpoch: incomingEpoch, localEpoch: localEpoch) == "drop" {
+            return "drop"
+        }
         let deviceKey: String
         if let senderDeviceId, !senderDeviceId.isEmpty {
             deviceKey = droppedDeviceKey(userId: senderUserId, deviceId: senderDeviceId)
