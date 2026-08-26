@@ -80,6 +80,8 @@ import {
   encodeVault,
   fromUtf8,
   generateEd25519,
+  openLinkCompact,
+  sealLinkCompact,
   generateOneTimePrekeys,
   generateSignedPrekey,
   newVaultKey,
@@ -1700,6 +1702,34 @@ export function createLinkPayload(acc: Pick<Account, "accountIdentity">, passphr
 
 export function createLinkUri(acc: Pick<Account, "accountIdentity">, passphrase: string): string {
   return encodeLinkUri(createLinkPayload(acc, passphrase));
+}
+
+/** Binary QR payload (~121 B). Fits QR v6 ECC-L. Do not URI-encode this. */
+export function createLinkCompact(acc: Pick<Account, "accountIdentity">, passphrase: string): Uint8Array {
+  if (planLinkExport({ hasAccountIdentity: Boolean(acc.accountIdentity?.publicKey) }) !== "accept") {
+    throw new Error("invalid link");
+  }
+  const secret = new Uint8Array(64);
+  secret.set(acc.accountIdentity.privateKey, 0);
+  secret.set(acc.accountIdentity.publicKey, 32);
+  return sealLinkCompact(passphrase, secret);
+}
+
+export function accountKeyFromCompact(blob: Uint8Array, passphrase: string): SignKeyPair {
+  const secret = openLinkCompact(passphrase, blob);
+  return { privateKey: secret.slice(0, 32), publicKey: secret.slice(32) };
+}
+
+export async function linkFromCompact(
+  blob: Uint8Array,
+  passphrase: string,
+  name: string,
+  lockPin?: string,
+): Promise<{ account: Account; isNew: boolean }> {
+  const accountKey = accountKeyFromCompact(blob, passphrase);
+  const mat = createLocalDevice();
+  const res = await registerWithIdentity(accountKey, mat, name, lockPin);
+  return { account: accountFromSession(res, mat, accountKey), isNew: Boolean(res.user.is_new) };
 }
 
 function openLinkStore(raw: string, passphrase: string): { accountIdentity: { privateKey: string; publicKey: string } } {

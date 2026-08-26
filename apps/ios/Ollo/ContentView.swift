@@ -48,7 +48,7 @@ struct ContentView: View {
                                 try await host.signIn()
                                 reloadInbox()
                                 dest = .chats
-                            } catch is UnboundCryptoEngine.EngineError {
+                            } catch is CryptoEngineError {
                                 authError = engineUnbound
                             } catch {
                                 authError = signInFailed

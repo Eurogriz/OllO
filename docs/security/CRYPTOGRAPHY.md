@@ -311,8 +311,17 @@ key without this file is unrecoverable.
 An **account-only link** (`createLinkPayload` / `ollo:link:v1:`) carries
 just the account Ed25519. No device identity, history, or session tokens.
 The new device still mints a fresh X3DH identity. OTP never copies the
-device Ed25519 onto `account_ed25519`; a dedicated incoming account key
-may be set once (`planOtpAccountBind`).
+device Ed25519 onto `account_ed25519`. The first OTP **requires** a
+dedicated account key (`planOtpAccountBind` → `need-account` if omitted).
+A compact link (`sealLinkCompact`, ~121 B) is the QR payload (v6 ECC-L,
+one RS block). Do not URI-encode it.
+
+Android / iOS: official `libsignal-client` 0.58.1 for device sessions
+(`LibsignalEngine`). Account proofs are Tink / CryptoKit Ed25519
+(`AccountKey`). libsignal IdentityKey is XEdDSA and must not sign
+`ollo-auth-v1`. Published `signed_prekey.signature` is Ed25519 for the
+server; `signed_prekey.xeddsa` is the libsignal signature for
+SessionBuilder. Native-to-web ratchet interop is not claimed.
 
 A wrong passphrase or a flipped ciphertext bit fails closed.
 
@@ -357,8 +366,9 @@ wrap. Disappearing rows are dropped by `expiresAt`. Production Android should
 also keep the SQLCipher `messages` table; the codec is the contract.
 
 Encrypt / decrypt stay inside official libsignal. An unbound engine fails
-closed. The TypeScript engine is not used on native release builds. Java
-package names are not imported until the 0.58 client API is confirmed.
+closed. `SessionHost` still defaults to `UnboundCryptoEngine`; production
+must pass `LibsignalEngine.create()`. The TypeScript engine is not used
+on native release builds.
 
 Native launch (`SessionHost`) constructs `ProtocolStore` + `SessionController`
 and calls `planSessionLaunch`. A wrapped vault session opens the inbox and

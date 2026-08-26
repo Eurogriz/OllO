@@ -64,6 +64,7 @@ public enum AuthPayload {
     public static func verifyBody(
         challengeId: String,
         otp: String,
+        accountEd25519: String,
         deviceJson: String,
         registrationLock: String? = nil
     ) throws -> Data {
@@ -80,9 +81,11 @@ public enum AuthPayload {
         else {
             throw Error.missingDevice
         }
+        guard !accountEd25519.isEmpty else { throw Error.malformed }
         var body: [String: Any] = [
             "challenge_id": challengeId,
             "otp": otp,
+            "account_ed25519": accountEd25519,
             "device": device,
         ]
         if let registrationLock, !registrationLock.isEmpty {
@@ -93,6 +96,7 @@ public enum AuthPayload {
 
     public static func registerKeyBody(
         challengeId: String,
+        accountEd25519: String,
         signature: String,
         deviceJson: String,
         registrationLock: String? = nil

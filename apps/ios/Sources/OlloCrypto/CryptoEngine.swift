@@ -2,6 +2,10 @@ import Foundation
 
 /// Production builds must back this protocol with official libsignal.
 /// Do not implement a homegrown Double Ratchet here.
+public enum CryptoEngineError: Error, Equatable {
+    case unbound
+}
+
 public protocol CryptoEngine: Sendable {
     func generateIdentity() throws -> IdentityMaterial
     func deviceRegistrationJson(name: String, platform: String) throws -> String
@@ -40,23 +44,23 @@ public struct UnboundCryptoEngine: CryptoEngine {
     public init() {}
 
     public func generateIdentity() throws -> IdentityMaterial {
-        throw EngineError.unbound
+        throw CryptoEngineError.unbound
     }
 
     public func deviceRegistrationJson(name: String, platform: String) throws -> String {
-        throw EngineError.unbound
+        throw CryptoEngineError.unbound
     }
 
     public func processPrekeyBundle(_ remote: Data) throws -> String {
-        throw EngineError.unbound
+        throw CryptoEngineError.unbound
     }
 
     public func encrypt(sessionId: String, plaintext: Data) throws -> Data {
-        throw EngineError.unbound
+        throw CryptoEngineError.unbound
     }
 
     public func decrypt(sessionId: String, payload: Data) throws -> Data {
-        throw EngineError.unbound
+        throw CryptoEngineError.unbound
     }
 
     public func safetyNumber(local: Data, remote: Data) -> String {
@@ -64,10 +68,6 @@ public struct UnboundCryptoEngine: CryptoEngine {
     }
 
     public func sign(message: Data) throws -> Data {
-        throw EngineError.unbound
-    }
-
-    public enum EngineError: Error {
-        case unbound
+        throw CryptoEngineError.unbound
     }
 }

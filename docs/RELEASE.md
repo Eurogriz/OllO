@@ -71,6 +71,10 @@ See `apps/ios/README.md`.
 - [ ] Changelog
 - [ ] Crypto / auth tests green
 - [ ] `OTP_DEV_REVEAL` impossible in the prod image
+- [ ] Production binds `LibsignalEngine` (Unbound is still the default)
+- [ ] Account proofs use Tink / CryptoKit Ed25519, not libsignal XEdDSA
+- [ ] SMS / Redis / S3 configured (prod refuses `SMS_PROVIDER=none`)
+- [ ] Independent audit / pentest / crypto review **signed** (this repo is not that)
 - [ ] Migrations expand-only
 - [ ] Staging smoke (register, send, group, attach, call signal)
 - [ ] Mapping / dSYM archived

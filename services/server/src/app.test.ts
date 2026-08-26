@@ -102,6 +102,7 @@ describe("API integration", () => {
     const alice = await json("POST", "/v1/auth/verify-otp", {
       challenge_id: otpA.body.challenge_id,
       otp: otpA.body.dev_otp,
+      account_ed25519: b64(generateEd25519().publicKey),
       device: aDev.json,
     });
     assert.equal(alice.status, 200, JSON.stringify(alice.body));
@@ -115,6 +116,7 @@ describe("API integration", () => {
     const bob = await json("POST", "/v1/auth/verify-otp", {
       challenge_id: otpB.body.challenge_id,
       otp: otpB.body.dev_otp,
+      account_ed25519: b64(generateEd25519().publicKey),
       device: bDev.json,
     });
     assert.equal(bob.status, 200, JSON.stringify(bob.body));
@@ -246,6 +248,7 @@ describe("API integration", () => {
       const verified = await json("POST", "/v1/auth/verify-otp", {
         challenge_id: otp.body.challenge_id,
         otp: otp.body.dev_otp,
+        account_ed25519: b64(generateEd25519().publicKey),
         device: dev.json,
       });
       assert.equal(verified.status, 200, JSON.stringify(verified.body));
@@ -351,6 +354,7 @@ describe("API integration", () => {
     const eve = await json("POST", "/v1/auth/verify-otp", {
       challenge_id: eveOtp.body.challenge_id,
       otp: eveOtp.body.dev_otp,
+      account_ed25519: b64(generateEd25519().publicKey),
       device: devicePayload("eve-g").json,
     });
     const forbidden = await json(
@@ -422,6 +426,7 @@ describe("API integration", () => {
       const verified = await json("POST", "/v1/auth/verify-otp", {
         challenge_id: otp.body.challenge_id,
         otp: otp.body.dev_otp,
+        account_ed25519: b64(generateEd25519().publicKey),
         device: dev.json,
       });
       assert.equal(verified.status, 200, JSON.stringify(verified.body));
@@ -512,6 +517,7 @@ describe("API integration", () => {
       const verified = await json("POST", "/v1/auth/verify-otp", {
         challenge_id: otp.body.challenge_id,
         otp: otp.body.dev_otp,
+        account_ed25519: b64(generateEd25519().publicKey),
         device: dev.json,
       });
       assert.equal(verified.status, 200, JSON.stringify(verified.body));
@@ -637,6 +643,7 @@ describe("API integration", () => {
       const verified = await json("POST", "/v1/auth/verify-otp", {
         challenge_id: otp.body.challenge_id,
         otp: otp.body.dev_otp,
+        account_ed25519: b64(generateEd25519().publicKey),
         device: devicePayload(username).json,
       });
       await json("PUT", "/v1/me", { username, display_name: username }, verified.body.access_token as string);
@@ -687,12 +694,14 @@ describe("API integration", () => {
     const alice = await json("POST", "/v1/auth/verify-otp", {
       challenge_id: otpA.body.challenge_id,
       otp: otpA.body.dev_otp,
+      account_ed25519: b64(generateEd25519().publicKey),
       device: aDev.json,
     });
     const otpB = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000032" });
     const bob = await json("POST", "/v1/auth/verify-otp", {
       challenge_id: otpB.body.challenge_id,
       otp: otpB.body.dev_otp,
+      account_ed25519: b64(generateEd25519().publicKey),
       device: bDev.json,
     });
     const aliceTok = alice.body.access_token as string;
@@ -772,10 +781,12 @@ describe("API integration", () => {
 
   it("refuses phone enumeration, drops OPKs on revoke, and wipes an account", async () => {
     async function signup(phone: string, username: string) {
+      const account = generateEd25519();
       const otp = await json("POST", "/v1/auth/request-otp", { phone_e164: phone });
       const verified = await json("POST", "/v1/auth/verify-otp", {
         challenge_id: otp.body.challenge_id,
         otp: otp.body.dev_otp,
+        account_ed25519: b64(account.publicKey),
         device: devicePayload(username).json,
       });
       assert.equal(verified.status, 200, JSON.stringify(verified.body));
@@ -785,6 +796,7 @@ describe("API integration", () => {
         tok,
         userId: (verified.body.user as { id: string }).id,
         deviceId: verified.body.device_id as string,
+        account,
       };
     }
     const alice = await signup("+79990000041", "alicepriv");
@@ -815,12 +827,16 @@ describe("API integration", () => {
     const depth = await json("GET", "/v1/me/prekey-depth", undefined, bob.tok);
     assert.ok((depth.body.remaining as number) >= 1);
 
-    const second = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000042" });
-    const bob2 = await json("POST", "/v1/auth/verify-otp", {
-      challenge_id: second.body.challenge_id,
-      otp: second.body.dev_otp,
+    const chBob = await json("POST", "/v1/auth/challenge", {});
+    const proofBob = encodeAuthProof(String(chBob.body.challenge_id), String(chBob.body.nonce));
+    const sigBob = sign(bob.account.privateKey, proofBob);
+    const bob2 = await json("POST", "/v1/auth/register-key", {
+      challenge_id: chBob.body.challenge_id,
+      account_ed25519: b64(bob.account.publicKey),
+      signature: b64(sigBob),
       device: devicePayload("bob-tablet").json,
     });
+    assert.equal(bob2.status, 200, JSON.stringify(bob2.body));
     const bob2Id = bob2.body.device_id as string;
     const bob2Tok = bob2.body.access_token as string;
     const draft = await json(
@@ -857,6 +873,7 @@ describe("API integration", () => {
     const rejected = await json("POST", "/v1/auth/verify-otp", {
       challenge_id: shortKey.body.challenge_id,
       otp: shortKey.body.dev_otp,
+      account_ed25519: b64(generateEd25519().publicKey),
       device: {
         ...devicePayload("too-short").json,
         identity_key_x25519: Buffer.from([1, 2, 3]).toString("base64"),
@@ -934,12 +951,14 @@ describe("API integration", () => {
     const alice = await json("POST", "/v1/auth/verify-otp", {
       challenge_id: otpA.body.challenge_id,
       otp: otpA.body.dev_otp,
+      account_ed25519: b64(generateEd25519().publicKey),
       device: aDev.json,
     });
     const otpB = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000052" });
     const bob = await json("POST", "/v1/auth/verify-otp", {
       challenge_id: otpB.body.challenge_id,
       otp: otpB.body.dev_otp,
+      account_ed25519: b64(generateEd25519().publicKey),
       device: bDev.json,
     });
     const aliceTok = alice.body.access_token as string;
@@ -1009,10 +1028,12 @@ describe("API integration", () => {
   });
 
   it("rotates refresh, kills the family on reuse, and requires registration lock", async () => {
+    const account = generateEd25519();
     const otp = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000061" });
     const first = await json("POST", "/v1/auth/verify-otp", {
       challenge_id: otp.body.challenge_id,
       otp: otp.body.dev_otp,
+      account_ed25519: b64(account.publicKey),
       device: devicePayload("lock-phone").json,
     });
     assert.equal(first.status, 200, JSON.stringify(first.body));
@@ -1035,19 +1056,24 @@ describe("API integration", () => {
     const lock = await json("POST", "/v1/auth/registration-lock", { pin: "lock-pin-ok" }, access);
     assert.equal(lock.status, 200, JSON.stringify(lock.body));
 
-    // OTP window is 3/min per phone. Signup used one slot; keep two for lock.
-    const otp2 = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000061" });
-    const missing = await json("POST", "/v1/auth/verify-otp", {
-      challenge_id: otp2.body.challenge_id,
-      otp: otp2.body.dev_otp,
+    const chMissing = await json("POST", "/v1/auth/challenge", {});
+    const proofMissing = encodeAuthProof(String(chMissing.body.challenge_id), String(chMissing.body.nonce));
+    const sigMissing = sign(account.privateKey, proofMissing);
+    const missing = await json("POST", "/v1/auth/register-key", {
+      challenge_id: chMissing.body.challenge_id,
+      account_ed25519: b64(account.publicKey),
+      signature: b64(sigMissing),
       device: devicePayload("lock-tablet").json,
     });
     assert.equal(missing.status, 403);
 
-    const otp3 = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000061" });
-    const ok = await json("POST", "/v1/auth/verify-otp", {
-      challenge_id: otp3.body.challenge_id,
-      otp: otp3.body.dev_otp,
+    const chOk = await json("POST", "/v1/auth/challenge", {});
+    const proofOk = encodeAuthProof(String(chOk.body.challenge_id), String(chOk.body.nonce));
+    const sigOk = sign(account.privateKey, proofOk);
+    const ok = await json("POST", "/v1/auth/register-key", {
+      challenge_id: chOk.body.challenge_id,
+      account_ed25519: b64(account.publicKey),
+      signature: b64(sigOk),
       registration_lock: "lock-pin-ok",
       device: devicePayload("lock-tablet").json,
     });
@@ -1169,15 +1195,7 @@ describe("API integration", () => {
       otp: otp.body.dev_otp,
       device: bare.json,
     });
-    assert.equal(first.status, 200, JSON.stringify(first.body));
-    const me = await json("GET", "/v1/me", undefined, first.body.access_token as string);
-    assert.equal((me.body.user as { address: string | null }).address, null);
-    const db = await getDb();
-    const row = await db.query<{ missing: boolean }>(
-      "SELECT account_ed25519 IS NULL AS missing FROM users WHERE id = $1",
-      [(first.body.user as { id: string }).id],
-    );
-    assert.equal(row.rows[0]?.missing, true);
+    assert.equal(first.status, 400, JSON.stringify(first.body));
 
     const clone = devicePayload("otp-clone");
     const otpClone = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000102" });
@@ -1207,6 +1225,7 @@ describe("API integration", () => {
     const viaOtp = await json("POST", "/v1/auth/verify-otp", {
       challenge_id: sms.body.challenge_id,
       otp: sms.body.dev_otp,
+      account_ed25519: b64(generateEd25519().publicKey),
       device: devicePayload("otp-sms-attach").json,
     });
     assert.equal(viaOtp.status, 400, JSON.stringify(viaOtp.body));

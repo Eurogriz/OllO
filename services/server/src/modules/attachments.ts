@@ -150,7 +150,7 @@ export async function registerAttachments(app: FastifyInstance, db: Db): Promise
       [id],
     );
     const a = row.rows[0];
-    if (!a || !objectExists(a.object_key)) throw new ApiError("not_found", "Attachment not found", 404);
+    if (!a || !(await objectExists(a.object_key))) throw new ApiError("not_found", "Attachment not found", 404);
     let allowed = a.uploader_device_id === auth.deviceId;
     if (!allowed && q.grant) {
       allowed = await grantAllows(db, id, q.grant, auth.userId);

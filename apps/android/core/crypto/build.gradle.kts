@@ -15,7 +15,9 @@ android {
 }
 
 dependencies {
-    // Production engine: official libsignal. Do not replace with a homegrown ratchet.
+    // Production engine: official libsignal for device sessions.
+    // Account Ed25519 is Tink (real Ed25519). Do not mix with XEdDSA.
     implementation("org.signal:libsignal-client:0.58.1")
+    implementation("com.google.crypto.tink:tink-android:1.16.1")
     testImplementation("junit:junit:4.13.2")
 }

@@ -113,12 +113,12 @@ identity is never copied onto `account_ed25519`.
 }
 ```
 
-`account_ed25519` is optional. If present it must be distinct from the
-device Ed25519 (`planOtpAccountBind` → `drop` otherwise) and is written
-only when the user has none (`set`). Once the account key is set, OTP
+`account_ed25519` is **required** on the first OTP (`need-account` → 400
+if omitted). It must be distinct from the device Ed25519 (`drop`
+otherwise) and is written once (`set`). Once the account key is set, OTP
 cannot attach another device (`use-key` → 400): that requires
 `register-key` possession. OTP never copies the device identity onto
-the account.
+the account. There is no addressless phone-only user.
 
 Response:
 

@@ -45,7 +45,7 @@ final class SessionHost {
 
     func signIn() async throws {
         if try launch() == .signedIn { return }
-        _ = try await auth.signInWithKey(engine: engine, name: "iPhone", platform: "ios")
+        _ = try await auth.signInWithKey(engine: engine, account: AccountKey(), name: "iPhone", platform: "ios")
     }
 
     static func open(

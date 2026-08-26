@@ -34,6 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.ollo.crypto.AccountKey
 import app.ollo.crypto.ChatThread
 import app.ollo.crypto.EnvelopePlanner
 import app.ollo.messenger.R
@@ -82,7 +83,7 @@ fun OlloRoot(host: SessionHost) {
                                 if (host.launch() == EnvelopePlanner.SessionLaunch.SignedIn) {
                                     return@withContext host.loadInbox()
                                 }
-                                host.auth.signInWithKey(host.engine, "Android", "android")
+                                host.auth.signInWithKey(host.engine, AccountKey.generate(), "Android", "android")
                                 host.loadInbox()
                             }
                             inbox.wipe()

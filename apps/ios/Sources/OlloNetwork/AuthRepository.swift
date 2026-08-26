@@ -20,12 +20,14 @@ public final class AuthRepository: @unchecked Sendable {
     public func verify(
         challengeId: String,
         otp: String,
+        accountEd25519: String,
         deviceJson: String,
         registrationLock: String? = nil
     ) async throws -> AuthSession {
         let body = try AuthPayload.verifyBody(
             challengeId: challengeId,
             otp: otp,
+            accountEd25519: accountEd25519,
             deviceJson: deviceJson,
             registrationLock: registrationLock
         )
@@ -45,6 +47,7 @@ public final class AuthRepository: @unchecked Sendable {
     /// Fail closed before burning an OTP: unbound engines throw here.
     public func signIn(
         engine: CryptoEngine,
+        account: AccountKey,
         phone: String,
         otp: String,
         name: String,
@@ -56,14 +59,16 @@ public final class AuthRepository: @unchecked Sendable {
         return try await verify(
             challengeId: challenge.challengeId,
             otp: otp,
+            accountEd25519: account.publicB64(),
             deviceJson: deviceJson,
             registrationLock: registrationLock
         )
     }
 
-    /// Primary registration: prove possession of the device Ed25519 key.
+    /// Primary registration: prove possession of the account Ed25519 key.
     public func signInWithKey(
         engine: CryptoEngine,
+        account: AccountKey,
         name: String,
         platform: String,
         registrationLock: String? = nil
@@ -72,9 +77,10 @@ public final class AuthRepository: @unchecked Sendable {
         let raw = try await client.authChallenge()
         let challenge = try AuthPayload.parseAuthChallenge(raw)
         let proof = IdentityAddress.authProof(challengeId: challenge.challengeId, nonce: challenge.nonce)
-        let signature = try engine.sign(message: proof).base64EncodedString()
+        let signature = try account.sign(message: proof).base64EncodedString()
         let body = try AuthPayload.registerKeyBody(
             challengeId: challenge.challengeId,
+            accountEd25519: account.publicB64(),
             signature: signature,
             deviceJson: deviceJson,
             registrationLock: registrationLock

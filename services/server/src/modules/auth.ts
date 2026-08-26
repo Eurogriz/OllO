@@ -9,6 +9,8 @@ import {
   planAuthProofAccept,
   planOtpAccountBind,
 } from "@ollo/shared";
+import { takeWindow } from "../redis.js";
+import { smsProvider } from "../sms.js";
 import { z } from "zod";
 import { config } from "../config.js";
 import type { Db } from "../db/index.js";
@@ -68,7 +70,12 @@ const authWindow = new Map<string, { n: number; reset: number }>();
 export const AUTH_CHALLENGE_PER_IP = 30;
 export const AUTH_REGISTER_PER_IP = 10;
 
-function takeOtpSlot(phoneH: string): void {
+async function takeOtpSlot(phoneH: string): Promise<void> {
+  if (config.redisUrl || config.redisRequired || config.isProd) {
+    const ok = await takeWindow(`otp:${phoneH}`, 3, 60);
+    if (!ok) throw new ApiError("rate_limited", "Too many OTP requests", 429);
+    return;
+  }
   const now = Date.now();
   const cur = otpWindow.get(phoneH);
   if (!cur || cur.reset < now) {
@@ -88,9 +95,14 @@ function clientIp(req: FastifyRequest): string {
   return req.ip || "unknown";
 }
 
-function takeAuthSlot(req: FastifyRequest, action: "challenge" | "register-key"): void {
+async function takeAuthSlot(req: FastifyRequest, action: "challenge" | "register-key"): Promise<void> {
   const max = action === "challenge" ? AUTH_CHALLENGE_PER_IP : AUTH_REGISTER_PER_IP;
   const key = `${action}:${clientIp(req)}`;
+  if (config.redisUrl || config.redisRequired || config.isProd) {
+    const ok = await takeWindow(`auth:${key}`, max, 60);
+    if (!ok) throw new ApiError("rate_limited", "Too many auth requests", 429);
+    return;
+  }
   const now = Date.now();
   const cur = authWindow.get(key);
   if (!cur || cur.reset < now) {
@@ -157,7 +169,7 @@ export async function registerAuth(app: FastifyInstance, db: Db): Promise<void> 
       throw new ApiError("validation", "Phone must be E.164");
     }
     const ph = phoneHmac(body.phone_e164);
-    takeOtpSlot(ph);
+    await takeOtpSlot(ph);
     const otp = otpCode(config.otpLength);
     const challengeId = randomId("ch");
     const otpHash = sha256Hex(`${config.otpPepper}:${challengeId}:${otp}`);
@@ -171,6 +183,7 @@ export async function registerAuth(app: FastifyInstance, db: Db): Promise<void> 
       challenge_id: challengeId,
       expires_in: config.otpTtlSeconds,
     };
+    await smsProvider().sendOtp(body.phone_e164, otp);
     if (config.otpDevReveal && !config.isProd) {
       res.dev_otp = otp;
     }
@@ -178,7 +191,7 @@ export async function registerAuth(app: FastifyInstance, db: Db): Promise<void> 
   });
 
   app.post("/v1/auth/challenge", async (req, reply) => {
-    takeAuthSlot(req, "challenge");
+    await takeAuthSlot(req, "challenge");
     const challengeId = randomId("ch");
     const nonce = randomToken(24);
     const expires = new Date(Date.now() + config.otpTtlSeconds * 1000);
@@ -203,7 +216,7 @@ export async function registerAuth(app: FastifyInstance, db: Db): Promise<void> 
         device: deviceSchema,
       })
       .parse(req.body);
-    takeAuthSlot(req, "register-key");
+    await takeAuthSlot(req, "register-key");
     const ch = await db.query<{
       id: string;
       nonce: string;
@@ -327,6 +340,7 @@ export async function registerAuth(app: FastifyInstance, db: Db): Promise<void> 
       storedAccount: storedAccount ? new Uint8Array(storedAccount) : null,
       deviceEd25519: new Uint8Array(keys.identityEd),
     });
+    if (bind === "need-account") throw new ApiError("validation", "Account key required", 400);
     if (bind === "drop") throw new ApiError("validation", "Account key must be distinct from the device identity");
     if (bind === "mismatch") throw new ApiError("validation", "Account key does not match this user");
     if (bind === "use-key") {

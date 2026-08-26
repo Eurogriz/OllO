@@ -215,6 +215,24 @@ describe("Encrypted backup", () => {
     };
     assert.throws(() => openBackup("correct-horse-battery", tampered));
   });
+
+  it("seals a compact 64-byte link that fits QR v6", async () => {
+    const { sealLinkCompact, openLinkCompact } = await import("./backup.js");
+    const { generateEd25519 } = await import("./keys.js");
+    const k = generateEd25519();
+    const secret = new Uint8Array(64);
+    secret.set(k.privateKey, 0);
+    secret.set(k.publicKey, 32);
+    const blob = sealLinkCompact("correct-horse-battery", secret);
+    assert.equal(blob.length, 1 + 16 + 24 + 64 + 16);
+    assert.ok(blob.length <= 133);
+    const opened = openLinkCompact("correct-horse-battery", blob);
+    assert.deepEqual(opened, secret);
+    assert.throws(() => openLinkCompact("wrong-passphrase-xx", blob));
+    const bad = new Uint8Array(blob);
+    bad[40] = (bad[40] ?? 0) ^ 1;
+    assert.throws(() => openLinkCompact("correct-horse-battery", bad));
+  });
 });
 
 describe("Local vault", () => {

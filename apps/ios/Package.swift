@@ -9,8 +9,16 @@ let package = Package(
         .library(name: "OlloNetwork", targets: ["OlloNetwork"]),
         .library(name: "OlloStorage", targets: ["OlloStorage"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/signalapp/libsignal-client", from: "0.58.1"),
+    ],
     targets: [
-        .target(name: "OlloCrypto"),
+        .target(
+            name: "OlloCrypto",
+            dependencies: [
+                .product(name: "LibSignalClient", package: "libsignal-client"),
+            ]
+        ),
         .target(name: "OlloNetwork", dependencies: ["OlloCrypto"]),
         .target(name: "OlloStorage", dependencies: ["OlloCrypto"]),
         .testTarget(

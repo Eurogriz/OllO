@@ -134,7 +134,7 @@ describe("remote identity guard", () => {
     const device = new Uint8Array(ED25519_PUBLIC_LEN).fill(6);
     assert.equal(planOtpAccountBind({ incomingAccount: account, storedAccount: null, deviceEd25519: device }), "set");
     assert.equal(planOtpAccountBind({ incomingAccount: device, storedAccount: null, deviceEd25519: device }), "drop");
-    assert.equal(planOtpAccountBind({ incomingAccount: null, storedAccount: null, deviceEd25519: device }), "keep");
+    assert.equal(planOtpAccountBind({ incomingAccount: null, storedAccount: null, deviceEd25519: device }), "need-account");
     assert.equal(planOtpAccountBind({ incomingAccount: account, storedAccount: account, deviceEd25519: device }), "use-key");
     assert.equal(planOtpAccountBind({ incomingAccount: null, storedAccount: account, deviceEd25519: device }), "use-key");
     assert.equal(

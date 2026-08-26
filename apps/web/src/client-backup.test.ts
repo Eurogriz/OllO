@@ -9,6 +9,8 @@ import {
   accountKeyFromLink,
   backupPlaintext,
   createBackupFile,
+  accountKeyFromCompact,
+  createLinkCompact,
   createLinkPayload,
   createLinkUri,
   materialFromBackup,
@@ -114,5 +116,9 @@ describe("account backup file", () => {
     const fromUri = accountKeyFromLink(uri, "correct-horse");
     assert.deepEqual(fromUri.privateKey, account.privateKey);
     assert.throws(() => accountKeyFromLink(createBackupFile(acc, "correct-horse"), "correct-horse"));
+    const compact = createLinkCompact(acc, "correct-horse");
+    assert.ok(compact.length <= 133);
+    const fromCompact = accountKeyFromCompact(compact, "correct-horse");
+    assert.deepEqual(fromCompact.publicKey, account.publicKey);
   });
 });

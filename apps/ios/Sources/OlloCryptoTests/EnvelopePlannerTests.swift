@@ -147,13 +147,13 @@ final class EnvelopePlannerTests: XCTestCase {
 
     func testUnboundEngineDoesNotInventIdentity() {
         XCTAssertThrowsError(try UnboundCryptoEngine().generateIdentity()) { error in
-            XCTAssertEqual(error as? UnboundCryptoEngine.EngineError, .unbound)
+            XCTAssertEqual(error as? CryptoEngineError, .unbound)
         }
     }
 
     func testUnboundEngineDoesNotInventRegistration() {
         XCTAssertThrowsError(try UnboundCryptoEngine().deviceRegistrationJson(name: "iPhone", platform: "ios")) { error in
-            XCTAssertEqual(error as? UnboundCryptoEngine.EngineError, .unbound)
+            XCTAssertEqual(error as? CryptoEngineError, .unbound)
         }
     }
 }

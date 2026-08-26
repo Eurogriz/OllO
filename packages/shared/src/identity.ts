@@ -192,19 +192,17 @@ export function planOtpAccountBind(args: {
   incomingAccount: Uint8Array | null;
   storedAccount: Uint8Array | null;
   deviceEd25519: Uint8Array;
-}): "set" | "keep" | "mismatch" | "drop" | "use-key" {
+}): "set" | "keep" | "mismatch" | "drop" | "use-key" | "need-account" {
   const stored = args.storedAccount;
   if (stored && planPublicKeyAccept(stored, ED25519_PUBLIC_LEN) === "accept") {
     return "use-key";
   }
   const incoming = args.incomingAccount;
-  if (incoming) {
-    if (planPublicKeyAccept(incoming, ED25519_PUBLIC_LEN) !== "accept") return "drop";
-    if (planPublicKeyAccept(args.deviceEd25519, ED25519_PUBLIC_LEN) !== "accept") return "drop";
-    if (bytesEq(incoming, args.deviceEd25519)) return "drop";
-    return "set";
-  }
-  return "keep";
+  if (!incoming) return "need-account";
+  if (planPublicKeyAccept(incoming, ED25519_PUBLIC_LEN) !== "accept") return "drop";
+  if (planPublicKeyAccept(args.deviceEd25519, ED25519_PUBLIC_LEN) !== "accept") return "drop";
+  if (bytesEq(incoming, args.deviceEd25519)) return "drop";
+  return "set";
 }
 
 /** Account-only link blob: add a device without history, tokens, or a device IK. */

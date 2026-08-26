@@ -1,13 +1,21 @@
-import { qrSvg } from "./qr";
+import { qrSvg, qrSvgFromBytes } from "./qr";
 
-export function QrCard({ value, label }: { value: string; label?: string }) {
-  if (!value) return null;
-  const svg = qrSvg(value, 4);
+export function QrCard({
+  value,
+  bytes,
+  label,
+}: {
+  value?: string;
+  bytes?: Uint8Array;
+  label?: string;
+}) {
+  const svg = bytes ? qrSvgFromBytes(bytes, 4) : value ? qrSvg(value, 4) : "";
+  if (!svg) return null;
   return (
     <div className="qr-card">
       {label ? <div className="hint">{label}</div> : null}
       <div className="qr" dangerouslySetInnerHTML={{ __html: svg }} />
-      <div className="qr-uri">{value}</div>
+      {value ? <div className="qr-uri">{value}</div> : null}
     </div>
   );
 }

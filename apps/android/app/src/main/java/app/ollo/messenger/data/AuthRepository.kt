@@ -26,10 +26,12 @@ class AuthRepository(
 
     fun registerKey(
         challengeId: String,
+        accountEd25519B64: String,
         signatureB64: String,
         deviceJson: String,
         registrationLock: String? = null,
     ): Session {
+        require(accountEd25519B64.isNotEmpty()) { "account key required" }
         val device = JSONObject(deviceJson)
         require(device.has("identity_key_x25519") && device.has("identity_key_ed25519")) {
             "libsignal engine is not bound"
@@ -39,6 +41,7 @@ class AuthRepository(
         }
         val body = JSONObject()
             .put("challenge_id", challengeId)
+            .put("account_ed25519", accountEd25519B64)
             .put("signature", signatureB64)
             .put("device", device)
         if (!registrationLock.isNullOrEmpty()) body.put("registration_lock", registrationLock)
@@ -46,15 +49,28 @@ class AuthRepository(
         return persistSession(raw)
     }
 
-    fun signInWithKey(engine: CryptoEngine, name: String, platform: String, registrationLock: String? = null): Session {
+    fun signInWithKey(
+        engine: CryptoEngine,
+        account: app.ollo.crypto.AccountKey,
+        name: String,
+        platform: String,
+        registrationLock: String? = null,
+    ): Session {
         val deviceJson = engine.deviceRegistrationJson(name, platform)
         val (challengeId, nonce) = challenge()
         val proof = IdentityAddress.authProof(challengeId, nonce)
-        val signature = Base64.getEncoder().encodeToString(engine.sign(proof))
-        return registerKey(challengeId, signature, deviceJson, registrationLock)
+        val signature = Base64.getEncoder().encodeToString(account.sign(proof))
+        return registerKey(challengeId, account.publicB64(), signature, deviceJson, registrationLock)
     }
 
-    fun verify(challengeId: String, otp: String, deviceJson: String, registrationLock: String? = null): Session {
+    fun verify(
+        challengeId: String,
+        otp: String,
+        accountEd25519B64: String,
+        deviceJson: String,
+        registrationLock: String? = null,
+    ): Session {
+        require(accountEd25519B64.isNotEmpty()) { "account key required" }
         val device = JSONObject(deviceJson)
         require(device.has("identity_key_x25519") && device.has("identity_key_ed25519")) {
             "libsignal engine is not bound"
@@ -65,6 +81,7 @@ class AuthRepository(
         val body = JSONObject()
             .put("challenge_id", challengeId)
             .put("otp", otp)
+            .put("account_ed25519", accountEd25519B64)
             .put("device", device)
         if (!registrationLock.isNullOrEmpty()) body.put("registration_lock", registrationLock)
         val raw = api.post("/v1/auth/verify-otp", body.toString(), auth = false)

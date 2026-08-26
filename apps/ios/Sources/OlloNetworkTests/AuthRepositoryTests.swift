@@ -25,15 +25,15 @@ final class AuthRepositoryTests: XCTestCase {
 
     func testVerifyBodyDoesNotInventRegistrationIds() throws {
         XCTAssertThrowsError(
-            try AuthPayload.verifyBody(challengeId: "ch", otp: "123456", deviceJson: #"{"name":"iPhone"}"#)
+            try AuthPayload.verifyBody(challengeId: "ch", otp: "123456", accountEd25519: "acct", deviceJson: #"{"name":"iPhone"}"#)
         ) { error in
             XCTAssertEqual(error as? AuthPayload.Error, .missingDevice)
         }
         XCTAssertThrowsError(
-            try AuthPayload.verifyBody(challengeId: "ch", otp: "123456", deviceJson: "not-json")
+            try AuthPayload.verifyBody(challengeId: "ch", otp: "123456", accountEd25519: "acct", deviceJson: "not-json")
         )
         let fixture = boundEngineFixture()
-        let body = try AuthPayload.verifyBody(challengeId: "ch", otp: "123456", deviceJson: fixture)
+        let body = try AuthPayload.verifyBody(challengeId: "ch", otp: "123456", accountEd25519: "acct", deviceJson: fixture)
         let obj = try JSONSerialization.jsonObject(with: body) as? [String: Any]
         let device = obj?["device"] as? [String: Any]
         XCTAssertEqual(device?["registration_id"] as? Int, 4242)
@@ -47,12 +47,13 @@ final class AuthRepositoryTests: XCTestCase {
         XCTAssertEqual(ch.nonce, "n1")
         XCTAssertThrowsError(try AuthPayload.parseAuthChallenge(Data(#"{"challenge_id":"ch1"}"#.utf8)))
         XCTAssertThrowsError(
-            try AuthPayload.registerKeyBody(challengeId: "ch", signature: "sig", deviceJson: #"{"name":"iPhone"}"#)
+            try AuthPayload.registerKeyBody(challengeId: "ch", accountEd25519: "acct", signature: "sig", deviceJson: #"{"name":"iPhone"}"#)
         ) { error in
             XCTAssertEqual(error as? AuthPayload.Error, .missingDevice)
         }
         let body = try AuthPayload.registerKeyBody(
             challengeId: "ch",
+            accountEd25519: "acct",
             signature: "sig",
             deviceJson: boundEngineFixture()
         )
@@ -75,11 +76,12 @@ final class AuthRepositoryTests: XCTestCase {
         do {
             _ = try await repo.signInWithKey(
                 engine: UnboundCryptoEngine(),
+                account: AccountKey(),
                 name: "iPhone",
                 platform: "ios"
             )
             XCTFail("expected unbound engine to fail closed")
-        } catch let error as UnboundCryptoEngine.EngineError {
+        } catch let error as CryptoEngineError {
             XCTAssertEqual(error, .unbound)
         } catch {
             XCTFail("unexpected \(error)")
@@ -104,6 +106,7 @@ final class AuthRepositoryTests: XCTestCase {
         let session = try await repo.verify(
             challengeId: "ch",
             otp: "123456",
+            accountEd25519: "acct",
             deviceJson: boundEngineFixture()
         )
         XCTAssertEqual(session.deviceId, "d1")

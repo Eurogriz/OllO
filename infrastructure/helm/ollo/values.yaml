@@ -33,6 +33,11 @@ env:
   OLLO_ENV: staging
   OTP_DEV_REVEAL: "false"
   DATABASE_DRIVER: postgresql
+  REDIS_REQUIRED: "true"
+  S3_REGION: eu-central-1
+  S3_BUCKET: ollo-staging-attachments
+  SMS_PROVIDER: twilio
+  TURN_URLS: turn:turn.staging.ollo.example:3478
 
 # Secrets are referenced, never stored in git.
 existingSecret: ollo-secrets

@@ -16,7 +16,12 @@ services:
   redis:
     image: redis:7-alpine
     ports: ["6379:6379"]
-    command: ["redis-server", "--appendonly", "yes"]
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   minio:
     image: minio/minio:latest
@@ -25,11 +30,39 @@ services:
       MINIO_ROOT_USER: ollo
       MINIO_ROOT_PASSWORD: ollo-minio-dev
     ports: ["9000:9000", "9001:9001"]
+    volumes: [minio:/data]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      sleep 3;
+      mc alias set local http://minio:9000 ollo ollo-minio-dev;
+      mc mb -p local/ollo-attachments;
+      mc anonymous set none local/ollo-attachments;
+      "
 
   coturn:
     image: coturn/coturn:latest
     network_mode: host
-    command: ["-n", "--log-file=stdout", "--min-port=49160", "--max-port=49200"]
+    command:
+      - "-n"
+      - "--log-file=stdout"
+      - "--min-port=49160"
+      - "--max-port=49200"
+      - "--use-auth-secret"
+      - "--static-auth-secret=change-me-dev-only-turn"
+      - "--realm=ollo.local"
+      - "--no-cli"
+      - "--no-tls"
+      - "--no-dtls"
 
   server:
     build:
@@ -37,12 +70,29 @@ services:
       dockerfile: infrastructure/docker/Dockerfile.server
     env_file: ../../.env
     environment:
-      DATABASE_DRIVER: pglite
+      DATABASE_DRIVER: postgresql
+      DATABASE_URL: postgres://ollo:ollo@postgres:5432/ollo
       HOST: 0.0.0.0
       PORT: 8080
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: us-east-1
+      S3_BUCKET: ollo-attachments
+      S3_ACCESS_KEY_ID: ollo
+      S3_SECRET_ACCESS_KEY: ollo-minio-dev
+      TURN_URLS: turn:127.0.0.1:3478
+      TURN_SECRET: change-me-dev-only-turn
+      SMS_PROVIDER: none
+      OTP_DEV_REVEAL: "true"
     ports: ["8080:8080"]
     depends_on:
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
 
 volumes:
   pgdata:
+  minio:

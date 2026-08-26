@@ -12,6 +12,7 @@ import {
   computeSafety,
   accountFromSession,
   createBackupFile,
+  createLinkCompact,
   createLinkPayload,
   createLinkUri,
   confirmPendingMembership,
@@ -558,6 +559,7 @@ function Shell({
   const [vaultPinErr, setVaultPinErr] = useState("");
   const [safetyQr, setSafetyQr] = useState("");
   const [backupPass, setBackupPass] = useState("");
+  const [linkQr, setLinkQr] = useState<Uint8Array | null>(null);
   const [muted, setMuted] = useState(false);
   const [camOff, setCamOff] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -1637,6 +1639,7 @@ function Shell({
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>{t(lang, "settings")}</h3>
             <QrCard value={accountAddress(acc)} label={t(lang, "yourAddress")} />
+            {linkQr ? <QrCard bytes={linkQr} label={t(lang, "linkDevice")} /> : null}
             <div className="list-row">
               <button
                 className="ghost"

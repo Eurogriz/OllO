@@ -1,6 +1,7 @@
 /**
- * QR Code Model 2, versions 1–5, ECC-L, byte mode.
+ * QR Code Model 2, versions 1–6, ECC-L, byte mode (single RS block).
  * Encodes locally so the public identity never leaves the device for a QR API.
+ * v6 is the last ECC-L version with one Reed-Solomon block (136 data codewords).
  */
 const EXP = new Uint8Array(512);
 const LOG = new Uint8Array(256);
@@ -48,6 +49,7 @@ const VERSIONS: { version: number; data: number; ec: number }[] = [
   { version: 3, data: 55, ec: 15 },
   { version: 4, data: 80, ec: 20 },
   { version: 5, data: 108, ec: 26 },
+  { version: 6, data: 136, ec: 36 },
 ];
 
 const ALIGN: Record<number, number[]> = {
@@ -56,10 +58,13 @@ const ALIGN: Record<number, number[]> = {
   3: [6, 22],
   4: [6, 26],
   5: [6, 30],
+  6: [6, 34],
 };
 
-function encodeBytes(text: string): Uint8Array {
-  const payload = new TextEncoder().encode(text);
+/** Max byte-mode payload for v6 ECC-L after mode/length/terminator. */
+export const QR_MAX_BYTES = 133;
+
+function encodeBytes(payload: Uint8Array): Uint8Array {
   const headerBits = 4 + 8 + payload.length * 8 + 4;
   const needed = Math.ceil(headerBits / 8);
   const spec = VERSIONS.find((v) => v.data >= needed);
@@ -274,13 +279,12 @@ function score(mod: boolean[][]): number {
   return s;
 }
 
-export function qrModules(text: string): boolean[][] {
-  const payload = new TextEncoder().encode(text);
+export function qrModulesFromBytes(payload: Uint8Array): boolean[][] {
   const headerBits = 4 + 8 + payload.length * 8 + 4;
   const needed = Math.ceil(headerBits / 8);
   const spec = VERSIONS.find((v) => v.data >= needed);
   if (!spec) throw new Error("QR payload too long");
-  const data = encodeBytes(text);
+  const data = encodeBytes(payload);
   const n = sizeOf(spec.version);
   const reservedMap = reserved(spec.version);
   let best: boolean[][] | null = null;
@@ -302,8 +306,12 @@ export function qrModules(text: string): boolean[][] {
   return best!;
 }
 
-export function qrSvg(text: string, modulePx = 4): string {
-  const mod = qrModules(text);
+export function qrModules(text: string): boolean[][] {
+  return qrModulesFromBytes(new TextEncoder().encode(text));
+}
+
+export function qrSvgFromBytes(payload: Uint8Array, modulePx = 4): string {
+  const mod = qrModulesFromBytes(payload);
   const n = mod.length;
   const quiet = 4;
   const dim = (n + quiet * 2) * modulePx;
@@ -317,4 +325,8 @@ export function qrSvg(text: string, modulePx = 4): string {
     }
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${dim} ${dim}" width="${dim}" height="${dim}" shape-rendering="crispEdges"><rect width="${dim}" height="${dim}" fill="#fff"/>${rects}</svg>`;
+}
+
+export function qrSvg(text: string, modulePx = 4): string {
+  return qrSvgFromBytes(new TextEncoder().encode(text), modulePx);
 }
