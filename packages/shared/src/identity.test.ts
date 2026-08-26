@@ -135,14 +135,15 @@ describe("remote identity guard", () => {
     assert.equal(planOtpAccountBind({ incomingAccount: account, storedAccount: null, deviceEd25519: device }), "set");
     assert.equal(planOtpAccountBind({ incomingAccount: device, storedAccount: null, deviceEd25519: device }), "drop");
     assert.equal(planOtpAccountBind({ incomingAccount: null, storedAccount: null, deviceEd25519: device }), "keep");
-    assert.equal(planOtpAccountBind({ incomingAccount: account, storedAccount: account, deviceEd25519: device }), "keep");
+    assert.equal(planOtpAccountBind({ incomingAccount: account, storedAccount: account, deviceEd25519: device }), "use-key");
+    assert.equal(planOtpAccountBind({ incomingAccount: null, storedAccount: account, deviceEd25519: device }), "use-key");
     assert.equal(
       planOtpAccountBind({
         incomingAccount: new Uint8Array(ED25519_PUBLIC_LEN).fill(9),
         storedAccount: account,
         deviceEd25519: device,
       }),
-      "mismatch",
+      "use-key",
     );
     assert.equal(planLinkExport({ hasAccountIdentity: true }), "accept");
     assert.equal(planLinkExport({ hasAccountIdentity: false }), "drop");

@@ -1203,15 +1203,29 @@ describe("API integration", () => {
     assert.equal((addressed.body.user as { address: string }).address, encodeUserUri(account.publicKey));
     assert.notEqual((addressed.body.user as { address: string }).address, encodeUserUri(dedicated.mat.identity.ed25519Public));
 
-    const other = generateEd25519();
-    const otp2 = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000103" });
-    const mismatch = await json("POST", "/v1/auth/verify-otp", {
-      challenge_id: otp2.body.challenge_id,
-      otp: otp2.body.dev_otp,
-      account_ed25519: b64(other.publicKey),
-      device: devicePayload("otp-mismatch").json,
+    const sms = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000103" });
+    const viaOtp = await json("POST", "/v1/auth/verify-otp", {
+      challenge_id: sms.body.challenge_id,
+      otp: sms.body.dev_otp,
+      device: devicePayload("otp-sms-attach").json,
     });
-    assert.equal(mismatch.status, 400);
+    assert.equal(viaOtp.status, 400, JSON.stringify(viaOtp.body));
+    const still = await json("GET", "/v1/devices", undefined, ok.body.access_token as string);
+    assert.equal(((still.body.devices as unknown[]) ?? []).length, 1);
+
+    const ch = await json("POST", "/v1/auth/challenge", {});
+    const proof = encodeAuthProof(String(ch.body.challenge_id), String(ch.body.nonce));
+    const sig = sign(account.privateKey, proof);
+    const linked = await json("POST", "/v1/auth/register-key", {
+      challenge_id: ch.body.challenge_id,
+      account_ed25519: b64(account.publicKey),
+      signature: b64(sig),
+      device: devicePayload("otp-then-key").json,
+    });
+    assert.equal(linked.status, 200, JSON.stringify(linked.body));
+    assert.equal((linked.body.user as { id: string }).id, (ok.body.user as { id: string }).id);
+    const two = await json("GET", "/v1/devices", undefined, linked.body.access_token as string);
+    assert.equal(((two.body.devices as unknown[]) ?? []).length, 2);
   });
 
   it("rate-limits auth challenges per client address", async () => {

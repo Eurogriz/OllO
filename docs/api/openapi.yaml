@@ -74,7 +74,7 @@ paths:
                 device: { type: object }
       responses:
         "200": { description: Session issued }
-        "400": { description: Device IK used as account, or account mismatch }
+        "400": { description: Device IK used as account, or OTP attach on a keyed account }
   /auth/refresh:
     post:
       summary: Rotate refresh token

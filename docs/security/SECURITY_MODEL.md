@@ -168,7 +168,9 @@ sideloading).
 No history from the server. Other devices warn. Adding a device requires
 the account Ed25519 private key (backup file or account-only link) and
 mints a new device identity. OTP cannot mint the account from a device
-IK. Registration lock PIN (if set) is required in addition.
+IK and cannot attach a second device once `account_ed25519` is set
+(`planOtpAccountBind` → `use-key`). Registration lock PIN (if set) is
+required in addition on `register-key`.
 
 ### 6.11 Lost device / no backup
 

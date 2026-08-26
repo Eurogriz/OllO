@@ -329,6 +329,9 @@ export async function registerAuth(app: FastifyInstance, db: Db): Promise<void> 
     });
     if (bind === "drop") throw new ApiError("validation", "Account key must be distinct from the device identity");
     if (bind === "mismatch") throw new ApiError("validation", "Account key does not match this user");
+    if (bind === "use-key") {
+      throw new ApiError("validation", "Add a device by proving the account key", 400);
+    }
 
     let userId: string;
     let isNew = false;

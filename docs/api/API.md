@@ -115,8 +115,10 @@ identity is never copied onto `account_ed25519`.
 
 `account_ed25519` is optional. If present it must be distinct from the
 device Ed25519 (`planOtpAccountBind` → `drop` otherwise) and is written
-only when the user has none (`set`). A mismatch with the stored account
-is 400. OTP never copies the device identity onto the account.
+only when the user has none (`set`). Once the account key is set, OTP
+cannot attach another device (`use-key` → 400): that requires
+`register-key` possession. OTP never copies the device identity onto
+the account.
 
 Response:
 

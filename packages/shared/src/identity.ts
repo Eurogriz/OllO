@@ -184,22 +184,25 @@ function bytesEq(a: Uint8Array, b: Uint8Array): boolean {
 }
 
 /**
- * OTP must never copy the device IK onto the account.
- * A dedicated incoming account key may be set once; a mismatch is refused.
+ * OTP must never copy the device IK onto the account and must never attach a
+ * device to an already-keyed account (that requires register-key possession).
+ * A dedicated incoming account key may be set once on a phone-only row.
  */
 export function planOtpAccountBind(args: {
   incomingAccount: Uint8Array | null;
   storedAccount: Uint8Array | null;
   deviceEd25519: Uint8Array;
-}): "set" | "keep" | "mismatch" | "drop" {
+}): "set" | "keep" | "mismatch" | "drop" | "use-key" {
+  const stored = args.storedAccount;
+  if (stored && planPublicKeyAccept(stored, ED25519_PUBLIC_LEN) === "accept") {
+    return "use-key";
+  }
   const incoming = args.incomingAccount;
   if (incoming) {
     if (planPublicKeyAccept(incoming, ED25519_PUBLIC_LEN) !== "accept") return "drop";
     if (planPublicKeyAccept(args.deviceEd25519, ED25519_PUBLIC_LEN) !== "accept") return "drop";
     if (bytesEq(incoming, args.deviceEd25519)) return "drop";
-    if (!args.storedAccount) return "set";
-    if (planPublicKeyAccept(args.storedAccount, ED25519_PUBLIC_LEN) !== "accept") return "set";
-    return bytesEq(incoming, args.storedAccount) ? "keep" : "mismatch";
+    return "set";
   }
   return "keep";
 }
