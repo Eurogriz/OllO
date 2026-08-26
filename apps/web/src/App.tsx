@@ -22,6 +22,7 @@ import {
   ingestSenderKey,
   loadAccount,
   maybeRotateSignedPrekey,
+  newAccountKey,
   newDeviceMaterial,
   noteEnvelope,
   announceDeviceDrop,
@@ -100,6 +101,9 @@ export function App() {
     if (!next.rejectedMemberships) next.rejectedMemberships = {};
     if (!next.droppedDevices) next.droppedDevices = [];
     if (!next.senderKeyShared) next.senderKeyShared = {};
+    if (!next.accountIdentity) next.accountIdentity = next.device.identity
+      ? { privateKey: next.device.identity.ed25519Private, publicKey: next.device.identity.ed25519Public }
+      : next.accountIdentity;
     saveAccount(next);
     setAcc({ ...next, sessions: next.sessions, messages: { ...next.messages }, threads: [...next.threads] });
   }, []);
@@ -202,17 +206,19 @@ function Auth({
   const [address, setAddress] = useState("");
   const [draft, setDraft] = useState<Account | null>(null);
   const [restoreNotice, setRestoreNotice] = useState(false);
+  const accountKey = useRef(newAccountKey());
   const mat = useRef(newDeviceMaterial());
 
   async function createAccount() {
     setErr("");
     try {
       const res = await registerWithIdentity(
+        accountKey.current,
         mat.current,
         navigator.userAgent.slice(0, 40),
         lockPin.trim() || undefined,
       );
-      const acc = accountFromSession(res, mat.current);
+      const acc = accountFromSession(res, mat.current, accountKey.current);
       setDraft(acc);
       setAddress(accountAddress(acc));
       setBackupDownloaded(false);

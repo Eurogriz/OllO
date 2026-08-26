@@ -56,6 +56,7 @@ could repeat across processes.
 
 | Key | Created | Stored | Rotated | Destroyed |
 |---|---|---|---|---|
+| Account identity Ed25519 | First signup | Encrypted backup + device vault | Never (change = new account) | Lost backup + wipe |
 | Device identity X25519 | Device registration | Keystore / Keychain / web: wrapped in local DB key | Never (change = new device) | Device revoke / app uninstall / remote wipe |
 | Device identity Ed25519 | Same | Same | Same | Same |
 | Signed prekey | Registration + every ~7d | Public on server; private on device | 7 days, keep previous 2 | After grace |
@@ -244,8 +245,8 @@ payload `ollo:safety:v1:<hex>`.
 A change of either identity key is a hard warning. Users must re-verify.
 
 Device roster hash (`ollo-roster-v1` over sorted `device_id || IK_x25519`)
-is shown under “devices” so a silent extra device is visible even if it
-was restored with the same identity keys. `planRosterPrune` drops local
+is shown under “devices” so a silent extra device is visible; restore
+mints a new device identity. `planRosterPrune` drops local
 ratchet records for a device id that left that user's live list.
 `planSessionAccept` refuses `acceptSession` / `beginSession` for a
 `userId:deviceId` in `droppedDevices`, so a PreKey whisper from a
@@ -293,15 +294,19 @@ key  = Argon2id(passphrase, salt, t=2, m=19MiB, p=1, dkLen=32)
 blob = XChaCha20-Poly1305_Encrypt(key, account_export, aad="ollo-backup-v1")
 ```
 
-`account_export` is identity + sessions + sender keys + local history.
-Access / refresh tokens, the replay cache, and the outbox are **not**
-included (`planBackupExport`). `planBackupAccept` refuses a blob that
-still carries tokens or has no identity. The server stores only `blob`.
+`account_export` is the account Ed25519 + current device material +
+sessions + sender keys + local history. Access / refresh tokens, the
+replay cache, and the outbox are **not** included (`planBackupExport`).
+`planBackupAccept` refuses a blob that still carries tokens or has no
+identity. The server stores only `blob`.
 
-Restore is `register-key` with the same identity Ed25519: the account
-comes back, a **new** `device_id` is issued. History is merged from the
-file. 1:1 ratchets with peers start over against the new device id.
-A lost key without this file is unrecoverable.
+Restore signs `register-key` with the **account** Ed25519 from the backup
+and uploads a **fresh** device identity (`createLocalDevice`). The account
+comes back; a new `device_id` is issued. An old backup that only stored
+the first-device Ed25519 uses that key as the account (the new device
+identity is still minted). History is merged from the file. 1:1 ratchets
+with peers start over against the new device identity. A lost account
+key without this file is unrecoverable.
 
 A wrong passphrase or a flipped ciphertext bit fails closed.
 
@@ -354,7 +359,8 @@ and calls `planSessionLaunch`. A wrapped vault session opens the inbox and
 skips registration. Missing secrets stay on the auth screen. Continue calls
 `deviceRegistrationJson` **before** `auth/challenge`; `UnboundCryptoEngine`
 throws and the client does not invent `registration_id`, prekey ids, or a
-device JSON body. The identity Ed25519 private key signs
+device JSON body. Native stays fail-closed until the engine is bound.
+The **account** Ed25519 private key signs
 `ollo-auth-v1 || 0x00 || challenge_id || 0x00 || nonce`. iOS `AuthRepository.connected` is the twin of Android:
 access comes from the vault, a 401 refreshes once, a rejected refresh wipes
 the protocol store. `verifyBody` refuses an incomplete device object instead

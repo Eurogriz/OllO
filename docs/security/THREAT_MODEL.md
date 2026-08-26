@@ -23,7 +23,7 @@ Out of scope for this revision: desktop native, federated servers, SGX.
 
 | Attack | L | Impact | Mitigation | Residual |
 |---|---|---|---|---|
-| Stolen identity private key | M | New device on the same account | Key never leaves the device; registration lock; new-device warning | Backup passphrase leak; malware |
+| Stolen account Ed25519 | M | New device on the same account | Key never leaves the device; registration lock; new-device warning | Backup passphrase leak; malware |
 | Forged auth proof | L | Fake registration | Ed25519 over `ollo-auth-v1` challenge; single-use nonce | Stolen private key |
 | Session token theft | M | Impersonate device | Device-bound refresh, rotation + reuse detection, short access TTL, TLS only | Malware on device |
 | Stolen refresh reuse | M | Session hijack | Reuse → revoke family | Attacker who is first wins the race |

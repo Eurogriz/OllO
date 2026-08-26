@@ -34,8 +34,11 @@ Full machine-readable spec: [`openapi.yaml`](openapi.yaml).
 
 ## Auth
 
-Identity is a device Ed25519 keypair. The private key never leaves the
-device. The public key is the account address (`ollo:user:v1:<b64url>`).
+Identity is an **account** Ed25519 keypair. The private key never leaves
+the device (or its sealed backup). The public key is the account address
+(`ollo:user:v1:<b64url>`). Each device also has its own X3DH identity
+(X25519 + Ed25519). Restore and a second device mint a new device
+identity and prove the same account key.
 
 ### POST /v1/auth/challenge
 
@@ -50,7 +53,7 @@ Response 200:
 ```
 
 The client signs `ollo-auth-v1 || 0x00 || challenge_id || 0x00 || nonce`
-with the identity Ed25519 private key. These two endpoints are limited
+with the **account** Ed25519 private key. These two endpoints are limited
 per client IP (30 challenges / 10 register-key per minute).
 
 ### POST /v1/auth/register-key
@@ -58,6 +61,7 @@ per client IP (30 challenges / 10 register-key per minute).
 ```json
 {
   "challenge_id": "ch_...",
+  "account_ed25519": "b64",
   "signature": "b64",
   "registration_lock": null,
   "device": {

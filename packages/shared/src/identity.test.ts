@@ -18,6 +18,9 @@ import {
   parseUserUri,
   encodeAuthProof,
   planAuthProofAccept,
+  planAccountProofKey,
+  planAccountKeySource,
+  planRestoreDevice,
   USER_URI_PREFIX,
   AUTH_PROOF_DOMAIN,
 } from "./identity.js";
@@ -113,5 +116,13 @@ describe("remote identity guard", () => {
     assert.equal(planAuthProofAccept({ challengeId: "ch_1", nonce: "n", signatureValid: false }), "drop");
     assert.equal(planAuthProofAccept({ challengeId: "ch_1", nonce: "n", signatureValid: true, expired: true }), "drop");
     assert.equal(planAuthProofAccept({ challengeId: "", nonce: "n", signatureValid: true }), "drop");
+    const live = new Uint8Array(ED25519_PUBLIC_LEN).fill(3);
+    assert.equal(planAccountProofKey({ accountEd25519: live, deviceEd25519: new Uint8Array(ED25519_PUBLIC_LEN).fill(4) }), "accept");
+    assert.equal(planAccountProofKey({ accountEd25519: new Uint8Array(ED25519_PUBLIC_LEN), deviceEd25519: live }), "drop");
+    assert.equal(planAccountKeySource({ hasAccountIdentity: true, hasDeviceIdentity: true }), "account");
+    assert.equal(planAccountKeySource({ hasAccountIdentity: false, hasDeviceIdentity: true }), "device");
+    assert.equal(planAccountKeySource({ hasAccountIdentity: false, hasDeviceIdentity: false }), "drop");
+    assert.equal(planRestoreDevice({ hasAccountIdentity: true, hasDeviceIdentity: false }), "new-device");
+    assert.equal(planRestoreDevice({ hasAccountIdentity: false, hasDeviceIdentity: false }), "drop");
   });
 });

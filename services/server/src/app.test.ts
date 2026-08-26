@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { beginSession, createLocalDevice, encryptFirstMessage, sign, signMembership } from "@ollo/crypto";
+import { beginSession, createLocalDevice, encryptFirstMessage, generateEd25519, sign, signMembership } from "@ollo/crypto";
 import { encodeSealed, paddingBucket } from "@ollo/protocol";
 import { encodeAuthProof, encodeUserUri } from "@ollo/shared";
 
@@ -1055,19 +1055,28 @@ describe("API integration", () => {
   });
 
   it("registers by Ed25519 possession and finds the public address", async () => {
+    const account = generateEd25519();
     const dev = devicePayload("key-web");
     const ch = await json("POST", "/v1/auth/challenge", {});
     assert.equal(ch.status, 200, JSON.stringify(ch.body));
     const proof = encodeAuthProof(String(ch.body.challenge_id), String(ch.body.nonce));
-    const sig = sign(dev.mat.identity.ed25519Private, proof);
+    const sig = sign(account.privateKey, proof);
+    const missing = await json("POST", "/v1/auth/register-key", {
+      challenge_id: ch.body.challenge_id,
+      signature: b64(sig),
+      device: dev.json,
+    });
+    assert.equal(missing.status, 400);
     const reg = await json("POST", "/v1/auth/register-key", {
       challenge_id: ch.body.challenge_id,
+      account_ed25519: b64(account.publicKey),
       signature: b64(sig),
       device: dev.json,
     });
     assert.equal(reg.status, 200, JSON.stringify(reg.body));
     const tok = reg.body.access_token as string;
-    const address = encodeUserUri(dev.mat.identity.ed25519Public);
+    const address = encodeUserUri(account.publicKey);
+    assert.notEqual(address, encodeUserUri(dev.mat.identity.ed25519Public));
     const me = await json("GET", "/v1/me", undefined, tok);
     assert.equal(me.status, 200);
     assert.equal((me.body.user as { address: string }).address, address);
@@ -1079,19 +1088,30 @@ describe("API integration", () => {
     const badAddr = await json("POST", "/v1/users/search", { address: "ollo:user:v1:nope" }, tok);
     assert.equal(badAddr.status, 400);
 
-    const other = devicePayload("other-key");
+    const other = generateEd25519();
     const ch2 = await json("POST", "/v1/auth/challenge", {});
     const proof2 = encodeAuthProof(String(ch2.body.challenge_id), String(ch2.body.nonce));
-    const wrong = sign(other.mat.identity.ed25519Private, proof2);
+    const wrong = sign(other.privateKey, proof2);
     const forged = await json("POST", "/v1/auth/register-key", {
       challenge_id: ch2.body.challenge_id,
+      account_ed25519: b64(account.publicKey),
       signature: b64(wrong),
-      device: dev.json,
+      device: devicePayload("other-key").json,
     });
     assert.equal(forged.status, 401);
 
+    const deviceSig = sign(dev.mat.identity.ed25519Private, proof2);
+    const deviceAsAccount = await json("POST", "/v1/auth/register-key", {
+      challenge_id: ch2.body.challenge_id,
+      account_ed25519: b64(account.publicKey),
+      signature: b64(deviceSig),
+      device: devicePayload("device-as-account").json,
+    });
+    assert.equal(deviceAsAccount.status, 401);
+
     const reuse = await json("POST", "/v1/auth/register-key", {
       challenge_id: ch.body.challenge_id,
+      account_ed25519: b64(account.publicKey),
       signature: b64(sig),
       device: devicePayload("reuse").json,
     });
@@ -1101,31 +1121,44 @@ describe("API integration", () => {
     assert.equal(phoneLookup.status, 403);
   });
 
-  it("restores the same account from the same Ed25519 key as a new device", async () => {
-    const dev = devicePayload("restore-web");
+  it("restores the same account from the account key onto a new device identity", async () => {
+    const account = generateEd25519();
+    const firstDev = devicePayload("restore-web");
     const ch = await json("POST", "/v1/auth/challenge", {});
     const proof = encodeAuthProof(String(ch.body.challenge_id), String(ch.body.nonce));
-    const sig = sign(dev.mat.identity.ed25519Private, proof);
+    const sig = sign(account.privateKey, proof);
     const first = await json("POST", "/v1/auth/register-key", {
       challenge_id: ch.body.challenge_id,
+      account_ed25519: b64(account.publicKey),
       signature: b64(sig),
-      device: dev.json,
+      device: firstDev.json,
     });
     assert.equal(first.status, 200, JSON.stringify(first.body));
     const userId = (first.body.user as { id: string }).id;
 
+    const secondDev = devicePayload("restore-web-2");
+    assert.notDeepEqual(secondDev.mat.identity.ed25519Public, firstDev.mat.identity.ed25519Public);
     const ch2 = await json("POST", "/v1/auth/challenge", {});
     const proof2 = encodeAuthProof(String(ch2.body.challenge_id), String(ch2.body.nonce));
-    const sig2 = sign(dev.mat.identity.ed25519Private, proof2);
+    const sig2 = sign(account.privateKey, proof2);
     const again = await json("POST", "/v1/auth/register-key", {
       challenge_id: ch2.body.challenge_id,
+      account_ed25519: b64(account.publicKey),
       signature: b64(sig2),
-      device: { ...dev.json, name: "restore-web-2" },
+      device: secondDev.json,
     });
     assert.equal(again.status, 200, JSON.stringify(again.body));
     assert.equal((again.body.user as { id: string }).id, userId);
     assert.equal((again.body.user as { is_new: boolean }).is_new, false);
     assert.notEqual(again.body.device_id, first.body.device_id);
+
+    const listed = await json("GET", "/v1/devices", undefined, again.body.access_token as string);
+    const devices = listed.body.devices as Array<{ id: string; identity_ed25519: string }>;
+    assert.equal(devices.length >= 2, true);
+    const eds = devices.map((d) => d.identity_ed25519);
+    assert.equal(eds.includes(b64(firstDev.mat.identity.ed25519Public)), true);
+    assert.equal(eds.includes(b64(secondDev.mat.identity.ed25519Public)), true);
+    assert.equal(eds.includes(b64(account.publicKey)), false);
   });
 
   it("rate-limits auth challenges per client address", async () => {

@@ -5,6 +5,7 @@ import {
   ACCESS_TTL_SECONDS,
   REFRESH_TTL_SECONDS,
   encodeAuthProof,
+  planAccountProofKey,
   planAuthProofAccept,
 } from "@ollo/shared";
 import { z } from "zod";
@@ -194,6 +195,7 @@ export async function registerAuth(app: FastifyInstance, db: Db): Promise<void> 
     const body = z
       .object({
         challenge_id: z.string(),
+        account_ed25519: z.string(),
         signature: z.string(),
         registration_lock: z.string().min(4).max(128).nullable().optional(),
         device: deviceSchema,
@@ -209,9 +211,18 @@ export async function registerAuth(app: FastifyInstance, db: Db): Promise<void> 
     const row = ch.rows[0];
     if (!row) throw new ApiError("unauthorized", "Invalid or expired challenge", 401);
     const keys = parseDeviceKeys(body.device);
+    const accountEd = requirePublicBytes(body.account_ed25519, ED25519_PUBLIC_LEN, "account_ed25519");
+    if (
+      planAccountProofKey({
+        accountEd25519: new Uint8Array(accountEd),
+        deviceEd25519: new Uint8Array(keys.identityEd),
+      }) !== "accept"
+    ) {
+      throw new ApiError("validation", "Invalid account key");
+    }
     const proof = encodeAuthProof(body.challenge_id, row.nonce);
     const sig = requirePublicBytes(body.signature, ED25519_SIGNATURE_LEN, "signature");
-    const signatureValid = proof.length > 0 && verify(new Uint8Array(keys.identityEd), proof, new Uint8Array(sig));
+    const signatureValid = proof.length > 0 && verify(new Uint8Array(accountEd), proof, new Uint8Array(sig));
     const decision = planAuthProofAccept({
       challengeId: body.challenge_id,
       nonce: row.nonce,
@@ -229,7 +240,7 @@ export async function registerAuth(app: FastifyInstance, db: Db): Promise<void> 
       deleted_at: string | null;
     }>(
       "SELECT id, username, registration_lock_hash, deleted_at FROM users WHERE account_ed25519 = $1",
-      [keys.identityEd],
+      [accountEd],
     );
     let userId: string;
     let isNew = false;
@@ -238,7 +249,7 @@ export async function registerAuth(app: FastifyInstance, db: Db): Promise<void> 
       isNew = true;
       await db.query(
         `INSERT INTO users (id, phone_hmac, display_name, account_ed25519) VALUES ($1,NULL,'',$2)`,
-        [userId, keys.identityEd],
+        [userId, accountEd],
       );
     } else {
       userId = existing.rows[0].id;

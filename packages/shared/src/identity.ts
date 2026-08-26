@@ -156,6 +156,35 @@ export function planAuthProofAccept(args: {
   return "accept";
 }
 
+/** Directory material for the account key and the device identity. */
+export function planAccountProofKey(args: {
+  accountEd25519: Uint8Array;
+  deviceEd25519: Uint8Array;
+}): "accept" | "drop" {
+  if (planPublicKeyAccept(args.accountEd25519, ED25519_PUBLIC_LEN) !== "accept") return "drop";
+  if (planPublicKeyAccept(args.deviceEd25519, ED25519_PUBLIC_LEN) !== "accept") return "drop";
+  return "accept";
+}
+
+/** Prefer a dedicated account key; fall back to the device Ed25519 from an old backup. */
+export function planAccountKeySource(args: {
+  hasAccountIdentity: boolean;
+  hasDeviceIdentity: boolean;
+}): "account" | "device" | "drop" {
+  if (args.hasAccountIdentity) return "account";
+  if (args.hasDeviceIdentity) return "device";
+  return "drop";
+}
+
+/** Restore always mints a fresh device identity. The account key is the recovery root. */
+export function planRestoreDevice(args: {
+  hasAccountIdentity: boolean;
+  hasDeviceIdentity: boolean;
+}): "new-device" | "drop" {
+  if (planAccountKeySource(args) === "drop") return "drop";
+  return "new-device";
+}
+
 /**
  * Another of this user's still-live devices announced a revoke.
  * Fail closed without a directory snapshot. Refuse if the target is still live

@@ -94,8 +94,8 @@ Attacker can:
 - Deny service, drop or delay mail, add fake devices **if they also steal
   a valid session** (they cannot forge a device identity key).
 - Inject a new device into the account **only** by proving the account Ed25519 key (and lock, if set).
-  Existing devices will show a new-device warning because the identity key
-  is new.
+  Existing devices will show a new-device warning because the **device**
+  identity key is new.
 - Read all metadata listed in §3.
 - Replace the API binary to serve a malicious client update — **supply chain
   / update integrity is out of band** (Play / App Store signatures, and
@@ -166,15 +166,16 @@ sideloading).
 ### 6.10 New device
 
 No history from the server. Other devices warn. Adding a device requires
-the same identity private key (or a restored backup of it). Registration
-lock PIN (if set) is required in addition.
+the account Ed25519 private key (or a restored backup of it) and mints a
+new device identity. Registration lock PIN (if set) is required in addition.
 
 ### 6.11 Lost device / no backup
 
-The account address is the first-device Ed25519 public key. If that
-private key is lost and there is no encrypted backup, the account cannot
-be recovered. A new keypair is a new account. Phone/SIM swap does not
-take over a key-rooted account. Web signup now requires downloading a
+The account address is the account Ed25519 public key, distinct from each
+device's X3DH identity. If that private key is lost and there is no
+encrypted backup, the account cannot be recovered. A new keypair is a
+new account. Phone/SIM swap does not take over a key-rooted account.
+Web signup now requires downloading a
 passphrase-sealed backup before the profile step. The server copy is
 ciphertext only and cannot be opened without the passphrase plus a
 session — it is not a substitute for the file.
@@ -188,6 +189,7 @@ DRM fantasies we will not build.
 ## 7. Key hierarchy (summary)
 
 ```text
+account_ed25519                     — long-term account address
 identity_key (X25519 + Ed25519)     — long-term, per device
   signed_prekey                     — rotated ~7 days
     one_time_prekeys                — consumed, replenished

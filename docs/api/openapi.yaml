@@ -4,8 +4,8 @@ info:
   version: 1.0.0
   description: |
     Store-and-forward API for sealed envelopes. The server does not parse
-    message plaintext. Identity is a device Ed25519 key, not a phone.
-    See docs/api/API.md.
+    message plaintext. Identity is an account Ed25519 key, not a phone.
+    Each device has a distinct X3DH identity. See docs/api/API.md.
 servers:
   - url: /v1
 paths:
@@ -26,10 +26,11 @@ paths:
           application/json:
             schema:
               type: object
-              required: [challenge_id, signature, device]
+              required: [challenge_id, account_ed25519, signature, device]
               properties:
                 challenge_id: { type: string }
-                signature: { type: string, description: Ed25519 over ollo-auth-v1 }
+                account_ed25519: { type: string, description: Account Ed25519 public; address root }
+                signature: { type: string, description: Account Ed25519 over ollo-auth-v1 }
                 registration_lock: { type: string, nullable: true }
                 device: { type: object }
       responses:

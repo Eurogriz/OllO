@@ -39,8 +39,10 @@ import {
   encodeAuthProof,
   encodeUserUri,
   parseUserUri,
+  planAccountKeySource,
   planBackupAccept,
   planBackupExport,
+  planRestoreDevice,
 } from "@ollo/shared";
 import {
   type LocalDevice,
@@ -73,6 +75,7 @@ import {
   encodeBackup,
   encodeVault,
   fromUtf8,
+  generateEd25519,
   generateOneTimePrekeys,
   generateSignedPrekey,
   newVaultKey,
@@ -88,6 +91,7 @@ import {
   serializeSession,
   sign,
   utf8,
+  type SignKeyPair,
 } from "@ollo/crypto";
 
 export { realtimeHello, realtimeUrl };
@@ -148,6 +152,7 @@ export interface Account {
   about: string;
   access: string;
   refresh: string;
+  accountIdentity: SignKeyPair;
   device: LocalDevice;
   sessions: Record<string, SessionState>;
   messages: Record<string, ChatMessage[]>;
@@ -619,6 +624,7 @@ function accountFromStored(j: Stored): Account {
     about: j.about,
     access: j.access,
     refresh: j.refresh,
+    accountIdentity: resolveAccountIdentity(j),
     device,
     sessions,
     messages: j.messages,
@@ -658,6 +664,7 @@ export function saveAccount(acc: Account): void {
     about: acc.about,
     access: acc.access,
     refresh: acc.refresh,
+    accountIdentity: serAccount(acc.accountIdentity),
     registrationId: acc.device.registrationId,
     identity: serializeIdentity(acc.device.identity),
     signedPrekey: serSpk(acc.device.signedPrekey),
@@ -711,24 +718,30 @@ export function newDeviceMaterial() {
   return createLocalDevice();
 }
 
-export function accountAddress(acc: Pick<Account, "device">): string {
-  return encodeUserUri(acc.device.identity.ed25519Public);
+export function newAccountKey(): SignKeyPair {
+  return generateEd25519();
+}
+
+export function accountAddress(acc: Pick<Account, "accountIdentity">): string {
+  return encodeUserUri(acc.accountIdentity.publicKey);
 }
 
 export { encodeUserUri, parseUserUri };
 
 export async function registerWithIdentity(
+  account: SignKeyPair,
   mat: ReturnType<typeof createLocalDevice>,
   name: string,
   lockPin?: string,
 ) {
   const ch = await api("/v1/auth/challenge", null, { method: "POST", body: "{}" });
   const proof = encodeAuthProof(String(ch.challenge_id), String(ch.nonce));
-  const signature = sign(mat.identity.ed25519Private, proof);
+  const signature = sign(account.privateKey, proof);
   return api("/v1/auth/register-key", null, {
     method: "POST",
     body: JSON.stringify({
       challenge_id: ch.challenge_id,
+      account_ed25519: b64(account.publicKey),
       signature: b64(signature),
       registration_lock: lockPin || undefined,
       device: publicDevicePayload(mat, name, "web"),
@@ -1503,6 +1516,7 @@ export function accountFromSession(
     refresh_token: string;
   },
   mat: ReturnType<typeof createLocalDevice>,
+  account: SignKeyPair,
 ): Account {
   return {
     userId: res.user.id,
@@ -1512,6 +1526,7 @@ export function accountFromSession(
     about: "",
     access: res.access_token,
     refresh: res.refresh_token,
+    accountIdentity: account,
     device: { ...mat, userId: res.user.id, deviceId: res.device_id },
     sessions: {},
     messages: {},
@@ -1545,6 +1560,7 @@ export function backupPlaintext(acc: Account): Uint8Array {
     about: acc.about,
     access: secrets.access,
     refresh: secrets.refresh,
+    accountIdentity: serAccount(acc.accountIdentity),
     registrationId: acc.device.registrationId,
     identity: serializeIdentity(acc.device.identity),
     signedPrekey: serSpk(acc.device.signedPrekey),
@@ -1590,7 +1606,7 @@ function openBackupStore(raw: string, passphrase: string): Stored {
   const stored = JSON.parse(fromUtf8(openBackup(passphrase, decodeBackup(raw)))) as Stored;
   if (
     planBackupAccept({
-      hasIdentity: Boolean(stored.identity),
+      hasIdentity: Boolean(stored.identity || stored.accountIdentity),
       access: stored.access ?? "",
       refresh: stored.refresh ?? "",
     }) !== "accept"
@@ -1620,6 +1636,30 @@ export function materialFromBackup(raw: string, passphrase: string): ReturnType<
   return materialFromStored(openBackupStore(raw, passphrase));
 }
 
+function serAccount(k: SignKeyPair): { privateKey: string; publicKey: string } {
+  return { privateKey: b64(k.privateKey), publicKey: b64(k.publicKey) };
+}
+
+function resolveAccountIdentity(stored: Stored): SignKeyPair {
+  const source = planAccountKeySource({
+    hasAccountIdentity: Boolean(stored.accountIdentity?.privateKey && stored.accountIdentity?.publicKey),
+    hasDeviceIdentity: Boolean(stored.identity),
+  });
+  if (source === "drop") throw new Error("invalid backup");
+  if (source === "account" && stored.accountIdentity) {
+    return {
+      privateKey: b64u(stored.accountIdentity.privateKey),
+      publicKey: b64u(stored.accountIdentity.publicKey),
+    };
+  }
+  const id = deserializeIdentity(stored.identity);
+  return { privateKey: id.ed25519Private, publicKey: id.ed25519Public };
+}
+
+export function accountKeyFromBackup(raw: string, passphrase: string): SignKeyPair {
+  return resolveAccountIdentity(openBackupStore(raw, passphrase));
+}
+
 export async function restoreFromBackup(
   raw: string,
   passphrase: string,
@@ -1627,9 +1667,18 @@ export async function restoreFromBackup(
   lockPin?: string,
 ): Promise<{ account: Account; isNew: boolean }> {
   const stored = openBackupStore(raw, passphrase);
-  const mat = materialFromStored(stored);
-  const res = await registerWithIdentity(mat, name, lockPin);
-  const acc = accountFromSession(res, mat);
+  if (
+    planRestoreDevice({
+      hasAccountIdentity: Boolean(stored.accountIdentity),
+      hasDeviceIdentity: Boolean(stored.identity),
+    }) !== "new-device"
+  ) {
+    throw new Error("invalid backup");
+  }
+  const accountKey = resolveAccountIdentity(stored);
+  const mat = createLocalDevice();
+  const res = await registerWithIdentity(accountKey, mat, name, lockPin);
+  const acc = accountFromSession(res, mat, accountKey);
   mergeBackupHistoryInto(acc, stored);
   return { account: acc, isNew: Boolean(res.user.is_new) };
 }
@@ -1735,6 +1784,7 @@ interface Stored {
   about: string;
   access: string;
   refresh: string;
+  accountIdentity?: { privateKey: string; publicKey: string };
   registrationId: number;
   identity: string;
   signedPrekey: StoredSpk;
