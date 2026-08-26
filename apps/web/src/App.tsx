@@ -9,6 +9,7 @@ import {
   clearAccount,
   computeSafety,
   createBackupFile,
+  confirmPendingMembership,
   createSignedGroup,
   distributeOwnSenderKey,
   downloadAndDecrypt,
@@ -27,6 +28,7 @@ import {
   realtimeUrl,
   openEnvelope,
   publicDevicePayload,
+  rejectPendingMembership,
   replenishPrekeys,
   resolveSenderEd25519,
   saveAccount,
@@ -83,6 +85,7 @@ export function App() {
     if (!next.remoteSenderKeys) next.remoteSenderKeys = {};
     if (!next.replay) next.replay = { ids: [] };
     if (!next.memberships) next.memberships = {};
+    if (!next.pendingMemberships) next.pendingMemberships = {};
     saveAccount(next);
     setAcc({ ...next, sessions: next.sessions, messages: { ...next.messages }, threads: [...next.threads] });
   }, []);
@@ -237,6 +240,7 @@ function Auth({
         signedPrekeyAt: Date.now(),
         replay: { ids: [] },
         memberships: {},
+        pendingMemberships: {},
       };
       if (restoreRaw) {
         try {
@@ -1025,6 +1029,15 @@ function Shell({
     };
   }
 
+  async function confirmGroupMembership(groupId: string) {
+    const result = confirmPendingMembership(acc, groupId);
+    if (!result) return;
+    if (result.added.length) {
+      await distributeOwnSenderKey(acc, groupId, result.applied.epoch, result.added);
+    }
+    persist(acc);
+  }
+
   async function createGroup(name: string, ids: string[]) {
     const created = await createSignedGroup(acc, ids);
     acc.threads.unshift({
@@ -1252,6 +1265,23 @@ function Shell({
                   )}
                 </div>
               </div>
+              {thread.groupId && acc.pendingMemberships?.[thread.groupId] && (
+                <div className="hint" style={{ padding: "8px 16px", color: "var(--danger)" }}>
+                  {t(lang, "membershipConfirm")}{" "}
+                  <button className="primary" onClick={() => void confirmGroupMembership(thread.groupId!)}>
+                    {t(lang, "accept")}
+                  </button>{" "}
+                  <button
+                    className="ghost"
+                    onClick={() => {
+                      rejectPendingMembership(acc, thread.groupId!);
+                      persist(acc);
+                    }}
+                  >
+                    {t(lang, "decline")}
+                  </button>
+                </div>
+              )}
               <div className="messages">
                 {messages
                   .filter((m) => !m.expiresAt || new Date(m.expiresAt).getTime() > Date.now())

@@ -444,6 +444,135 @@ describe("API integration", () => {
     assert.equal(eveEnvs.some((e) => e.group_id === groupId), false);
   });
 
+  it("rejects a SQL-promoted signer who was not a prior admin", async () => {
+    const aDev = devicePayload("alice-prior");
+    const bDev = devicePayload("bob-prior");
+    const eDev = devicePayload("eve-prior");
+
+    async function signup(phone: string, username: string, dev: ReturnType<typeof devicePayload>) {
+      const otp = await json("POST", "/v1/auth/request-otp", { phone_e164: phone });
+      const verified = await json("POST", "/v1/auth/verify-otp", {
+        challenge_id: otp.body.challenge_id,
+        otp: otp.body.dev_otp,
+        device: dev.json,
+      });
+      assert.equal(verified.status, 200, JSON.stringify(verified.body));
+      const tok = verified.body.access_token as string;
+      await json("PUT", "/v1/me", { username, display_name: username }, tok);
+      return {
+        tok,
+        userId: (verified.body.user as { id: string }).id,
+        deviceId: verified.body.device_id as string,
+      };
+    }
+
+    const alice = await signup("+79990000081", "aliceprior", aDev);
+    const bob = await signup("+79990000082", "bobprior", bDev);
+    const eve = await signup("+79990000083", "eveprior", eDev);
+    const groupId = crypto.randomUUID();
+    const signed = signMembership(
+      {
+        groupId,
+        epoch: 1,
+        members: [
+          { userId: alice.userId, role: "admin" },
+          { userId: bob.userId, role: "member" },
+        ],
+      },
+      aDev.mat.identity,
+    );
+    const created = await json(
+      "POST",
+      "/v1/groups",
+      {
+        id: groupId,
+        member_ids: [bob.userId],
+        membership: {
+          epoch: 1,
+          members: signed.members.map((m) => ({ user_id: m.userId, role: m.role })),
+          signer_user_id: alice.userId,
+          signer_device_id: alice.deviceId,
+          signature: Buffer.from(signed.signature).toString("base64"),
+        },
+      },
+      alice.tok,
+    );
+    assert.equal(created.status, 200, JSON.stringify(created.body));
+
+    const db = await getDb();
+    await db.query("UPDATE group_members SET role = $3 WHERE group_id = $1 AND user_id = $2", [
+      groupId,
+      bob.userId,
+      "admin",
+    ]);
+
+    const rogue = signMembership(
+      {
+        groupId,
+        epoch: 2,
+        members: [
+          { userId: alice.userId, role: "admin" },
+          { userId: bob.userId, role: "admin" },
+          { userId: eve.userId, role: "member" },
+        ],
+      },
+      bDev.mat.identity,
+    );
+    const injected = await json(
+      "POST",
+      `/v1/groups/${groupId}/members`,
+      {
+        user_id: eve.userId,
+        membership: {
+          epoch: 2,
+          members: rogue.members.map((m) => ({ user_id: m.userId, role: m.role })),
+          signer_user_id: bob.userId,
+          signer_device_id: bob.deviceId,
+          signature: Buffer.from(rogue.signature).toString("base64"),
+        },
+      },
+      bob.tok,
+    );
+    assert.equal(injected.status, 403, JSON.stringify(injected.body));
+    assert.equal((injected.body.error as { message?: string } | undefined)?.message, "Signer is not a prior admin");
+
+    await db.query("UPDATE group_members SET role = $3 WHERE group_id = $1 AND user_id = $2", [
+      groupId,
+      bob.userId,
+      "member",
+    ]);
+
+    const legit = signMembership(
+      {
+        groupId,
+        epoch: 2,
+        members: [
+          { userId: alice.userId, role: "admin" },
+          { userId: bob.userId, role: "member" },
+          { userId: eve.userId, role: "member" },
+        ],
+      },
+      aDev.mat.identity,
+    );
+    const added = await json(
+      "POST",
+      `/v1/groups/${groupId}/members`,
+      {
+        user_id: eve.userId,
+        membership: {
+          epoch: 2,
+          members: legit.members.map((m) => ({ user_id: m.userId, role: m.role })),
+          signer_user_id: alice.userId,
+          signer_device_id: alice.deviceId,
+          signature: Buffer.from(legit.signature).toString("base64"),
+        },
+      },
+      alice.tok,
+    );
+    assert.equal(added.status, 200, JSON.stringify(added.body));
+    assert.equal(added.body.epoch, 2);
+  });
+
   it("issues call rooms without SDP and rejects blocked callees", async () => {
     async function signup(phone: string, username: string) {
       const otp = await json("POST", "/v1/auth/request-otp", { phone_e164: phone });

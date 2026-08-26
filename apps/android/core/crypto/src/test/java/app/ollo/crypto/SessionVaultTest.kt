@@ -60,6 +60,34 @@ class SessionVaultTest {
         assertEquals(listOf("eve"), extra)
         assertEquals(listOf("a", "b"), Membership.planFanoutRecipients(listOf("a", "b"), listOf("a", "b", "eve")))
         assertEquals(emptyList<String>(), Membership.planFanoutRecipients(emptyList(), listOf("a", "eve")))
+        val alice = Membership.Member("a", "admin")
+        val eve = Membership.Member("eve", "member")
+        assertEquals(
+            Membership.Decision.Confirm,
+            Membership.planApply(
+                Membership.Local(1, h1),
+                2,
+                "bb",
+                true,
+                "admin",
+                "a",
+                listOf(alice),
+                listOf(alice, eve),
+            ),
+        )
+        assertEquals(
+            Membership.Decision.Drop,
+            Membership.planApply(
+                Membership.Local(1, h1),
+                2,
+                "bb",
+                true,
+                "admin",
+                "eve",
+                listOf(alice),
+                listOf(eve, Membership.Member("a", "member")),
+            ),
+        )
     }
 
     @Test

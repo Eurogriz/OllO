@@ -29,6 +29,8 @@ A change that touches any of these is incomplete without tests:
 - Device registration and revoke
 - Group membership + epoch
 - Invite-join stays pending; fan-out skips unsigned extras
+- Prior-admin on stored signed JSON; SQL role upgrade cannot sign
+- Membership `confirm` on add; sender keys wait for `confirmPendingMembership`
 - Message ordering and de-dupe
 - Attachment encrypt / digest / grant
 - Reconnect / resume

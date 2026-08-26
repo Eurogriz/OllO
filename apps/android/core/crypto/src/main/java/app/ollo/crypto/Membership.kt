@@ -15,7 +15,7 @@ object Membership {
 
     data class Local(val epoch: Int, val hash: String)
 
-    enum class Decision { Accept, Unchanged, Stale, Drop }
+    enum class Decision { Accept, Confirm, Unchanged, Stale, Drop }
 
     fun canonicalize(members: List<Member>): List<Member> {
         val sorted = members.sortedBy { it.userId }
@@ -57,20 +57,43 @@ object Membership {
         return digest.joinToString("") { b -> "%02x".format(b.toInt() and 0xff) }
     }
 
+    fun planDelta(
+        local: List<Member>,
+        incoming: List<Member>,
+    ): Triple<List<String>, List<String>, List<String>> {
+        val loc = local.filter { it.userId.isNotEmpty() }.associate { it.userId to it.role }
+        val inc = incoming.filter { it.userId.isNotEmpty() }.associate { it.userId to it.role }
+        val added = inc.keys.filter { it !in loc }
+        val removed = loc.keys.filter { it !in inc }
+        val roleChanged = inc.keys.filter { it in loc && loc[it] != inc[it] }
+        return Triple(added, removed, roleChanged)
+    }
+
     fun planApply(
         local: Local?,
         incomingEpoch: Int,
         incomingHash: String,
         signatureValid: Boolean,
         signerRole: String,
+        signerUserId: String? = null,
+        localMembers: List<Member>? = null,
+        incomingMembers: List<Member>? = null,
     ): Decision {
         if (!signatureValid) return Decision.Drop
         if (signerRole != "admin") return Decision.Drop
         if (incomingEpoch < 1 || incomingHash.isEmpty()) return Decision.Drop
+        if (localMembers != null && signerUserId != null) {
+            val prior = localMembers.find { it.userId == signerUserId }
+            if (prior == null || prior.role != "admin") return Decision.Drop
+        }
         if (local == null) return Decision.Accept
         if (incomingEpoch < local.epoch) return Decision.Stale
         if (incomingEpoch == local.epoch) {
             return if (incomingHash == local.hash) Decision.Unchanged else Decision.Drop
+        }
+        if (localMembers != null && incomingMembers != null) {
+            val (added, _, roleChanged) = planDelta(localMembers, incomingMembers)
+            if (added.isNotEmpty() || roleChanged.isNotEmpty()) return Decision.Confirm
         }
         return Decision.Accept
     }

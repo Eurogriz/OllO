@@ -51,6 +51,34 @@ final class SessionVaultTests: XCTestCase {
             Set(["a", "b"])
         )
         XCTAssertEqual(Membership.planFanoutRecipients(signedUserIds: [], serverUserIds: ["a", "eve"]), [])
+        let alice = Membership.Member(userId: "a", role: "admin")
+        let eve = Membership.Member(userId: "eve", role: "member")
+        XCTAssertEqual(
+            Membership.planApply(
+                local: Membership.Local(epoch: 1, hash: h1),
+                incomingEpoch: 2,
+                incomingHash: "bb",
+                signatureValid: true,
+                signerRole: "admin",
+                signerUserId: "a",
+                localMembers: [alice],
+                incomingMembers: [alice, eve]
+            ),
+            .confirm
+        )
+        XCTAssertEqual(
+            Membership.planApply(
+                local: Membership.Local(epoch: 1, hash: h1),
+                incomingEpoch: 2,
+                incomingHash: "bb",
+                signatureValid: true,
+                signerRole: "admin",
+                signerUserId: "eve",
+                localMembers: [alice],
+                incomingMembers: [eve, Membership.Member(userId: "a", role: "member")]
+            ),
+            .drop
+        )
     }
 
     func testDropsAReplayedEnvelopeAndClearsOnWipe() throws {

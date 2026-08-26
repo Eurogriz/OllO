@@ -17,6 +17,7 @@ import {
   type ReplayCache,
   retainUnexpired,
   planMembershipApply,
+  planMembershipDelta,
   planTrustedMembers,
 } from "@ollo/shared";
 import {
@@ -140,6 +141,7 @@ export interface Account {
   signedPrekeyAt?: number;
   replay: ReplayCache;
   memberships: Record<string, LocalGroupMembership>;
+  pendingMemberships: Record<string, LocalGroupMembership>;
 }
 
 export interface LocalGroupMembership {
@@ -199,8 +201,9 @@ function wireMembership(
 export function rememberMembership(
   acc: Account,
   next: LocalGroupMembership,
-): "accept" | "unchanged" | "stale" | "drop" {
+): "accept" | "confirm" | "unchanged" | "stale" | "drop" {
   if (!acc.memberships) acc.memberships = {};
+  if (!acc.pendingMemberships) acc.pendingMemberships = {};
   const local = acc.memberships[next.groupId];
   const signerRole = next.members.find((m) => m.userId === next.signerUserId)?.role ?? "";
   const decision = planMembershipApply({
@@ -209,9 +212,36 @@ export function rememberMembership(
     incomingHash: next.hash,
     signatureValid: true,
     signerRole,
+    signerUserId: next.signerUserId,
+    localMembers: local?.members,
+    incomingMembers: next.members,
   });
-  if (decision === "accept") acc.memberships[next.groupId] = next;
+  if (decision === "accept") {
+    acc.memberships[next.groupId] = next;
+    delete acc.pendingMemberships[next.groupId];
+  }
+  if (decision === "confirm") acc.pendingMemberships[next.groupId] = next;
   return decision;
+}
+
+/** Apply a confirmed roster. Caller must distribute sender keys to `added` only after this. */
+export function confirmPendingMembership(
+  acc: Account,
+  groupId: string,
+): { applied: LocalGroupMembership; added: string[] } | null {
+  if (!acc.memberships) acc.memberships = {};
+  if (!acc.pendingMemberships) acc.pendingMemberships = {};
+  const pending = acc.pendingMemberships[groupId];
+  if (!pending) return null;
+  const local = acc.memberships[groupId];
+  const added = planMembershipDelta(local?.members ?? [], pending.members).added;
+  acc.memberships[groupId] = pending;
+  delete acc.pendingMemberships[groupId];
+  return { applied: pending, added };
+}
+
+export function rejectPendingMembership(acc: Account, groupId: string): void {
+  if (acc.pendingMemberships) delete acc.pendingMemberships[groupId];
 }
 
 export async function createSignedGroup(
@@ -277,6 +307,13 @@ async function trustedGroupMembers(acc: Account, groupId: string, serverRows: { 
     signerDeviceId: membership.signer_device_id,
   });
   if (decision === "drop" || decision === "stale") throw new Error("unsigned_membership");
+  if (decision === "confirm") {
+    const localIds = (acc.memberships[groupId]?.members ?? []).map((m) => m.userId);
+    return planTrustedMembers(
+      localIds,
+      serverRows.map((m) => m.user_id),
+    ).trusted;
+  }
   const plan = planTrustedMembers(
     members.map((m) => m.userId),
     serverRows.map((m) => m.user_id),
@@ -404,6 +441,7 @@ function accountFromStored(j: Stored): Account {
     signedPrekeyAt: j.signedPrekeyAt,
     replay: j.replay?.ids ? { ids: [...j.replay.ids] } : emptyReplayCache(),
     memberships: j.memberships ?? {},
+    pendingMemberships: j.pendingMemberships ?? {},
   };
 }
 
@@ -444,6 +482,7 @@ export function saveAccount(acc: Account): void {
     signedPrekeyAt: acc.signedPrekeyAt,
     replay: acc.replay ?? emptyReplayCache(),
     memberships: acc.memberships ?? {},
+    pendingMemberships: acc.pendingMemberships ?? {},
   };
   const sealed = sealVault(ensureVaultKey(), utf8(JSON.stringify(stored)));
   localStorage.setItem(VAULT_STORE, encodeVault(sealed));
@@ -1003,6 +1042,7 @@ export function backupPlaintext(acc: Account): Uint8Array {
     ),
     replay: emptyReplayCache(),
     memberships: acc.memberships ?? {},
+    pendingMemberships: acc.pendingMemberships ?? {},
   };
   return utf8(JSON.stringify(stored));
 }
@@ -1036,6 +1076,7 @@ export function mergeBackupHistory(acc: Account, raw: string, passphrase: string
   acc.knownIdentities = { ...stored.knownIdentities, ...acc.knownIdentities };
   acc.pinned = { ...stored.pinned, ...acc.pinned };
   acc.memberships = { ...(stored.memberships ?? {}), ...acc.memberships };
+  acc.pendingMemberships = { ...(stored.pendingMemberships ?? {}), ...(acc.pendingMemberships ?? {}) };
 }
 
 export function searchLocal(acc: Account, q: string): ChatMessage[] {
@@ -1111,4 +1152,5 @@ interface Stored {
   signedPrekeyAt?: number;
   replay?: ReplayCache;
   memberships?: Record<string, LocalGroupMembership>;
+  pendingMemberships?: Record<string, LocalGroupMembership>;
 }

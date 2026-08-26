@@ -124,8 +124,9 @@ Each member, per group, per device, holds a Sender Key:
   chain key still cannot forge as that sender
 - On member **remove** or device revoke: increment group epoch, all members
   generate fresh sender keys and redistribute
-- On member **add**: current members send them the current sender keys over
-  1:1 (they cannot read history before the add unless someone forwards it)
+- On member **add**: after `confirmPendingMembership`, current members send
+  them the current sender keys over 1:1 (they cannot read history before the
+  add unless someone forwards it)
 - Server copies the **same** opaque ciphertext to every other member device
   (`POST /v1/groups/:id/fanout`). It cannot derive sender keys.
 
@@ -134,14 +135,18 @@ Server cannot derive sender keys.
 
 Membership changes are an Ed25519 statement
 (`ollo-membership-v1 || groupId || epoch || sorted userId/role`) signed by
-an admin identity key (`signMembership`). Clients apply
-`planMembershipApply` and refuse sender-key distribution or a group send
-when `planTrustedMembers` reports a server-only extra id. The server
-stores the latest signature so a new device can fetch it; a compromised
-server can still insert a SQL row (availability) but cannot mint a valid
-admin signature. Invite-join is pending only (`used_by`, no live row, no
-epoch bump). Fan-out uses `planFanoutRecipients` so a server-only extra id
-does not get a mailbox copy. This is not MLS.
+an admin identity key (`signMembership`). `requireSignedMembership` accepts
+the signer only if they were **admin in the previous stored signed JSON**.
+A SQL `UPDATE` of `group_members.role` cannot mint signing power. Clients
+apply `planMembershipApply`: first roster and removals `accept`; an add or
+role change returns `confirm`. Web keeps the incoming roster in
+`pendingMemberships` and does **not** distribute sender keys to added ids
+until `confirmPendingMembership`. A stolen real admin can still sign a
+rogue add; honest devices withhold their sender keys until the user
+confirms. `planTrustedMembers` still refuses a server-only extra id.
+Invite-join is pending only (`used_by`, no live row, no epoch bump).
+Fan-out uses `planFanoutRecipients` so a server-only extra id does not get
+a mailbox copy. This is not MLS.
 
 Evolution path (not in v1 code): IETF MLS (RFC 9420) via OpenMLS. The
 envelope `alg` field is versioned so we can migrate.

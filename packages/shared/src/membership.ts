@@ -3,11 +3,24 @@
  * this only decides whether a verified roster replaces local state
  * and which user ids may receive sender keys.
  */
-export type MembershipDecision = "accept" | "unchanged" | "stale" | "drop";
+export type MembershipDecision = "accept" | "confirm" | "unchanged" | "stale" | "drop";
 
 export interface LocalMembership {
   epoch: number;
   hash: string;
+}
+
+export function planMembershipDelta(
+  local: { userId: string; role: string }[],
+  incoming: { userId: string; role: string }[],
+): { added: string[]; removed: string[]; roleChanged: string[] } {
+  const loc = new Map(local.filter((m) => m.userId).map((m) => [m.userId, m.role]));
+  const inc = new Map(incoming.filter((m) => m.userId).map((m) => [m.userId, m.role]));
+  return {
+    added: [...inc.keys()].filter((id) => !loc.has(id)),
+    removed: [...loc.keys()].filter((id) => !inc.has(id)),
+    roleChanged: [...inc.keys()].filter((id) => loc.has(id) && loc.get(id) !== inc.get(id)),
+  };
 }
 
 export function planMembershipApply(args: {
@@ -16,14 +29,25 @@ export function planMembershipApply(args: {
   incomingHash: string;
   signatureValid: boolean;
   signerRole: string;
+  signerUserId?: string;
+  localMembers?: { userId: string; role: string }[];
+  incomingMembers?: { userId: string; role: string }[];
 }): MembershipDecision {
   if (!args.signatureValid) return "drop";
   if (args.signerRole !== "admin") return "drop";
   if (args.incomingEpoch < 1 || !args.incomingHash) return "drop";
+  if (args.localMembers && args.signerUserId) {
+    const prior = args.localMembers.find((m) => m.userId === args.signerUserId);
+    if (!prior || prior.role !== "admin") return "drop";
+  }
   if (!args.local) return "accept";
   if (args.incomingEpoch < args.local.epoch) return "stale";
   if (args.incomingEpoch === args.local.epoch) {
     return args.incomingHash === args.local.hash ? "unchanged" : "drop";
+  }
+  if (args.localMembers && args.incomingMembers) {
+    const delta = planMembershipDelta(args.localMembers, args.incomingMembers);
+    if (delta.added.length || delta.roleChanged.length) return "confirm";
   }
   return "accept";
 }

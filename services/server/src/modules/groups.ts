@@ -43,6 +43,23 @@ async function liveMembers(db: Db, groupId: string) {
   return r.rows.map((m) => ({ userId: m.user_id, role: m.role }));
 }
 
+/** Previous signed roster only. SQL role is not authority to sign. */
+async function loadStoredMembers(db: Db, groupId: string): Promise<{ userId: string; role: string }[] | null> {
+  const r = await db.query<{ membership_json: string | null }>(
+    "SELECT membership_json FROM groups WHERE id = $1",
+    [groupId],
+  );
+  const raw = r.rows[0]?.membership_json;
+  if (!raw) return null;
+  try {
+    const members = JSON.parse(raw) as Array<{ user_id: string; role: string }>;
+    if (!Array.isArray(members) || members.length === 0) return null;
+    return members.map((m) => ({ userId: m.user_id, role: m.role }));
+  } catch {
+    return null;
+  }
+}
+
 async function loadSignerEd25519(db: Db, userId: string, deviceId: string): Promise<Uint8Array> {
   const r = await db.query<{ identity_ed25519: Uint8Array }>(
     "SELECT identity_ed25519 FROM devices WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL",
@@ -78,6 +95,13 @@ async function requireSignedMembership(
   }
   const signerRole = rows.find((m) => m.userId === body.signer_user_id)?.role;
   if (signerRole !== "admin") throw new ApiError("forbidden", "Signer is not an admin", 403);
+  const prior = await loadStoredMembers(db, groupId);
+  if (prior) {
+    const prevRole = prior.find((m) => m.userId === body.signer_user_id)?.role;
+    if (prevRole !== "admin") {
+      throw new ApiError("forbidden", "Signer is not a prior admin", 403);
+    }
+  }
   const pub = await loadSignerEd25519(db, body.signer_user_id, body.signer_device_id);
   const ok = verifyMembership({
     groupId,

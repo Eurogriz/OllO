@@ -67,6 +67,7 @@ const dict = {
     backup: "Резервная копия",
     restore: "Восстановить",
     screenshare: "Экран",
+    membershipConfirm: "Состав группы изменился. Подтвердите, прежде чем новые участники получат ключи.",
   },
   en: {
     tagline: "Private messages. The server cannot read them.",
@@ -134,6 +135,7 @@ const dict = {
     backup: "Backup",
     restore: "Restore",
     screenshare: "Share screen",
+    membershipConfirm: "Group membership changed. Confirm before new members receive sender keys.",
   },
 } as const;
 

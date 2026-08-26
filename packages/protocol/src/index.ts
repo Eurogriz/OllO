@@ -219,6 +219,7 @@ export type ApiErrorCode =
   | "device_revoked"
   | "prekeys_exhausted"
   | "payload_too_large"
+  | "unsigned_membership"
   | "unsupported_version"
   | "internal";
 

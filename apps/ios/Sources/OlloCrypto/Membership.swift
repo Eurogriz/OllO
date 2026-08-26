@@ -28,6 +28,7 @@ public enum Membership {
 
     public enum Decision: String, Sendable {
         case accept
+        case confirm
         case unchanged
         case stale
         case drop
@@ -78,20 +79,41 @@ public enum Membership {
         return SHA256.hash(data: body).map { String(format: "%02x", $0) }.joined()
     }
 
+    public static func planDelta(local: [Member], incoming: [Member]) -> (added: [String], removed: [String], roleChanged: [String]) {
+        let loc = Dictionary(uniqueKeysWithValues: local.filter { !$0.userId.isEmpty }.map { ($0.userId, $0.role) })
+        let inc = Dictionary(uniqueKeysWithValues: incoming.filter { !$0.userId.isEmpty }.map { ($0.userId, $0.role) })
+        return (
+            inc.keys.filter { loc[$0] == nil }.map { $0 },
+            loc.keys.filter { inc[$0] == nil }.map { $0 },
+            inc.keys.filter { loc[$0] != nil && loc[$0] != inc[$0] }.map { $0 }
+        )
+    }
+
     public static func planApply(
         local: Local?,
         incomingEpoch: Int,
         incomingHash: String,
         signatureValid: Bool,
-        signerRole: String
+        signerRole: String,
+        signerUserId: String? = nil,
+        localMembers: [Member]? = nil,
+        incomingMembers: [Member]? = nil
     ) -> Decision {
         if !signatureValid { return .drop }
         if signerRole != "admin" { return .drop }
         if incomingEpoch < 1 || incomingHash.isEmpty { return .drop }
+        if let localMembers, let signerUserId {
+            let prior = localMembers.first { $0.userId == signerUserId }
+            if prior == nil || prior?.role != "admin" { return .drop }
+        }
         guard let local else { return .accept }
         if incomingEpoch < local.epoch { return .stale }
         if incomingEpoch == local.epoch {
             return incomingHash == local.hash ? .unchanged : .drop
+        }
+        if let localMembers, let incomingMembers {
+            let delta = planDelta(local: localMembers, incoming: incomingMembers)
+            if !delta.added.isEmpty || !delta.roleChanged.isEmpty { return .confirm }
         }
         return .accept
     }
