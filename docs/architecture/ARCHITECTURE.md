@@ -222,7 +222,9 @@ fabricates a device payload.
   `planFanoutRecipients` (signed ∩ live). Clients `confirm` adds before
   distributing sender keys; removals auto-accept. A declined roster hash
   stays `rejected` until a newer signature; another own device signing
-  the change is `own-other-device`.
+  the change is `own-other-device`. A new device confirms the first
+  roster instead of TOFU-accepting it. Sender-key distributions from
+  unconfirmed ids are held, then installed or discarded.
 
 ### 7.6 Attachments
 

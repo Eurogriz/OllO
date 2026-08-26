@@ -16,10 +16,12 @@ import {
   emptyReplayCache,
   type ReplayCache,
   retainUnexpired,
+  planHeldSenderKeyFlush,
   planMembershipApply,
   planMembershipDelta,
   planMembershipSignerNotice,
   planRejectedHashes,
+  planSenderKeyIngest,
   planTrustedMembers,
 } from "@ollo/shared";
 import {
@@ -139,6 +141,7 @@ export interface Account {
   outbox: OutboxItem[];
   senderKeys: Record<string, SenderKeyState>;
   remoteSenderKeys: Record<string, RemoteSenderKey>;
+  heldSenderKeys: Record<string, RemoteSenderKey>;
   ownRosterHash?: string;
   signedPrekeyAt?: number;
   replay: ReplayCache;
@@ -220,10 +223,13 @@ export function rememberMembership(
     localMembers: local?.members,
     incomingMembers: next.members,
     rejectedHashes: acc.rejectedMemberships[next.groupId],
+    localDeviceId: acc.deviceId,
+    signerDeviceId: next.signerDeviceId,
   });
   if (decision === "accept") {
     acc.memberships[next.groupId] = next;
     delete acc.pendingMemberships[next.groupId];
+    flushHeldSenderKeys(acc, next.groupId, next.members.map((m) => m.userId));
   }
   if (decision === "confirm") acc.pendingMemberships[next.groupId] = next;
   if (decision === "rejected") delete acc.pendingMemberships[next.groupId];
@@ -243,6 +249,7 @@ export function confirmPendingMembership(
   const added = planMembershipDelta(local?.members ?? [], pending.members).added;
   acc.memberships[groupId] = pending;
   delete acc.pendingMemberships[groupId];
+  flushHeldSenderKeys(acc, groupId, pending.members.map((m) => m.userId));
   return { applied: pending, added };
 }
 
@@ -253,6 +260,28 @@ export function rejectPendingMembership(acc: Account, groupId: string): void {
     acc.rejectedMemberships[groupId] = planRejectedHashes(acc.rejectedMemberships[groupId] ?? [], pending.hash);
   }
   if (acc.pendingMemberships) delete acc.pendingMemberships[groupId];
+  const local = acc.memberships?.[groupId];
+  flushHeldSenderKeys(acc, groupId, (local?.members ?? []).map((m) => m.userId));
+}
+
+function senderKeySlot(k: { groupId: string; userId: string; deviceId: string; epoch: number }): string {
+  return `${k.groupId}:${k.userId}:${k.deviceId}:${k.epoch}`;
+}
+
+function flushHeldSenderKeys(acc: Account, groupId: string, trustedUserIds: string[]): void {
+  if (!acc.heldSenderKeys) acc.heldSenderKeys = {};
+  if (!acc.remoteSenderKeys) acc.remoteSenderKeys = {};
+  const prefix = `${groupId}:`;
+  const held = Object.entries(acc.heldSenderKeys)
+    .filter(([slot]) => slot.startsWith(prefix))
+    .map(([slot, k]) => ({ slot, userId: k.userId }));
+  const plan = planHeldSenderKeyFlush(held, trustedUserIds);
+  for (const slot of plan.install) {
+    const k = acc.heldSenderKeys[slot];
+    if (k) acc.remoteSenderKeys[slot] = k;
+    delete acc.heldSenderKeys[slot];
+  }
+  for (const slot of plan.discard) delete acc.heldSenderKeys[slot];
 }
 
 export function pendingMembershipNotice(
@@ -486,6 +515,9 @@ function accountFromStored(j: Stored): Account {
     remoteSenderKeys: Object.fromEntries(
       Object.entries(j.remoteSenderKeys ?? {}).map(([k, v]) => [k, deserializeRemoteSenderKey(v)]),
     ),
+    heldSenderKeys: Object.fromEntries(
+      Object.entries(j.heldSenderKeys ?? {}).map(([k, v]) => [k, deserializeRemoteSenderKey(v)]),
+    ),
     ownRosterHash: j.ownRosterHash,
     signedPrekeyAt: j.signedPrekeyAt,
     replay: j.replay?.ids ? { ids: [...j.replay.ids] } : emptyReplayCache(),
@@ -527,6 +559,9 @@ export function saveAccount(acc: Account): void {
     ),
     remoteSenderKeys: Object.fromEntries(
       Object.entries(acc.remoteSenderKeys ?? {}).map(([k, v]) => [k, serializeRemoteSenderKey(v)]),
+    ),
+    heldSenderKeys: Object.fromEntries(
+      Object.entries(acc.heldSenderKeys ?? {}).map(([k, v]) => [k, serializeRemoteSenderKey(v)]),
     ),
     ownRosterHash: acc.ownRosterHash,
     signedPrekeyAt: acc.signedPrekeyAt,
@@ -834,8 +869,22 @@ export function ingestSenderKey(
     userId: senderUserId,
     deviceId: senderDeviceId,
   });
+  const trusted = (acc.memberships?.[remote.groupId]?.members ?? []).map((m) => m.userId);
+  const pending = (acc.pendingMemberships?.[remote.groupId]?.members ?? []).map((m) => m.userId);
+  const decision = planSenderKeyIngest({
+    trustedUserIds: trusted,
+    pendingUserIds: pending,
+    senderUserId,
+  });
+  if (decision === "drop") return;
+  const slot = senderKeySlot(remote);
+  if (decision === "hold") {
+    if (!acc.heldSenderKeys) acc.heldSenderKeys = {};
+    acc.heldSenderKeys[slot] = remote;
+    return;
+  }
   if (!acc.remoteSenderKeys) acc.remoteSenderKeys = {};
-  acc.remoteSenderKeys[`${remote.groupId}:${remote.userId}:${remote.deviceId}:${remote.epoch}`] = remote;
+  acc.remoteSenderKeys[slot] = remote;
 }
 
 export function ensureOwnSenderKey(acc: Account, groupId: string, epoch: number): SenderKeyState {
@@ -1091,6 +1140,9 @@ export function backupPlaintext(acc: Account): Uint8Array {
     remoteSenderKeys: Object.fromEntries(
       Object.entries(acc.remoteSenderKeys ?? {}).map(([k, v]) => [k, serializeRemoteSenderKey(v)]),
     ),
+    heldSenderKeys: Object.fromEntries(
+      Object.entries(acc.heldSenderKeys ?? {}).map(([k, v]) => [k, serializeRemoteSenderKey(v)]),
+    ),
     replay: emptyReplayCache(),
     memberships: acc.memberships ?? {},
     pendingMemberships: acc.pendingMemberships ?? {},
@@ -1207,6 +1259,7 @@ interface Stored {
   outbox: OutboxItem[];
   senderKeys?: Record<string, string>;
   remoteSenderKeys?: Record<string, string>;
+  heldSenderKeys?: Record<string, string>;
   ownRosterHash?: string;
   signedPrekeyAt?: number;
   replay?: ReplayCache;

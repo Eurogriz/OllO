@@ -114,7 +114,9 @@ public enum Membership {
         signerUserId: String? = nil,
         localMembers: [Member]? = nil,
         incomingMembers: [Member]? = nil,
-        rejectedHashes: [String] = []
+        rejectedHashes: [String] = [],
+        localDeviceId: String? = nil,
+        signerDeviceId: String? = nil
     ) -> Decision {
         if !signatureValid { return .drop }
         if signerRole != "admin" { return .drop }
@@ -124,7 +126,12 @@ public enum Membership {
             let prior = localMembers.first { $0.userId == signerUserId }
             if prior == nil || prior?.role != "admin" { return .drop }
         }
-        guard let local else { return .accept }
+        guard let local else {
+            if let localDeviceId, let signerDeviceId {
+                return localDeviceId == signerDeviceId ? .accept : .confirm
+            }
+            return .accept
+        }
         if incomingEpoch < local.epoch { return .stale }
         if incomingEpoch == local.epoch {
             return incomingHash == local.hash ? .unchanged : .drop
@@ -134,6 +141,21 @@ public enum Membership {
             if !delta.added.isEmpty || !delta.roleChanged.isEmpty { return .confirm }
         }
         return .accept
+    }
+
+    public static func planSenderKeyIngest(trustedUserIds: [String], pendingUserIds: [String], senderUserId: String) -> String {
+        if senderUserId.isEmpty { return "drop" }
+        if trustedUserIds.contains(senderUserId) { return "accept" }
+        if pendingUserIds.contains(senderUserId) { return "hold" }
+        return "drop"
+    }
+
+    public static func planHeldSenderKeyFlush(held: [(slot: String, userId: String)], trustedUserIds: [String]) -> (install: [String], discard: [String]) {
+        let trusted = Set(trustedUserIds.filter { !$0.isEmpty })
+        return (
+            held.filter { trusted.contains($0.userId) }.map { $0.slot },
+            held.filter { !trusted.contains($0.userId) }.map { $0.slot }
+        )
     }
 
     public static func trustedMembers(signedUserIds: [String], serverUserIds: [String]) -> (trusted: [String], extra: [String], missing: [String]) {

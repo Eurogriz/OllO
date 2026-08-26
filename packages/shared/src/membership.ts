@@ -62,6 +62,8 @@ export function planMembershipApply(args: {
   localMembers?: { userId: string; role: string }[];
   incomingMembers?: { userId: string; role: string }[];
   rejectedHashes?: string[];
+  localDeviceId?: string;
+  signerDeviceId?: string;
 }): MembershipDecision {
   if (!args.signatureValid) return "drop";
   if (args.signerRole !== "admin") return "drop";
@@ -71,7 +73,12 @@ export function planMembershipApply(args: {
     const prior = args.localMembers.find((m) => m.userId === args.signerUserId);
     if (!prior || prior.role !== "admin") return "drop";
   }
-  if (!args.local) return "accept";
+  if (!args.local) {
+    if (args.localDeviceId && args.signerDeviceId) {
+      return args.localDeviceId === args.signerDeviceId ? "accept" : "confirm";
+    }
+    return "accept";
+  }
   if (args.incomingEpoch < args.local.epoch) return "stale";
   if (args.incomingEpoch === args.local.epoch) {
     return args.incomingHash === args.local.hash ? "unchanged" : "drop";
@@ -94,6 +101,36 @@ export function planTrustedMembers(
     extra: [...server].filter((id) => !signed.has(id)),
     missing: [...signed].filter((id) => !server.has(id)),
   };
+}
+
+/**
+ * Install a sender-key distribution only for locally trusted members.
+ * `hold` = in the pending roster, not yet confirmed (new-device TOFU or add).
+ */
+export function planSenderKeyIngest(args: {
+  trustedUserIds: string[];
+  pendingUserIds: string[];
+  senderUserId: string;
+}): "accept" | "hold" | "drop" {
+  if (!args.senderUserId) return "drop";
+  if (args.trustedUserIds.includes(args.senderUserId)) return "accept";
+  if (args.pendingUserIds.includes(args.senderUserId)) return "hold";
+  return "drop";
+}
+
+export function planHeldSenderKeyFlush(
+  held: { slot: string; userId: string }[],
+  trustedUserIds: string[],
+): { install: string[]; discard: string[] } {
+  const trusted = new Set(trustedUserIds.filter(Boolean));
+  const install: string[] = [];
+  const discard: string[] = [];
+  for (const h of held) {
+    if (!h.slot) continue;
+    if (trusted.has(h.userId)) install.push(h.slot);
+    else discard.push(h.slot);
+  }
+  return { install, discard };
 }
 
 /** Fan-out only to the signed ∩ live intersection. Empty signed roster → nobody. */

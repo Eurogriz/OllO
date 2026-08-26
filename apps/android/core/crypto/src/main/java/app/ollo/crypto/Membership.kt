@@ -94,6 +94,8 @@ object Membership {
         localMembers: List<Member>? = null,
         incomingMembers: List<Member>? = null,
         rejectedHashes: Collection<String> = emptyList(),
+        localDeviceId: String? = null,
+        signerDeviceId: String? = null,
     ): Decision {
         if (!signatureValid) return Decision.Drop
         if (signerRole != "admin") return Decision.Drop
@@ -103,7 +105,12 @@ object Membership {
             val prior = localMembers.find { it.userId == signerUserId }
             if (prior == null || prior.role != "admin") return Decision.Drop
         }
-        if (local == null) return Decision.Accept
+        if (local == null) {
+            if (localDeviceId != null && signerDeviceId != null) {
+                return if (localDeviceId == signerDeviceId) Decision.Accept else Decision.Confirm
+            }
+            return Decision.Accept
+        }
         if (incomingEpoch < local.epoch) return Decision.Stale
         if (incomingEpoch == local.epoch) {
             return if (incomingHash == local.hash) Decision.Unchanged else Decision.Drop
@@ -113,6 +120,20 @@ object Membership {
             if (added.isNotEmpty() || roleChanged.isNotEmpty()) return Decision.Confirm
         }
         return Decision.Accept
+    }
+
+    fun planSenderKeyIngest(trustedUserIds: List<String>, pendingUserIds: List<String>, senderUserId: String): String {
+        if (senderUserId.isEmpty()) return "drop"
+        if (senderUserId in trustedUserIds) return "accept"
+        if (senderUserId in pendingUserIds) return "hold"
+        return "drop"
+    }
+
+    fun planHeldSenderKeyFlush(held: List<Pair<String, String>>, trustedUserIds: List<String>): Pair<List<String>, List<String>> {
+        val trusted = trustedUserIds.filter { it.isNotEmpty() }.toSet()
+        val install = held.filter { it.second in trusted }.map { it.first }
+        val discard = held.filter { it.second !in trusted }.map { it.first }
+        return Pair(install, discard)
     }
 
     fun trustedMembers(signedUserIds: List<String>, serverUserIds: List<String>): Triple<List<String>, List<String>, List<String>> {

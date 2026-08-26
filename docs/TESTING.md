@@ -32,6 +32,7 @@ A change that touches any of these is incomplete without tests:
 - Prior-admin on stored signed JSON; SQL role upgrade cannot sign
 - Membership `confirm` on add; sender keys wait for `confirmPendingMembership`
 - Declined membership hashes stay `rejected`; own-other-device signer notice
+- First roster from another device is `confirm`; sender-key ingest is trusted / hold / drop
 - Message ordering and de-dupe
 - Attachment encrypt / digest / grant
 - Reconnect / resume

@@ -85,6 +85,7 @@ export function App() {
     if (!next.knownIdentities) next.knownIdentities = {};
     if (!next.senderKeys) next.senderKeys = {};
     if (!next.remoteSenderKeys) next.remoteSenderKeys = {};
+    if (!next.heldSenderKeys) next.heldSenderKeys = {};
     if (!next.replay) next.replay = { ids: [] };
     if (!next.memberships) next.memberships = {};
     if (!next.pendingMemberships) next.pendingMemberships = {};
@@ -240,6 +241,7 @@ function Auth({
         outbox: [],
         senderKeys: {},
         remoteSenderKeys: {},
+        heldSenderKeys: {},
         signedPrekeyAt: Date.now(),
         replay: { ids: [] },
         memberships: {},

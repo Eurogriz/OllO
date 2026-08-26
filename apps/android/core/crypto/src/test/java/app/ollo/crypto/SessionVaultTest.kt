@@ -104,6 +104,12 @@ class SessionVaultTest {
         )
         assertEquals("own-other-device", Membership.planSignerNotice("a", "d1", "a", "stolen"))
         assertEquals(listOf("aa", "bb"), Membership.planRejectedHashes(listOf("aa"), "bb"))
+        assertEquals(
+            Membership.Decision.Confirm,
+            Membership.planApply(null, 1, h1, true, "admin", null, null, null, emptyList(), "d1", "stolen"),
+        )
+        assertEquals("hold", Membership.planSenderKeyIngest(listOf("a", "b"), listOf("a", "b", "eve"), "eve"))
+        assertEquals("drop", Membership.planSenderKeyIngest(listOf("a", "b"), listOf("a", "b"), "eve"))
     }
 
     @Test

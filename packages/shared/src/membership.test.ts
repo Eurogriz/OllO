@@ -5,7 +5,9 @@ import {
   planMembershipApply,
   planMembershipDelta,
   planMembershipSignerNotice,
+  planHeldSenderKeyFlush,
   planRejectedHashes,
+  planSenderKeyIngest,
   planTrustedMembers,
   sameMembership,
 } from "./membership.js";
@@ -204,6 +206,44 @@ describe("membership apply planner", () => {
         signerDeviceId: "d9",
       }),
       "other-admin",
+    );
+  });
+
+  it("confirms a first roster signed by another device and holds untrusted sender keys", () => {
+    assert.equal(
+      planMembershipApply({
+        incomingEpoch: 1,
+        incomingHash: "aa",
+        signatureValid: true,
+        signerRole: "admin",
+        localDeviceId: "d1",
+        signerDeviceId: "d1",
+      }),
+      "accept",
+    );
+    assert.equal(
+      planMembershipApply({
+        incomingEpoch: 1,
+        incomingHash: "aa",
+        signatureValid: true,
+        signerRole: "admin",
+        localDeviceId: "d1",
+        signerDeviceId: "stolen",
+      }),
+      "confirm",
+    );
+    assert.equal(planSenderKeyIngest({ trustedUserIds: ["a", "b"], pendingUserIds: ["a", "b", "eve"], senderUserId: "b" }), "accept");
+    assert.equal(planSenderKeyIngest({ trustedUserIds: ["a", "b"], pendingUserIds: ["a", "b", "eve"], senderUserId: "eve" }), "hold");
+    assert.equal(planSenderKeyIngest({ trustedUserIds: ["a", "b"], pendingUserIds: ["a", "b"], senderUserId: "eve" }), "drop");
+    assert.deepEqual(
+      planHeldSenderKeyFlush(
+        [
+          { slot: "g:eve:d:1", userId: "eve" },
+          { slot: "g:b:d:1", userId: "b" },
+        ],
+        ["a", "b"],
+      ),
+      { install: ["g:b:d:1"], discard: ["g:eve:d:1"] },
     );
   });
 });

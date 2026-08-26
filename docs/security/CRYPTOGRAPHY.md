@@ -145,7 +145,10 @@ until `confirmPendingMembership`. A declined hash is stored in
 `rejectedMemberships` (bounded FIFO) so the same signed roster cannot
 re-prompt or receive keys. `planMembershipSignerNotice` is
 `own-other-device` when another of this user's devices signed the change
-— revoke that device if it was not you. A stolen real admin can still
+— revoke that device if it was not you. A first roster signed by another device is `confirm`, not silent TOFU.
+`planSenderKeyIngest` installs keys only for locally trusted members;
+distributions from a pending (unconfirmed) id are held and flushed on
+confirm or discarded on decline. A stolen real admin can still
 distribute **its own** sender keys from the compromised device. `planTrustedMembers` still refuses a server-only extra id.
 Invite-join is pending only (`used_by`, no live row, no epoch bump).
 Fan-out uses `planFanoutRecipients` so a server-only extra id does not get
