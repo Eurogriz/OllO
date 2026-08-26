@@ -81,12 +81,25 @@ describe("TTL expiry job", () => {
        ) VALUES ($1,$2,'revoked','web',1,$3,$3,1,$3,$3, now() - interval '1 day')`,
       [revokedDid, uid, key],
     );
+    await db.query(
+      `INSERT INTO drafts (user_id, device_id, thread_id, ciphertext) VALUES
+         ($1, $2, 'dead-draft', $4),
+         ($1, $3, 'live-draft', $4)`,
+      [uid, revokedDid, did, Buffer.from("opaque-draft")],
+    );
+    await db.query(
+      `INSERT INTO otp_challenges (id, phone_hmac, otp_hash, expires_at) VALUES
+         ('ch-dead', 'hmac-otp', 'hash', now() - interval '1 hour'),
+         ('ch-live', 'hmac-otp', 'hash', now() + interval '5 minutes')`,
+    );
 
     const result = await expireStale(db);
     assert.equal(result.envelopes, 1);
     assert.equal(result.attachments, 1);
     assert.equal(result.prekeys, 1);
     assert.equal(result.revoked_keys, 1);
+    assert.equal(result.otp, 1);
+    assert.equal(result.drafts, 1);
 
     const envs = await db.query<{ id: string }>("SELECT id FROM envelopes");
     assert.deepEqual(envs.rows.map((r) => r.id), [liveEnv]);
@@ -109,5 +122,9 @@ describe("TTL expiry job", () => {
       [revokedDid],
     );
     assert.equal(Number(wiped.rows[0]?.n), 0);
+    const drafts = await db.query<{ thread_id: string }>("SELECT thread_id FROM drafts");
+    assert.deepEqual(drafts.rows.map((r) => r.thread_id), ["live-draft"]);
+    const otps = await db.query<{ id: string }>("SELECT id FROM otp_challenges");
+    assert.deepEqual(otps.rows.map((r) => r.id), ["ch-live"]);
   });
 });

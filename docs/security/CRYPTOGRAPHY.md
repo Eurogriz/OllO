@@ -254,8 +254,12 @@ keep a bounded FIFO of seen envelope ids (`rememberEnvelope`, max 4096)
 in the local vault (`replay.v1`). A duplicate is ACKed but not decrypted
 again, so a replay cannot re-apply a delete, receipt, or reaction. The
 cache is omitted from encrypted backups (a restored device starts empty).
-After eviction, a malicious server could replay an old id; ACK plus TTL
-on the mailbox is the remaining control.
+After eviction, a malicious server could replay an old id; ACK **deletes**
+the mailbox row (Signal-style) and TTL drops undelivered leftovers.
+Revoke, logout, and refresh-reuse wipe session `refresh_hash` to an
+unusable `revoked:` tombstone. A just-rotated hash stays until then so
+reuse can still kill the family. OTP rows are deleted on verify.
+Revoke also deletes that device's drafts.
 
 Push wakeup is **per recipient device**. Another online device of the same
 user must not suppress a wake. Typing, receipts, and control envelopes do

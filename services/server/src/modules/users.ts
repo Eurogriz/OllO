@@ -270,10 +270,13 @@ export async function registerUsers(app: FastifyInstance, db: Db): Promise<void>
         "DELETE FROM envelopes WHERE recipient_device_id = ANY($1::uuid[]) OR sender_device_id = ANY($1::uuid[])",
         [ids],
       );
+      await db.query("DELETE FROM drafts WHERE device_id = ANY($1::uuid[])", [ids]);
     }
-    await db.query("UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL", [
-      auth.userId,
-    ]);
+    await db.query(
+      `UPDATE sessions SET revoked_at = now(), refresh_hash = 'revoked:' || id
+       WHERE user_id = $1 AND refresh_hash NOT LIKE 'revoked:%'`,
+      [auth.userId],
+    );
     await db.query(
       `UPDATE devices SET
          revoked_at = now(),

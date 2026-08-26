@@ -46,7 +46,9 @@ Even a fully honest server necessarily sees:
 - Device identifiers and **public** identity / signed-prekey material of live
   devices. Consumed one-time prekeys keep only a `key_id` tombstone. Revoked
   devices have their directory bytes wiped.
-- That device A sent an envelope of size N at time T to device B.
+- That device A sent an envelope of size N at time T to device B
+  (row is deleted on ACK or TTL; revoke empties that device's mailbox
+  and drafts).
 - Group membership and roles (required for fan-out).
 - Ciphertext attachment sizes and ciphertext digests.
 - Coarse envelope kind (`message` / `receipt` / `typing` / `call`) so we can

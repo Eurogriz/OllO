@@ -95,6 +95,11 @@ describe("API integration", () => {
       device: aDev.json,
     });
     assert.equal(alice.status, 200, JSON.stringify(alice.body));
+    const otpGone = await (await getDb()).query<{ id: string }>(
+      "SELECT id FROM otp_challenges WHERE id = $1",
+      [otpA.body.challenge_id],
+    );
+    assert.equal(otpGone.rows.length, 0);
 
     const otpB = await json("POST", "/v1/auth/request-otp", { phone_e164: "+79990000002" });
     const bob = await json("POST", "/v1/auth/verify-otp", {
@@ -176,10 +181,15 @@ describe("API integration", () => {
     assert.equal(sent.status, 200, JSON.stringify(sent.body));
 
     const box = await json("GET", "/v1/envelopes?limit=20", undefined, bobTok);
-    const envs = box.body.envelopes as Array<{ ciphertext: string }>;
+    const envs = box.body.envelopes as Array<{ id: string; ciphertext: string }>;
     assert.ok(envs.length >= 1);
     const ct = Buffer.from(envs[0]!.ciphertext, "base64").toString("utf8");
     assert.equal(ct.includes("секретное сообщение"), false);
+    const acked = await json("POST", "/v1/envelopes/ack", { ids: [envs[0]!.id] }, bobTok);
+    assert.equal(acked.status, 200, JSON.stringify(acked.body));
+    const db = await getDb();
+    const leftover = await db.query<{ id: string }>("SELECT id FROM envelopes WHERE id = $1", [envs[0]!.id]);
+    assert.equal(leftover.rows.length, 0);
 
     const depthBefore = await json("GET", "/v1/me/prekey-depth", undefined, bobTok);
     const listed = await json("GET", `/v1/keys/${bobUser}?consume=0`, undefined, aliceTok);
@@ -765,6 +775,13 @@ describe("API integration", () => {
     });
     const bob2Id = bob2.body.device_id as string;
     const bob2Tok = bob2.body.access_token as string;
+    const draft = await json(
+      "PUT",
+      `/v1/drafts/${bob.userId}`,
+      { ciphertext: Buffer.from("opaque-draft").toString("base64") },
+      bob2Tok,
+    );
+    assert.equal(draft.status, 200, JSON.stringify(draft.body));
     const listed = await json("GET", "/v1/devices", undefined, bob.tok);
     assert.ok(((listed.body.devices as unknown[]) ?? []).length >= 2);
     assert.equal(typeof listed.body.roster_hash, "string");
@@ -808,6 +825,17 @@ describe("API integration", () => {
       [bob2Id],
     );
     assert.equal(Number(wiped.rows[0]?.n ?? -1), 0);
+    const goneDrafts = await db.query<{ thread_id: string }>(
+      "SELECT thread_id FROM drafts WHERE device_id = $1",
+      [bob2Id],
+    );
+    assert.equal(goneDrafts.rows.length, 0);
+    const sess = await db.query<{ refresh_hash: string }>(
+      "SELECT refresh_hash FROM sessions WHERE device_id = $1",
+      [bob2Id],
+    );
+    assert.ok(sess.rows.length >= 1);
+    assert.ok(sess.rows.every((r) => r.refresh_hash.startsWith("revoked:")));
 
     const report = await json(
       "POST",

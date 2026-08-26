@@ -137,7 +137,7 @@ export async function registerMessaging(app: FastifyInstance, db: Db): Promise<v
     const auth = requireAuth(req);
     const body = z.object({ ids: z.array(z.string().uuid()).min(1).max(500) }).parse(req.body);
     await db.query(
-      `UPDATE envelopes SET acked_at = now()
+      `DELETE FROM envelopes
        WHERE recipient_device_id = $1 AND id = ANY($2::uuid[])`,
       [auth.deviceId, body.ids],
     );

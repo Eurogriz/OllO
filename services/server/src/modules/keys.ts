@@ -67,9 +67,14 @@ export async function registerKeys(app: FastifyInstance, db: Db): Promise<void> 
        WHERE id = $1`,
       [id, Buffer.alloc(0)],
     );
-    await db.query("UPDATE sessions SET revoked_at = now() WHERE device_id = $1 AND revoked_at IS NULL", [id]);
+    await db.query(
+      `UPDATE sessions SET revoked_at = now(), refresh_hash = 'revoked:' || id
+       WHERE device_id = $1 AND refresh_hash NOT LIKE 'revoked:%'`,
+      [id],
+    );
     await db.query("DELETE FROM one_time_prekeys WHERE device_id = $1", [id]);
     await db.query("DELETE FROM envelopes WHERE recipient_device_id = $1", [id]);
+    await db.query("DELETE FROM drafts WHERE device_id = $1", [id]);
     dropDevice(id);
     return { ok: true };
   });

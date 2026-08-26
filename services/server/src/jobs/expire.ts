@@ -3,12 +3,32 @@ import { log } from "../observability/logger.js";
 
 export async function expireStale(
   db: Db,
-): Promise<{ envelopes: number; attachments: number; prekeys: number; revoked_keys: number }> {
+): Promise<{
+  envelopes: number;
+  attachments: number;
+  prekeys: number;
+  revoked_keys: number;
+  otp: number;
+  drafts: number;
+}> {
   const envelopes = await db.query<{ id: string }>(
-    "DELETE FROM envelopes WHERE expires_at IS NOT NULL AND expires_at < now() RETURNING id",
+    `DELETE FROM envelopes
+     WHERE (expires_at IS NOT NULL AND expires_at < now())
+        OR acked_at IS NOT NULL
+     RETURNING id`,
   );
   const attachments = await db.query<{ id: string }>(
     "DELETE FROM attachments WHERE expires_at < now() AND completed_at IS NOT NULL RETURNING id",
+  );
+  const otp = await db.query<{ id: string }>(
+    `DELETE FROM otp_challenges
+     WHERE expires_at < now() OR consumed_at IS NOT NULL
+     RETURNING id`,
+  );
+  const drafts = await db.query<{ thread_id: string }>(
+    `DELETE FROM drafts
+     WHERE device_id IN (SELECT id FROM devices WHERE revoked_at IS NOT NULL)
+     RETURNING thread_id`,
   );
   const prekeys = await db.query<{ key_id: number }>(
     `DELETE FROM one_time_prekeys
@@ -39,8 +59,10 @@ export async function expireStale(
     attachments: attachments.rows.length,
     prekeys: prekeys.rows.length,
     revoked_keys: revoked.rows.length,
+    otp: otp.rows.length,
+    drafts: drafts.rows.length,
   };
-  if (result.envelopes || result.attachments || result.prekeys || result.revoked_keys) {
+  if (result.envelopes || result.attachments || result.prekeys || result.revoked_keys || result.otp || result.drafts) {
     log.info("expired stale rows", result);
   }
   return result;

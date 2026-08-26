@@ -114,7 +114,7 @@ export async function registerAuth(app: FastifyInstance, db: Db): Promise<void> 
       await db.query("UPDATE otp_challenges SET attempts = attempts + 1 WHERE id = $1", [row.id]);
       throw new ApiError("otp_invalid", "Invalid or expired code");
     }
-    await db.query("UPDATE otp_challenges SET consumed_at = now() WHERE id = $1", [row.id]);
+    await db.query("DELETE FROM otp_challenges WHERE id = $1", [row.id]);
 
     const existing = await db.query<{
       id: string;
@@ -201,9 +201,11 @@ export async function registerAuth(app: FastifyInstance, db: Db): Promise<void> 
     const s = row.rows[0];
     if (!s) throw new ApiError("unauthorized", "Invalid refresh token", 401);
     if (s.revoked_at || new Date(s.expires_at).getTime() < Date.now()) {
-      await db.query("UPDATE sessions SET revoked_at = now() WHERE family_id = $1 AND revoked_at IS NULL", [
-        s.family_id,
-      ]);
+      await db.query(
+        `UPDATE sessions SET revoked_at = now(), refresh_hash = 'revoked:' || id
+         WHERE family_id = $1 AND refresh_hash NOT LIKE 'revoked:%'`,
+        [s.family_id],
+      );
       throw new ApiError("unauthorized", "Refresh token reuse detected", 401);
     }
     const next = await issueSession(db, s.user_id, s.device_id, s.family_id);
@@ -221,7 +223,8 @@ export async function registerAuth(app: FastifyInstance, db: Db): Promise<void> 
   app.post("/v1/auth/logout", async (req, reply) => {
     const auth = requireAuth(req);
     await db.query(
-      "UPDATE sessions SET revoked_at = now() WHERE device_id = $1 AND revoked_at IS NULL",
+      `UPDATE sessions SET revoked_at = now(), refresh_hash = 'revoked:' || id
+       WHERE device_id = $1 AND refresh_hash NOT LIKE 'revoked:%'`,
       [auth.deviceId],
     );
     return reply.send({ ok: true });
@@ -229,9 +232,11 @@ export async function registerAuth(app: FastifyInstance, db: Db): Promise<void> 
 
   app.post("/v1/auth/logout-all", async (req, reply) => {
     const auth = requireAuth(req);
-    await db.query("UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL", [
-      auth.userId,
-    ]);
+    await db.query(
+      `UPDATE sessions SET revoked_at = now(), refresh_hash = 'revoked:' || id
+       WHERE user_id = $1 AND refresh_hash NOT LIKE 'revoked:%'`,
+      [auth.userId],
+    );
     return reply.send({ ok: true });
   });
 
