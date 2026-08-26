@@ -62,6 +62,9 @@ describe("X3DH + Double Ratchet", () => {
     const bobSession = acceptSession(bob, received, alice.userId, alice.deviceId);
     const opened = decryptMessage(bobSession, received);
     assert.equal(opened.text, "привет, это секрет");
+    assert.equal(sealed.prekey?.registrationId, alice.registrationId);
+    assert.notEqual(sealed.prekey?.registrationId, 0);
+    assert.deepEqual(bobSession.remoteIdentityEd25519, alice.identity.ed25519Public);
 
     const reply = encryptMessage(bobSession, text("t", "принято"));
     const back = decryptMessage(init.session, reply);
@@ -178,6 +181,27 @@ describe("Sender Keys", () => {
     forgedCt[0] = (forgedCt[0] ?? 0) ^ 0xff;
     const forged = { ...next, ciphertext: forgedCt };
     assert.throws(() => senderDecrypt(remote, forged));
+
+    const swappedChain = { ...dist, chainKey: new Uint8Array(32).fill(9) };
+    assert.throws(() =>
+      acceptSenderKey({
+        dist: swappedChain,
+        identitySignature: dist.identitySignature,
+        senderIdentityEd25519: alice.ed25519Public,
+        userId: "alice",
+        deviceId: "a1",
+      }),
+    );
+    const swappedSign = { ...dist, signingKey: new Uint8Array(32).fill(3) };
+    assert.throws(() =>
+      acceptSenderKey({
+        dist: swappedSign,
+        identitySignature: dist.identitySignature,
+        senderIdentityEd25519: alice.ed25519Public,
+        userId: "alice",
+        deviceId: "a1",
+      }),
+    );
   });
 
   it("new epoch after member removal uses a fresh chain", () => {

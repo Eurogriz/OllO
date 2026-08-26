@@ -130,6 +130,10 @@ export function acceptSession(
   current?: SessionState,
 ): SessionState {
   if (!sealed.prekey) throw new Error("missing prekey whisper");
+  const remoteEd = sealed.prekey.identityKeyEd25519;
+  if (!remoteEd || remoteEd.length !== 32) {
+    throw new Error("missing remote identity");
+  }
   const opk = sealed.prekey.oneTimePrekeyId
     ? local.oneTimePrekeys.find((k) => k.id === sealed.prekey!.oneTimePrekeyId)
     : undefined;
@@ -154,7 +158,7 @@ export function acceptSession(
     remoteDeviceId,
     localIdentity: local.identity,
     remoteIdentityX25519: sealed.prekey.identityKeyX25519,
-    remoteIdentityEd25519: new Uint8Array(32),
+    remoteIdentityEd25519: remoteEd,
     rootKey,
     localSignedPrekey: {
       privateKey: signedPrekey.privateKey,
@@ -181,11 +185,12 @@ export function encryptFirstMessage(
 ): SealedPayload {
   const sealed = encryptMessage(init.session, message);
   sealed.prekey = {
-    registrationId: 0,
+    registrationId: local.registrationId,
     signedPrekeyId: init.usedSignedPrekeyId,
     oneTimePrekeyId: init.usedOneTimePrekeyId,
     ephemeralPublic: init.ephemeralPublic,
     identityKeyX25519: local.identity.x25519Public,
+    identityKeyEd25519: local.identity.ed25519Public,
   };
   return sealed;
 }

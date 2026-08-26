@@ -9,7 +9,7 @@
 
 import type { SealedPayload, SenderKeyDistribution } from "@ollo/protocol";
 import { aeadDecrypt, aeadEncrypt } from "./aead.js";
-import { concat, equal, fromB64, randomBytes, toB64, utf8 } from "./bytes.js";
+import { concat, fromB64, randomBytes, toB64, utf8 } from "./bytes.js";
 import { kdf } from "./kdf.js";
 import { type IdentityKeyPair, generateEd25519, sign, verify } from "./keys.js";
 
@@ -47,19 +47,45 @@ export function createSenderKey(groupId: string, epoch: number): SenderKeyState 
   };
 }
 
+function distributionBody(dist: {
+  groupId: string;
+  epoch: number;
+  chainId: string;
+  iteration: number;
+  chainKey: Uint8Array;
+  signingKey: Uint8Array;
+}): Uint8Array {
+  return concat(
+    utf8("ollo-sk-dist-v1"),
+    utf8("\0"),
+    utf8(dist.groupId),
+    utf8("\0"),
+    utf8(String(dist.epoch)),
+    utf8("\0"),
+    utf8(dist.chainId),
+    utf8("\0"),
+    utf8(String(dist.iteration)),
+    utf8("\0"),
+    dist.chainKey,
+    dist.signingKey,
+  );
+}
+
 export function distributeSenderKey(
   state: SenderKeyState,
   identity: IdentityKeyPair,
 ): SenderKeyDistribution & { identitySignature: Uint8Array } {
-  const body = utf8(`${state.groupId}|${state.epoch}|${state.chainId}|${state.iteration}`);
-  return {
+  const dist = {
     groupId: state.groupId,
     epoch: state.epoch,
     chainId: state.chainId,
     chainKey: state.chainKey,
     iteration: state.iteration,
     signingKey: state.signingPublic,
-    identitySignature: sign(identity.ed25519Private, body),
+  };
+  return {
+    ...dist,
+    identitySignature: sign(identity.ed25519Private, distributionBody(dist)),
   };
 }
 
@@ -70,7 +96,14 @@ export function acceptSenderKey(args: {
   userId: string;
   deviceId: string;
 }): RemoteSenderKey {
-  const body = utf8(`${args.dist.groupId}|${args.dist.epoch}|${args.dist.chainId}|${args.dist.iteration}`);
+  const body = distributionBody({
+    groupId: args.dist.groupId,
+    epoch: args.dist.epoch,
+    chainId: args.dist.chainId,
+    iteration: args.dist.iteration,
+    chainKey: args.dist.chainKey,
+    signingKey: args.dist.signingKey,
+  });
   if (!verify(args.senderIdentityEd25519, body, args.identitySignature)) {
     throw new Error("sender key distribution signature invalid");
   }

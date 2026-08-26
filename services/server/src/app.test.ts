@@ -1477,4 +1477,137 @@ describe("API integration", () => {
     const bad = await json("GET", "/v1/envelopes?cursor=not-a-uuid", undefined, bobTok);
     assert.equal(bad.status, 400);
   });
+
+  it("replays Idempotency-Key and rejects a stolen envelope id", async () => {
+    const { listMailbox } = await import("./modules/messaging.js");
+    async function signup(phone: string, username: string) {
+      const otp = await json("POST", "/v1/auth/request-otp", { phone_e164: phone });
+      const verified = await json("POST", "/v1/auth/verify-otp", {
+        challenge_id: otp.body.challenge_id,
+        otp: otp.body.dev_otp,
+        account_ed25519: b64(generateEd25519().publicKey),
+        device: devicePayload(username).json,
+      });
+      assert.equal(verified.status, 200, JSON.stringify(verified.body));
+      const tok = verified.body.access_token as string;
+      await json("PUT", "/v1/me", { username, display_name: username }, tok);
+      return {
+        tok,
+        userId: (verified.body.user as { id: string }).id,
+        deviceId: verified.body.device_id as string,
+      };
+    }
+    const alice = await signup("+79990000401", "aliceidem");
+    const bob = await signup("+79990000402", "bobidem");
+    const eve = await signup("+79990000403", "eveidem");
+
+    const envId = crypto.randomUUID();
+    const idem = crypto.randomUUID();
+    const payload = {
+      envelopes: [
+        {
+          id: envId,
+          recipient_user_id: bob.userId,
+          recipient_device_id: bob.deviceId,
+          kind: "control",
+          ciphertext: Buffer.from("opaque-idem").toString("base64"),
+          padding_bucket: 256,
+        },
+      ],
+    };
+    const first = await app.inject({
+      method: "POST",
+      url: "/v1/envelopes",
+      payload,
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${alice.tok}`,
+        "idempotency-key": idem,
+      },
+    });
+    assert.equal(first.statusCode, 200, first.body);
+    const accepted = (first.json() as { accepted: Array<{ id: string }> }).accepted;
+    assert.equal(accepted[0]?.id, envId);
+
+    const replay = await app.inject({
+      method: "POST",
+      url: "/v1/envelopes",
+      payload,
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${alice.tok}`,
+        "idempotency-key": idem,
+      },
+    });
+    assert.equal(replay.statusCode, 200, replay.body);
+    assert.equal(replay.headers["idempotent-replayed"], "1");
+    assert.deepEqual(replay.json(), first.json());
+
+    const retrySameId = await json("POST", "/v1/envelopes", payload, alice.tok);
+    assert.equal(retrySameId.status, 200, JSON.stringify(retrySameId.body));
+    assert.equal(((retrySameId.body.accepted as Array<{ id: string }>)[0]).id, envId);
+
+    const stolen = await json(
+      "POST",
+      "/v1/envelopes",
+      {
+        envelopes: [
+          {
+            id: envId,
+            recipient_user_id: bob.userId,
+            recipient_device_id: bob.deviceId,
+            kind: "control",
+            ciphertext: Buffer.from("eve-occupancy").toString("base64"),
+            padding_bucket: 256,
+          },
+        ],
+      },
+      eve.tok,
+    );
+    assert.equal(stolen.status, 409);
+
+    const box = await json("GET", "/v1/envelopes?limit=20", undefined, bob.tok);
+    const envs = box.body.envelopes as Array<{ id: string; ciphertext: string }>;
+    const hits = envs.filter((e) => e.id === envId);
+    assert.equal(hits.length, 1);
+    assert.equal(Buffer.from(hits[0]!.ciphertext, "base64").toString("utf8"), "opaque-idem");
+
+    const laterId = crypto.randomUUID();
+    const later = await json(
+      "POST",
+      "/v1/envelopes",
+      {
+        envelopes: [
+          {
+            id: laterId,
+            recipient_user_id: bob.userId,
+            recipient_device_id: bob.deviceId,
+            kind: "control",
+            ciphertext: Buffer.from("opaque-after").toString("base64"),
+            padding_bucket: 256,
+          },
+        ],
+      },
+      alice.tok,
+    );
+    assert.equal(later.status, 200, JSON.stringify(later.body));
+    const drained = await listMailbox(await getDb(), bob.deviceId, envId, 200);
+    assert.equal(drained.envelopes.some((e) => e.id === envId), false);
+    assert.equal(drained.envelopes.some((e) => e.id === laterId), true);
+
+    const badKey = await app.inject({
+      method: "POST",
+      url: "/v1/envelopes",
+      payload,
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${alice.tok}`,
+        "idempotency-key": "not-a-uuid",
+      },
+    });
+    assert.equal(badKey.statusCode, 400);
+
+    const metrics = await app.inject({ method: "GET", url: "/metrics" });
+    assert.equal(metrics.statusCode, 200);
+  });
 });

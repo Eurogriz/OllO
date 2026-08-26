@@ -11,6 +11,7 @@ export async function expireStale(
   revoked_keys: number;
   otp: number;
   drafts: number;
+  idempotency: number;
 }> {
   const envelopes = await db.query<{ id: string }>(
     `DELETE FROM envelopes
@@ -73,6 +74,12 @@ export async function expireStale(
      RETURNING id`,
     [empty],
   );
+  const idempotency = await db.query<{ key: string }>(
+    `DELETE FROM idempotency
+     WHERE created_at < now() - interval '24 hours'
+        OR (status = -1 AND created_at < now() - interval '2 minutes')
+     RETURNING key`,
+  );
   const result = {
     envelopes: envelopes.rows.length,
     attachments: attachments.rows.length,
@@ -80,8 +87,17 @@ export async function expireStale(
     revoked_keys: revoked.rows.length,
     otp: otp.rows.length,
     drafts: drafts.rows.length,
+    idempotency: idempotency.rows.length,
   };
-  if (result.envelopes || result.attachments || result.prekeys || result.revoked_keys || result.otp || result.drafts) {
+  if (
+    result.envelopes ||
+    result.attachments ||
+    result.prekeys ||
+    result.revoked_keys ||
+    result.otp ||
+    result.drafts ||
+    result.idempotency
+  ) {
     log.info("expired stale rows", result);
   }
   return result;

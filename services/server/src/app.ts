@@ -10,16 +10,18 @@ import { config } from "./config.js";
 import type { Db } from "./db/index.js";
 import { ApiError, assertLiveDevice, authFromAccess, readBearer, requestId, requireAuth, sendError } from "./http.js";
 import { framePolicyHeaders } from "./http/frame-policy.js";
+import { registerIdempotency } from "./http/idempotency.js";
 import { registerAttachments } from "./modules/attachments.js";
 import { registerAuth } from "./modules/auth.js";
 import { registerBackups } from "./modules/backups.js";
 import { registerCalls } from "./modules/calls.js";
 import { registerGroups } from "./modules/groups.js";
 import { registerKeys } from "./modules/keys.js";
-import { registerMessaging } from "./modules/messaging.js";
+import { listMailbox, registerMessaging } from "./modules/messaging.js";
 import { registerNotifications } from "./modules/notifications.js";
 import { registerUsers } from "./modules/users.js";
 import { log } from "./observability/logger.js";
+import { metricsAccessAllowed } from "./observability/metrics-access.js";
 import { httpRequests, registry } from "./observability/metrics.js";
 import { helloAccessToken } from "./realtime/hello.js";
 import { RedisWindowStore } from "./redis.js";
@@ -33,6 +35,12 @@ import {
   touchPresence,
 } from "./realtime/hub.js";
 import { randomToken } from "./security/crypto-utils.js";
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function zUuid(value: string): boolean {
+  return UUID_RE.test(value);
+}
 
 function originAllowed(origin: string | undefined): boolean {
   if (!origin) return true;
@@ -92,6 +100,8 @@ export async function buildApp(db: Db): Promise<FastifyInstance> {
     await assertLiveDevice(db, auth);
   });
 
+  await registerIdempotency(app, db);
+
   app.addHook("onRequest", async (req, reply) => {
     reply.header("X-Content-Type-Options", "nosniff");
     reply.header("Referrer-Policy", "no-referrer");
@@ -133,7 +143,15 @@ export async function buildApp(db: Db): Promise<FastifyInstance> {
     await db.query("SELECT 1");
     return { ok: true };
   });
-  app.get("/metrics", async (_req, reply) => {
+  app.get("/metrics", async (req, reply) => {
+    const access = metricsAccessAllowed({
+      isProd: config.isProd,
+      metricsEnabled: config.metricsEnabled,
+      metricsToken: config.metricsToken,
+      bearer: readBearer(req),
+    });
+    if (access === "disabled") throw new ApiError("not_found", "Not found", 404);
+    if (access === "unauthorized") throw new ApiError("unauthorized", "Unauthorized", 401);
     reply.header("content-type", registry.contentType);
     return registry.metrics();
   });
@@ -210,6 +228,16 @@ export async function buildApp(db: Db): Promise<FastifyInstance> {
                 connections: connectionCount(),
               }),
             );
+            if (typeof msg.after === "string" && zUuid(msg.after)) {
+              try {
+                const box = await listMailbox(db, auth.deviceId, msg.after, 200);
+                for (const envelope of box.envelopes) {
+                  socket.send(JSON.stringify({ op: "envelope", envelope }));
+                }
+              } catch {
+                /* drain is best-effort; GET /v1/envelopes remains the source of truth */
+              }
+            }
           } catch {
             socket.send(JSON.stringify({ op: "error", code: "unauthorized" }));
             socket.close();

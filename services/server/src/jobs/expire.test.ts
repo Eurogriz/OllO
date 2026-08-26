@@ -99,6 +99,12 @@ describe("TTL expiry job", () => {
          ('ch-dead', 'hmac-otp', 'hash', now() - interval '1 hour'),
          ('ch-live', 'hmac-otp', 'hash', now() + interval '5 minutes')`,
     );
+    await db.query(
+      `INSERT INTO idempotency (scope, key, status, body, created_at) VALUES
+         ('user:x', 'k-old', 200, '{}', now() - interval '25 hours'),
+         ('user:x', 'k-pending', -1, '', now() - interval '5 minutes'),
+         ('user:x', 'k-live', 200, '{}', now())`,
+    );
 
     const result = await expireStale(db);
     assert.equal(result.envelopes, 1);
@@ -107,6 +113,7 @@ describe("TTL expiry job", () => {
     assert.equal(result.revoked_keys, 1);
     assert.equal(result.otp, 1);
     assert.equal(result.drafts, 1);
+    assert.equal(result.idempotency, 2);
 
     const envs = await db.query<{ id: string }>("SELECT id FROM envelopes");
     assert.deepEqual(envs.rows.map((r) => r.id), [liveEnv]);
@@ -135,5 +142,10 @@ describe("TTL expiry job", () => {
     assert.deepEqual(drafts.rows.map((r) => r.thread_id), ["live-draft"]);
     const otps = await db.query<{ id: string }>("SELECT id FROM otp_challenges");
     assert.deepEqual(otps.rows.map((r) => r.id), ["ch-live"]);
+    const keys = await db.query<{ key: string }>("SELECT key FROM idempotency");
+    assert.deepEqual(
+      keys.rows.map((r) => r.key),
+      ["k-live"],
+    );
   });
 });

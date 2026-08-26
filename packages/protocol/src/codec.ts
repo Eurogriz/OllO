@@ -13,6 +13,7 @@
  *     u32 one_time_prekey_id (0 = none)
  *     u8  eph_len + eph
  *     u8  ik_len + ik
+ *     u8  ik_ed_len + ik_ed (0 = omitted)
  *   u8  nonce_len + nonce
  *   u32 ct_len + ct
  */
@@ -38,6 +39,7 @@ export function encodeSealed(p: SealedPayload): Uint8Array {
     chunks.push(u32(p.prekey.oneTimePrekeyId ?? 0));
     chunks.push(tlv(p.prekey.ephemeralPublic));
     chunks.push(tlv(p.prekey.identityKeyX25519));
+    chunks.push(tlv(p.prekey.identityKeyEd25519 ?? new Uint8Array(0)));
   }
   chunks.push(tlv(p.nonce));
   chunks.push(u32(p.ciphertext.length));
@@ -61,12 +63,16 @@ export function decodeSealed(buf: Uint8Array): SealedPayload {
     const registrationId = r.u32();
     const signedPrekeyId = r.u32();
     const opk = r.u32();
+    const ephemeralPublic = r.tlv();
+    const identityKeyX25519 = r.tlv();
+    const identityKeyEd25519 = r.tlv();
     prekey = {
       registrationId,
       signedPrekeyId,
       oneTimePrekeyId: opk === 0 ? undefined : opk,
-      ephemeralPublic: r.tlv(),
-      identityKeyX25519: r.tlv(),
+      ephemeralPublic,
+      identityKeyX25519,
+      identityKeyEd25519: identityKeyEd25519.length ? identityKeyEd25519 : undefined,
     };
   }
   const nonce = r.tlv();

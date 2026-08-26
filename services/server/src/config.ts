@@ -84,6 +84,7 @@ export const config = {
     .map((s) => s.trim())
     .filter(Boolean),
   metricsEnabled: bool("METRICS_ENABLED", true),
+  metricsToken: process.env.METRICS_TOKEN ?? "",
 };
 
 if (config.isProd) {

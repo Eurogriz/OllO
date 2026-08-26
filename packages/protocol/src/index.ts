@@ -82,6 +82,7 @@ export interface PrekeyWhisperMeta {
   oneTimePrekeyId?: number;
   ephemeralPublic: Uint8Array;
   identityKeyX25519: Uint8Array;
+  identityKeyEd25519?: Uint8Array;
 }
 
 /**

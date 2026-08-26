@@ -19,6 +19,89 @@ const envelopeIn = z.object({
   ttl_seconds: z.number().int().nonnegative().optional(),
 });
 
+export interface MailboxEnvelope {
+  id: string;
+  sender_user_id: string;
+  sender_device_id: string;
+  recipient_user_id: string;
+  recipient_device_id: string;
+  group_id: string | null;
+  kind: string;
+  ciphertext: string;
+  padding_bucket: number;
+  created_at: string;
+}
+
+function wireEnvelope(e: {
+  id: string;
+  sender_user_id: string;
+  sender_device_id: string;
+  recipient_user_id: string;
+  recipient_device_id: string;
+  group_id: string | null;
+  kind: string;
+  payload: Buffer | Uint8Array;
+  padding_bucket: number;
+  created_at: string;
+}): MailboxEnvelope {
+  const payload = Buffer.isBuffer(e.payload) ? e.payload : Buffer.from(e.payload);
+  return {
+    id: e.id,
+    sender_user_id: e.sender_user_id,
+    sender_device_id: e.sender_device_id,
+    recipient_user_id: e.recipient_user_id,
+    recipient_device_id: e.recipient_device_id,
+    group_id: e.group_id,
+    kind: e.kind,
+    ciphertext: payload.toString("base64"),
+    padding_bucket: e.padding_bucket,
+    created_at: e.created_at,
+  };
+}
+
+export async function listMailbox(
+  db: Db,
+  deviceId: string,
+  cursor?: string,
+  limit = 100,
+): Promise<{ envelopes: MailboxEnvelope[]; next_cursor: string | null }> {
+  const cap = Number.isFinite(limit) ? Math.min(Math.max(Math.trunc(limit), 1), 200) : 100;
+  if (cursor && !z.string().uuid().safeParse(cursor).success) {
+    throw new ApiError("validation", "Invalid request", 400);
+  }
+  const params: unknown[] = [deviceId];
+  let sql = `SELECT id, sender_user_id, sender_device_id, recipient_user_id, recipient_device_id,
+                    group_id, kind, payload, padding_bucket, created_at
+             FROM envelopes
+             WHERE recipient_device_id = $1 AND acked_at IS NULL
+               AND (expires_at IS NULL OR expires_at > now())`;
+  if (cursor) {
+    params.push(cursor);
+    sql += ` AND (created_at, id) > (
+      SELECT created_at, id FROM envelopes
+      WHERE id = $${params.length} AND recipient_device_id = $1
+    )`;
+  }
+  params.push(cap);
+  sql += ` ORDER BY created_at ASC, id ASC LIMIT $${params.length}`;
+  const r = await db.query<{
+    id: string;
+    sender_user_id: string;
+    sender_device_id: string;
+    recipient_user_id: string;
+    recipient_device_id: string;
+    group_id: string | null;
+    kind: string;
+    payload: Buffer;
+    padding_bucket: number;
+    created_at: string;
+  }>(sql, params);
+  return {
+    envelopes: r.rows.map(wireEnvelope),
+    next_cursor: r.rows.length === cap ? r.rows[r.rows.length - 1]!.id : null,
+  };
+}
+
 export async function registerMessaging(app: FastifyInstance, db: Db): Promise<void> {
   app.post("/v1/envelopes", async (req) => {
     const auth = requireAuth(req);
@@ -49,12 +132,13 @@ export async function registerMessaging(app: FastifyInstance, db: Db): Promise<v
       const expires = env.ttl_seconds
         ? new Date(Date.now() + env.ttl_seconds * 1000).toISOString()
         : new Date(Date.now() + config.envelopeTtlDays * 86400_000).toISOString();
-      await db.query(
+      const inserted = await db.query<{ id: string }>(
         `INSERT INTO envelopes (
            id, sender_user_id, sender_device_id, recipient_user_id, recipient_device_id,
            group_id, kind, payload, padding_bucket, expires_at
          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-         ON CONFLICT (id) DO NOTHING`,
+         ON CONFLICT (id) DO NOTHING
+         RETURNING id`,
         [
           id,
           auth.userId,
@@ -68,6 +152,22 @@ export async function registerMessaging(app: FastifyInstance, db: Db): Promise<v
           expires,
         ],
       );
+      if (!inserted.rows[0]) {
+        const existing = await db.query<{
+          sender_device_id: string;
+          recipient_device_id: string;
+        }>("SELECT sender_device_id, recipient_device_id FROM envelopes WHERE id = $1", [id]);
+        const row = existing.rows[0];
+        if (
+          row &&
+          row.sender_device_id === auth.deviceId &&
+          row.recipient_device_id === env.recipient_device_id
+        ) {
+          stored.push({ id });
+          continue;
+        }
+        throw new ApiError("conflict", "Envelope id already used", 409);
+      }
       const wire = {
         id,
         sender_user_id: auth.userId,
@@ -99,48 +199,7 @@ export async function registerMessaging(app: FastifyInstance, db: Db): Promise<v
       .parse(req.query ?? {});
     const parsed = Number.parseInt(q.limit ?? "100", 10);
     const limit = Number.isFinite(parsed) ? Math.min(Math.max(parsed, 1), 200) : 100;
-    const params: unknown[] = [auth.deviceId];
-    let sql = `SELECT id, sender_user_id, sender_device_id, recipient_user_id, recipient_device_id,
-                      group_id, kind, payload, padding_bucket, created_at
-               FROM envelopes
-               WHERE recipient_device_id = $1 AND acked_at IS NULL
-                 AND (expires_at IS NULL OR expires_at > now())`;
-    if (q.cursor) {
-      params.push(q.cursor);
-      sql += ` AND (created_at, id) > (
-        SELECT created_at, id FROM envelopes
-        WHERE id = $${params.length} AND recipient_device_id = $1
-      )`;
-    }
-    params.push(limit);
-    sql += ` ORDER BY created_at ASC, id ASC LIMIT $${params.length}`;
-    const r = await db.query<{
-      id: string;
-      sender_user_id: string;
-      sender_device_id: string;
-      recipient_user_id: string;
-      recipient_device_id: string;
-      group_id: string | null;
-      kind: string;
-      payload: Buffer;
-      padding_bucket: number;
-      created_at: string;
-    }>(sql, params);
-    return {
-      envelopes: r.rows.map((e) => ({
-        id: e.id,
-        sender_user_id: e.sender_user_id,
-        sender_device_id: e.sender_device_id,
-        recipient_user_id: e.recipient_user_id,
-        recipient_device_id: e.recipient_device_id,
-        group_id: e.group_id,
-        kind: e.kind,
-        ciphertext: Buffer.isBuffer(e.payload) ? e.payload.toString("base64") : Buffer.from(e.payload).toString("base64"),
-        padding_bucket: e.padding_bucket,
-        created_at: e.created_at,
-      })),
-      next_cursor: r.rows.length === limit ? r.rows[r.rows.length - 1]!.id : null,
-    };
+    return listMailbox(db, auth.deviceId, q.cursor, limit);
   });
 
   app.post("/v1/envelopes/ack", async (req) => {
@@ -171,5 +230,4 @@ export async function registerMessaging(app: FastifyInstance, db: Db): Promise<v
     );
     return { ok: true };
   });
-
 }

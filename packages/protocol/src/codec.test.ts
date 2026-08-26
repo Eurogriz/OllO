@@ -14,6 +14,7 @@ describe("sealed codec", () => {
         oneTimePrekeyId: 8,
         ephemeralPublic: new Uint8Array(32).fill(1),
         identityKeyX25519: new Uint8Array(32).fill(2),
+        identityKeyEd25519: new Uint8Array(32).fill(8),
       },
       nonce: new Uint8Array(24).fill(3),
       ciphertext: new Uint8Array(40).fill(4),
@@ -21,6 +22,8 @@ describe("sealed codec", () => {
     const again = decodeSealed(encodeSealed(p));
     assert.equal(again.header.messageNumber, 9);
     assert.equal(again.prekey?.oneTimePrekeyId, 8);
+    assert.equal(again.prekey?.registrationId, 42);
+    assert.deepEqual(again.prekey?.identityKeyEd25519, new Uint8Array(32).fill(8));
     assert.equal(again.ciphertext.length, 40);
   });
 
